@@ -26,7 +26,8 @@ conda activate cfd_jax
 
 # Install JAX with CUDA support (simpler than FEniCS+PETSc GPU setup)
 pip install --upgrade "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-pip install matplotlib numpy
+pip install matplotlib numpy tensorflow
+pip install --upgrade "ml_dtypes>=0.5.0"
 
 # Verify GPU is available
 python -c "import jax; print('JAX devices:', jax.devices())"

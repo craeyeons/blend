@@ -320,8 +320,8 @@ def solve_hybrid_pinn_cfd(network, uv_func, mask, Re=100, N=100, max_iter=20000,
     
     # Convert to JAX arrays
     mask_jax = jnp.array(mask, dtype=jnp.float64)
-    interface_jax = jnp.array(interface_mask, dtype=jnp.float64)
-    cfd_boundary_jax = jnp.array(cfd_boundary, dtype=jnp.float64)
+    interface_jax = jnp.array(interface_mask, dtype=bool)
+    cfd_boundary_jax = jnp.array(cfd_boundary, dtype=bool)
     
     # Initialize CFD fields with PINN values
     u = jnp.array(u_pinn)
@@ -676,6 +676,114 @@ def plot_hybrid_solution(u, v, p, mask):
     fig.savefig('cavity_flow_hybrid.png', dpi=300)
     plt.show()
 
+def plot_pinn_cfd_comparison(network, uv_func, N, mask):
+    """Plot comparison between PINN-only and hybrid PINN-CFD solutions"""
+    # Solve PINN-only
+    x = np.linspace(0, 1, N)
+    y = np.linspace(0, 1, N)
+    X, Y = np.meshgrid(x, y)
+    xy = np.stack([X.flatten(), Y.flatten()], axis=-1)
+    
+    psi_p = network.predict(xy, batch_size=len(xy))
+    psi_pinn = psi_p[..., 0].reshape(X.shape)
+    p_pinn = psi_p[..., 1].reshape(X.shape)
+    
+    u_pinn, v_pinn = uv_func(network, xy)
+    u_pinn = u_pinn.reshape(X.shape)
+    v_pinn = v_pinn.reshape(X.shape)
+    
+    # Solve hybrid
+    u_hybrid, v_hybrid, p_hybrid = solve_hybrid_pinn_cfd(
+        network=network,
+        uv_func=uv_func,
+        mask=mask,
+        Re=100,
+        N=N
+    )
+    
+    vel_mag_pinn = np.sqrt(u_pinn**2 + v_pinn**2)
+    vel_mag_hybrid = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    
+    def contour_comparison(ax, x, y, z1, z2, title1, title2):
+        cf1 = ax.contourf(x, y, z1, levels=50, cmap='jet')
+        ax.set_title(title1)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_aspect('equal')
+        plt.colorbar(cf1, ax=ax)
+        
+        cf2 = ax.contourf(x, y, z2, levels=50, cmap='jet', alpha=0.6)
+        ax.set_title(title2)
+        plt.colorbar(cf2, ax=ax)
+    
+    fig = plt.figure(figsize=(12, 10))
+    gs = GridSpec(2, 2)
+    
+    ax1 = fig.add_subplot(gs[0, 0])
+    contour_comparison(ax1, X, Y, vel_mag_pinn, vel_mag_hybrid,
+                       '|u| (PINN)', '|u| (Hybrid)')
+    
+    ax2 = fig.add_subplot(gs[0, 1])
+    contour_comparison(ax2, X, Y, p_pinn, p_hybrid,
+                       'p (PINN)', 'p (Hybrid)')
+    
+    ax3 = fig.add_subplot(gs[1, 0])
+    contour_comparison(ax3, X, Y, u_pinn, u_hybrid,
+                       'u (PINN)', 'u (Hybrid)')
+    
+    ax4 = fig.add_subplot(gs[1, 1])
+    contour_comparison(ax4, X, Y, v_pinn, v_hybrid,
+                       'v (PINN)', 'v (Hybrid)')
+    
+    plt.tight_layout()
+    fig.savefig('cavity_flow_pinn_cfd_comparison.png', dpi=300)
+    plt.show()
+
+def plot_pinn_only_solution(network, uv_func, N):
+    """Plot PINN-only solution for comparison"""
+    x = np.linspace(0, 1, N)
+    y = np.linspace(0, 1, N)
+    X, Y = np.meshgrid(x, y)
+    xy = np.stack([X.flatten(), Y.flatten()], axis=-1)
+    
+    psi_p = network.predict(xy, batch_size=len(xy))
+    psi_pinn = psi_p[..., 0].reshape(X.shape)
+    p_pinn = psi_p[..., 1].reshape(X.shape)
+    
+    u_pinn, v_pinn = uv_func(network, xy)
+    u_pinn = u_pinn.reshape(X.shape)
+    v_pinn = v_pinn.reshape(X.shape)
+    
+    vel_mag_pinn = np.sqrt(u_pinn**2 + v_pinn**2)
+    
+    def contour(ax, x, y, z, title):
+        cf = ax.contourf(x, y, z, levels=50, cmap='jet')
+        ax.set_title(title)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_aspect('equal')
+        plt.colorbar(cf, ax=ax)
+    
+    fig = plt.figure(figsize=(10, 8))
+    gs = GridSpec(2, 2)
+    
+    ax1 = fig.add_subplot(gs[0, 0])
+    contour(ax1, X, Y, vel_mag_pinn, '|u| (velocity magnitude)')
+    
+    ax2 = fig.add_subplot(gs[0, 1])
+    contour(ax2, X, Y, p_pinn, 'p (pressure)')
+    
+    ax3 = fig.add_subplot(gs[1, 0])
+    contour(ax3, X, Y, u_pinn, 'u (x-velocity)')
+    
+    ax4 = fig.add_subplot(gs[1, 1])
+    contour(ax4, X, Y, v_pinn, 'v (y-velocity)')
+    
+    plt.tight_layout()
+    fig.savefig('cavity_flow_pinn_only.png', dpi=300)
+    plt.show()
+
+
 def uv(network, xy):
     """
     Compute flow velocities (u, v) for the network with output (psi, p).
@@ -705,7 +813,8 @@ if __name__ == "__main__":
     Re = rho * u0 * L / nu
     N = 100  # Grid points
     network = Network().build()
-    network.load_weights('models/pinn_cavity_model.h5')
+    model_path = "./models/pinn_cavity_flow.h5"
+    network.load_weights(model_path)
     mask = create_center_pinn_mask(N, border_width=20)
     start_time = time.time()
     u, v, p = solve_hybrid_pinn_cfd(
@@ -719,3 +828,6 @@ if __name__ == "__main__":
     
     print(f"\nSimulation time: {end_time - start_time:.4f} seconds")
     plot_solution(u, v, p)
+    plot_hybrid_solution(u, v, p, mask)
+    plot_pinn_cfd_comparison(network, uv, N, mask)
+    plot_pinn_only_solution(network, uv, N)
