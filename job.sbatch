@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --gres="gpu:a100-80:1"
-#SBATCH --job-name=cfd_jax
-#SBATCH --time=01:00:00
-#SBATCH --partition=gpu-long
-#SBATCH --mem=16G
+#SBATCH --job-name=cfd_pinn_blend
+#SBATCH --time=2:00:00
+#SBATCH --partition=gpu
+#SBATCH --mem=64G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=slurm_%j.out
 #SBATCH --error=slurm_%j.err
