@@ -236,7 +236,7 @@ def plot_solution(u, v, p):
     plt.show()
 
 
-def solve_hybrid_pinn_cfd(network, uv_func, mask, Re=100, N=100, max_iter=20000, tol=1e-6):
+def solve_hybrid_pinn_cfd(network, uv_func, mask, Re=100, N=100, max_iter=200000, tol=1e-6):
     """
     Hybrid solver that uses PINN in certain regions and CFD for the rest.
     
@@ -811,11 +811,11 @@ if __name__ == "__main__":
     rho = 1.0
     
     Re = rho * u0 * L / nu
-    N = 100  # Grid points
+    N = 1500  # Grid points
     network = Network().build()
     model_path = "./models/pinn_cavity_flow.h5"
     network.load_weights(model_path)
-    mask = create_center_pinn_mask(N, border_width=20)
+    mask = create_center_pinn_mask(N, border_width=200)
     start_time = time.time()
     u, v, p = solve_hybrid_pinn_cfd(
         network=network,      # Your PINN model
