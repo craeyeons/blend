@@ -783,7 +783,6 @@ def plot_pinn_only_solution(network, uv_func, N):
     fig.savefig('cavity_flow_pinn_only.png', dpi=300)
     plt.show()
 
-
 def uv(network, xy):
     """
     Compute flow velocities (u, v) for the network with output (psi, p).
