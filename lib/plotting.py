@@ -37,8 +37,8 @@ def generate_filename(simulation_type, mode, Re, suffix='', output_dir='results'
     return os.path.join(output_dir, filename)
 
 
-def plot_contour(x, y, z, title, levels=100, ax=None, add_colorbar=True,
-                 cmap='rainbow', show_circle=None):
+def plot_contour(x, y, z, title, levels=50, ax=None, add_colorbar=True,
+                 cmap='jet', show_circle=None):
     """
     Create a contour plot.
     
@@ -71,10 +71,7 @@ def plot_contour(x, y, z, title, levels=100, ax=None, add_colorbar=True,
     vmin = np.min(z)
     vmax = np.max(z)
     
-    font = {'family': 'serif', 'size': 20}
-    
-    ax.contour(x, y, z, colors='k', linewidths=0.2, levels=levels)
-    cf = ax.contourf(x, y, z, cmap=cmap, levels=levels, 
+    cf = ax.contourf(x, y, z, levels=levels, cmap=cmap,
                      norm=Normalize(vmin=vmin, vmax=vmax))
     
     if show_circle is not None:
@@ -83,15 +80,12 @@ def plot_contour(x, y, z, title, levels=100, ax=None, add_colorbar=True,
         ax.add_patch(circle)
     
     ax.set_aspect('equal')
-    ax.set_title(title, fontdict=font)
-    ax.set_xlabel("x", fontdict=font)
-    ax.set_ylabel("y", fontdict=font)
-    ax.tick_params(axis='both', which='major', labelsize=15)
+    ax.set_title(title)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
     
     if add_colorbar:
-        cbar = plt.colorbar(cf, ax=ax, pad=0.03, aspect=25, format='%.2e')
-        cbar.mappable.set_clim(vmin, vmax)
-        cbar.ax.tick_params(labelsize=15)
+        plt.colorbar(cf, ax=ax)
     
     return cf
 
@@ -130,7 +124,7 @@ def plot_solution(u, v, p, x=None, y=None, title_prefix='', save_path=None,
     
     vel_mag = np.sqrt(u**2 + v**2)
     
-    fig = plt.figure(figsize=(14, 10))
+    fig = plt.figure(figsize=(10, 8))
     gs = GridSpec(2, 2)
     
     ax1 = fig.add_subplot(gs[0, 0])
@@ -374,9 +368,12 @@ def plot_streamlines(u, v, x=None, y=None, density=1.5, save_path=None,
     
     # Background contour of velocity magnitude
     cf = ax.contourf(X, Y, vel_mag, levels=50, cmap='jet', alpha=0.8)
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(y.min(), y.max())
+
     plt.colorbar(cf, ax=ax, label='Velocity magnitude')
     
-    # Streamlines
+    # Streamlines using interior-smoothed velocity
     ax.streamplot(x, y, u, v, density=density, color='white', linewidth=0.5)
     
     if show_circle:
