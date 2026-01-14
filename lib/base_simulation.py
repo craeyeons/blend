@@ -7,7 +7,8 @@ import jax.numpy as jnp
 from jax import jit, lax
 import numpy as np
 from abc import ABC, abstractmethod
-
+# Enable 64-bit precision for better numerical accuracy
+jax.config.update("jax_enable_x64", True)
 
 class BaseSimulation(ABC):
     """

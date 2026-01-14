@@ -8,7 +8,8 @@ from jax import jit, lax
 import numpy as np
 import tensorflow as tf
 from scipy import ndimage
-
+# Enable 64-bit precision for better numerical accuracy
+jax.config.update("jax_enable_x64", True)
 from lib.base_simulation import BaseSimulation
 
 
