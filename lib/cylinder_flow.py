@@ -19,6 +19,8 @@ class CylinderFlowSimulation(BaseSimulation):
     
     Uniform inlet flow from the left, cylinder obstacle in the domain,
     with no-slip on cylinder surface and channel walls.
+    
+    Uses Nx × Ny grid where Nx/Ny = Lx/Ly to maintain uniform grid spacing.
     """
     
     def __init__(self, Re=100, N=100, max_iter=200000, tol=1e-6,
@@ -33,7 +35,7 @@ class CylinderFlowSimulation(BaseSimulation):
         Re : float
             Reynolds number
         N : int
-            Number of grid points per side
+            Base number of grid points (Ny = N, Nx = N * aspect_ratio)
         max_iter : int
             Maximum iterations
         tol : float
@@ -58,22 +60,29 @@ class CylinderFlowSimulation(BaseSimulation):
         
         # Override parent grid setup
         self.Re = Re
-        self.N = N
+        self.N = N  # Base resolution
         self.max_iter = max_iter
         self.tol = tol
         self.nu = 1.0 / Re
         
-        # Grid setup with custom domain
+        # Grid setup with aspect ratio - ensure uniform spacing
         self.Lx = self.x_f - self.x_ini
         self.Ly = self.y_f - self.y_ini
-        self.dx = self.Lx / (N - 1)
-        self.dy = self.Ly / (N - 1)
+        aspect_ratio = self.Lx / self.Ly
+        
+        # Ny = N, Nx = N * aspect_ratio (rounded to int)
+        self.Ny = N
+        self.Nx = int(N * aspect_ratio)
+        
+        # Uniform grid spacing
+        self.dx = self.Lx / (self.Nx - 1)
+        self.dy = self.Ly / (self.Ny - 1)
         self.dt = 0.001 * min(self.dx, self.dy)
         
-        # Create coordinate grid
-        x = np.linspace(self.x_ini, self.x_f, N)
-        y = np.linspace(self.y_ini, self.y_f, N)
-        self.X, self.Y = np.meshgrid(x, y)
+        # Create coordinate grid (Ny rows, Nx columns)
+        x = np.linspace(self.x_ini, self.x_f, self.Nx)
+        y = np.linspace(self.y_ini, self.y_f, self.Ny)
+        self.X, self.Y = np.meshgrid(x, y)  # Shape: (Ny, Nx)
         self.xy = np.stack([self.X.flatten(), self.Y.flatten()], axis=-1)
         
         # Create cylinder mask (1 = inside cylinder, 0 = fluid)
@@ -82,6 +91,7 @@ class CylinderFlowSimulation(BaseSimulation):
         
         print(f"JAX devices: {jax.devices()}")
         print(f"Using device: {jax.devices()[0]}")
+        print(f"Grid: {self.Nx} x {self.Ny} (dx={self.dx:.4f}, dy={self.dy:.4f})")
     
     def _create_cylinder_mask(self):
         """Create mask identifying points inside the cylinder."""
@@ -111,10 +121,10 @@ class CylinderFlowSimulation(BaseSimulation):
         - Top/Bottom walls (y=y_ini, y=y_f): no-slip u=0, v=0
         - Cylinder surface: no-slip u=0, v=0
         """
-        N = self.N
+        Ny, Nx = self.Ny, self.Nx
         
         # Inlet (left boundary): parabolic profile
-        y_inlet = jnp.linspace(self.y_ini, self.y_f, N)
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
         u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
         u = u.at[:, 0].set(u_inlet_profile)
         v = v.at[:, 0].set(0.0)
@@ -144,19 +154,19 @@ class CylinderFlowSimulation(BaseSimulation):
         Returns:
         --------
         u, v, p : ndarray
-            Velocity and pressure fields
+            Velocity and pressure fields (shape: Ny x Nx)
         """
-        N = self.N
+        Nx, Ny = self.Nx, self.Ny
         dx, dy, dt = self.dx, self.dy, self.dt
         nu = self.nu
         
-        # Initialize fields
-        u = jnp.zeros((N, N))
-        v = jnp.zeros((N, N))
-        p = jnp.zeros((N, N))
+        # Initialize fields (shape: Ny x Nx)
+        u = jnp.zeros((Ny, Nx))
+        v = jnp.zeros((Ny, Nx))
+        p = jnp.zeros((Ny, Nx))
         
-        # Set initial velocity field (uniform flow)
-        y_grid = jnp.linspace(self.y_ini, self.y_f, N)
+        # Set initial velocity field (parabolic profile)
+        y_grid = jnp.linspace(self.y_ini, self.y_f, Ny)
         u_init = 4 * self.u_inlet * (y_grid[:, None] - self.y_ini) * (self.y_f - y_grid[:, None]) / (self.Ly**2)
         u = jnp.where(self.cylinder_mask_jax == 0, u_init, 0.0)
         
@@ -205,6 +215,7 @@ class CylinderFlowSimulation(BaseSimulation):
         def pressure_poisson_iteration(p, rhs):
             """Single Jacobi iteration for pressure Poisson equation"""
             p_new = jnp.zeros_like(p)
+            # For uniform grid (dx ≈ dy), use standard formula
             p_new = p_new.at[1:-1, 1:-1].set(
                 0.25 * (
                     p[1:-1, 2:] + p[1:-1, :-2] +
@@ -218,7 +229,7 @@ class CylinderFlowSimulation(BaseSimulation):
             p_new = p_new.at[:, 0].set(p_new[:, 1])      # Inlet
             p_new = p_new.at[:, -1].set(0.0)             # Outlet (reference pressure)
             
-            # Inside cylinder: interpolate from neighbors
+            # Inside cylinder: set to zero
             p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
             
             return p_new
@@ -280,7 +291,7 @@ class CylinderFlowSimulation(BaseSimulation):
         
         print(f"Solving {self.get_simulation_name()} with JAX (Fractional Step method)...")
         print(f"Reynolds number: {self.Re}")
-        print(f"Grid size: {N}x{N}")
+        print(f"Grid size: {Nx}x{Ny}")
         print(f"Domain: x=[{self.x_ini}, {self.x_f}], y=[{self.y_ini}, {self.y_f}]")
         print(f"Cylinder: center=({self.Cx}, {self.Cy}), radius={self.radius}")
         print(f"Time step: {dt:.6e}")
@@ -312,6 +323,8 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
     Uses PINN in specified regions and CFD for the rest, with PINN values
     serving as boundary conditions at the interface. Supports multiple
     CFD regions via a user-provided mask.
+    
+    Uses Nx × Ny grid where Nx/Ny = Lx/Ly to maintain uniform grid spacing.
     """
     
     def __init__(self, network, uv_func, mask, Re=100, N=100, max_iter=200000, tol=1e-6,
@@ -327,13 +340,13 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             PINN model that outputs (u, v, p) or (psi, p) given (x, y) coordinates.
         uv_func : callable
             Function to compute (u, v) from the network: uv_func(network, xy) -> (u, v)
-        mask : ndarray of shape (N, N)
+        mask : ndarray of shape (Ny, Nx)
             Binary mask where 1 indicates CFD region, 0 indicates PINN region.
             Can have multiple disconnected CFD regions.
         Re : float
             Reynolds number
         N : int
-            Number of grid points per side
+            Base number of grid points (Ny = N, Nx = N * aspect_ratio)
         max_iter : int
             Maximum iterations
         tol : float
@@ -357,15 +370,16 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         self.uv_func = uv_func
         self.cfd_mask = mask  # User-provided CFD/PINN mask
         
-        # Validate mask dimensions
-        assert mask.shape == (N, N), f"Mask shape {mask.shape} must match grid size ({N}, {N})"
+        # Validate mask dimensions (Ny x Nx)
+        expected_shape = (self.Ny, self.Nx)
+        assert mask.shape == expected_shape, f"Mask shape {mask.shape} must match grid size {expected_shape}"
         
         # Compute PINN values and interface
         self._setup_pinn_interface()
     
     def _setup_pinn_interface(self):
         """Compute PINN values and find interface between PINN and CFD regions."""
-        N = self.N
+        Ny, Nx = self.Ny, self.Nx
         
         # Query PINN for the entire domain
         print("Querying PINN for initial field values...")
@@ -418,9 +432,11 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         # Count regions
         from scipy import ndimage as ndi
         labeled, num_regions = ndi.label(self.cfd_mask)
+        total_cells = Ny * Nx
+        cfd_cells = np.sum(self.cfd_mask)
         
-        print(f"CFD region: {np.sum(self.cfd_mask)} cells ({100*np.sum(self.cfd_mask)/(N*N):.1f}%)")
-        print(f"PINN region: {N*N - np.sum(self.cfd_mask)} cells ({100*(N*N - np.sum(self.cfd_mask))/(N*N):.1f}%)")
+        print(f"CFD region: {cfd_cells} cells ({100*cfd_cells/total_cells:.1f}%)")
+        print(f"PINN region: {total_cells - cfd_cells} cells ({100*(total_cells - cfd_cells)/total_cells:.1f}%)")
         print(f"Number of CFD regions: {num_regions}")
         print(f"Interface cells: {np.sum(self.interface_mask)}")
     
@@ -432,7 +448,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         - In PINN region: keep PINN values
         - On cylinder surface: no-slip
         """
-        N = self.N
+        Ny, Nx = self.Ny, self.Nx
         cfd_mask = self.cfd_mask_jax
         cfd_boundary = self.cfd_boundary_jax
         u_pinn = self.u_pinn_jax
@@ -440,7 +456,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         cylinder_mask = self.cylinder_mask_jax
         
         # Inlet (left boundary): parabolic profile (only in CFD region)
-        y_inlet = jnp.linspace(self.y_ini, self.y_f, N)
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
         u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
         
         u = jnp.where(
@@ -489,9 +505,9 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         Returns:
         --------
         u, v, p : ndarray
-            Velocity and pressure fields combining PINN and CFD solutions
+            Velocity and pressure fields combining PINN and CFD solutions (shape: Ny x Nx)
         """
-        N = self.N
+        Nx, Ny = self.Nx, self.Ny
         dx, dy, dt = self.dx, self.dy, self.dt
         nu = self.nu
         
@@ -547,6 +563,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         def pressure_poisson_iteration_hybrid(p, rhs):
             """Single Jacobi iteration for pressure Poisson equation (hybrid version)"""
             p_new = jnp.zeros_like(p)
+            # For uniform grid (dx ≈ dy), use standard formula
             p_new = p_new.at[1:-1, 1:-1].set(
                 0.25 * (
                     p[1:-1, 2:] + p[1:-1, :-2] +
@@ -560,7 +577,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             p_new = p_new.at[:, 0].set(p_new[:, 1])      # Inlet
             p_new = p_new.at[:, -1].set(0.0)             # Outlet (reference pressure)
             
-            # Inside cylinder: zero pressure gradient
+            # Inside cylinder: zero pressure
             p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
             
             # In PINN region: use PINN pressure
@@ -637,7 +654,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         
         print(f"Solving {self.get_simulation_name()} with hybrid PINN-CFD method...")
         print(f"Reynolds number: {self.Re}")
-        print(f"Grid size: {N}x{N}")
+        print(f"Grid size: {Nx}x{Ny}")
         print(f"Domain: x=[{self.x_ini}, {self.x_f}], y=[{self.y_ini}, {self.y_f}]")
         print(f"Cylinder: center=({self.Cx}, {self.Cy}), radius={self.radius}")
         print(f"Time step: {dt:.6e}")
@@ -672,7 +689,7 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
     Parameters:
     -----------
     N : int
-        Grid size
+        Base grid size (Ny = N, Nx = N * aspect_ratio)
     x_domain, y_domain : tuple
         Domain bounds (x_min, x_max), (y_min, y_max)
     cylinder_center : tuple
@@ -684,10 +701,19 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
         
     Returns:
     --------
-    mask : ndarray of shape (N, N)
+    mask : ndarray of shape (Ny, Nx)
         Binary mask (1 = CFD region, 0 = PINN region)
     """
-    mask = np.zeros((N, N), dtype=np.int32)
+    x_ini, x_f = x_domain
+    y_ini, y_f = y_domain
+    Lx = x_f - x_ini
+    Ly = y_f - y_ini
+    aspect_ratio = Lx / Ly
+    
+    Ny = N
+    Nx = int(N * aspect_ratio)
+    
+    mask = np.zeros((Ny, Nx), dtype=np.int32)
     mask[:border_width, :] = 1   # Bottom border
     mask[-border_width:, :] = 1  # Top border
     mask[:, :border_width] = 1   # Left border (inlet)
@@ -703,7 +729,7 @@ def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_r
     Parameters:
     -----------
     N : int
-        Grid size
+        Base grid size (Ny = N, Nx = N * aspect_ratio)
     x_domain, y_domain : tuple
         Domain bounds
     cylinder_center : tuple
@@ -715,15 +741,21 @@ def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_r
         
     Returns:
     --------
-    mask : ndarray of shape (N, N)
+    mask : ndarray of shape (Ny, Nx)
         Binary mask (1 = CFD region, 0 = PINN region)
     """
     x_ini, x_f = x_domain
     y_ini, y_f = y_domain
+    Lx = x_f - x_ini
+    Ly = y_f - y_ini
+    aspect_ratio = Lx / Ly
+    
+    Ny = N
+    Nx = int(N * aspect_ratio)
     Cx, Cy = cylinder_center
     
-    x = np.linspace(x_ini, x_f, N)
-    y = np.linspace(y_ini, y_f, N)
+    x = np.linspace(x_ini, x_f, Nx)
+    y = np.linspace(y_ini, y_f, Ny)
     X, Y = np.meshgrid(x, y)
     
     # Wake region: rectangular region behind cylinder
@@ -731,7 +763,7 @@ def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_r
     wake_end = min(Cx + cylinder_radius + wake_length, x_f)
     wake_width = 2 * cylinder_radius
     
-    mask = np.zeros((N, N), dtype=np.int32)
+    mask = np.zeros((Ny, Nx), dtype=np.int32)
     wake_region = (
         (X >= wake_start) & (X <= wake_end) &
         (Y >= Cy - wake_width) & (Y <= Cy + wake_width)
