@@ -218,10 +218,8 @@ def run_cylinder_simulation(args):
         
         print(f"\nSimulation time: {elapsed:.2f} seconds")
         
-        # Create coordinate arrays for plotting
-        x = np.linspace(args.x_min, args.x_max, args.grid_size)
-        y = np.linspace(args.y_min, args.y_max, args.grid_size)
-        X, Y = np.meshgrid(x, y)
+        # Use coordinate arrays from the simulation (handles Nx × Ny grid)
+        X, Y = sim.X, sim.Y
         
         circle_info = (args.cylinder_x, args.cylinder_y, args.cylinder_radius)
         

@@ -116,10 +116,10 @@ def plot_solution(u, v, p, x=None, y=None, title_prefix='', save_path=None,
     Re : float, optional
         Reynolds number for auto-generating filename
     """
-    N = u.shape[0]
+    Ny, Nx = u.shape
     if x is None or y is None:
-        x = np.linspace(0, 1, N)
-        y = np.linspace(0, 1, N)
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
         x, y = np.meshgrid(x, y)
     
     vel_mag = np.sqrt(u**2 + v**2)
@@ -216,10 +216,10 @@ def plot_hybrid_solution(u, v, p, mask, x=None, y=None, save_path=None,
     simulation_type, mode, Re : optional
         For auto-generating filename
     """
-    N = u.shape[0]
+    Ny, Nx = u.shape
     if x is None or y is None:
-        x = np.linspace(0, 1, N)
-        y = np.linspace(0, 1, N)
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
         x, y = np.meshgrid(x, y)
     
     vel_mag = np.sqrt(u**2 + v**2)
@@ -291,9 +291,9 @@ def plot_comparison(solutions, labels, x=None, y=None, save_path=None,
     n_solutions = len(solutions)
     
     if x is None or y is None:
-        N = solutions[0][0].shape[0]
-        x = np.linspace(0, 1, N)
-        y = np.linspace(0, 1, N)
+        Ny, Nx = solutions[0][0].shape
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
         x, y = np.meshgrid(x, y)
     
     fig, axes = plt.subplots(n_solutions, 3, figsize=(15, 5*n_solutions))
@@ -352,10 +352,10 @@ def plot_streamlines(u, v, x=None, y=None, density=1.5, save_path=None,
     simulation_type, mode, Re : optional
         For auto-generating filename
     """
-    N = u.shape[0]
+    Ny, Nx = u.shape
     if x is None or y is None:
-        x = np.linspace(0, 1, N)
-        y = np.linspace(0, 1, N)
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
         X, Y = np.meshgrid(x, y)
     else:
         X, Y = x, y
