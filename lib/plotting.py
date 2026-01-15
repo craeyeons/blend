@@ -38,7 +38,7 @@ def generate_filename(simulation_type, mode, Re, suffix='', output_dir='results'
 
 
 def plot_contour(x, y, z, title, levels=50, ax=None, add_colorbar=True,
-                 cmap='jet', show_circle=None):
+                 cmap='rainbow', show_circle=None):
     """
     Create a contour plot.
     
@@ -129,19 +129,19 @@ def plot_solution(u, v, p, x=None, y=None, title_prefix='', save_path=None,
     
     ax1 = fig.add_subplot(gs[0, 0])
     plot_contour(x, y, vel_mag, f'{title_prefix}|u| (velocity magnitude)', 
-                 ax=ax1, cmap='jet', show_circle=show_circle)
+                 ax=ax1, cmap='rainbow', show_circle=show_circle)
     
     ax2 = fig.add_subplot(gs[0, 1])
     plot_contour(x, y, p, f'{title_prefix}p (pressure)', 
-                 ax=ax2, cmap='jet', show_circle=show_circle)
+                 ax=ax2, cmap='rainbow', show_circle=show_circle)
     
     ax3 = fig.add_subplot(gs[1, 0])
     plot_contour(x, y, u, f'{title_prefix}u (x-velocity)', 
-                 ax=ax3, cmap='jet', show_circle=show_circle)
+                 ax=ax3, cmap='rainbow', show_circle=show_circle)
     
     ax4 = fig.add_subplot(gs[1, 1])
     plot_contour(x, y, v, f'{title_prefix}v (y-velocity)', 
-                 ax=ax4, cmap='jet', show_circle=show_circle)
+                 ax=ax4, cmap='rainbow', show_circle=show_circle)
     
     plt.tight_layout()
     
@@ -225,7 +225,7 @@ def plot_hybrid_solution(u, v, p, mask, x=None, y=None, save_path=None,
     vel_mag = np.sqrt(u**2 + v**2)
     
     def contour_with_mask(ax, X, Y, z, title, mask):
-        cf = ax.contourf(X, Y, z, levels=50, cmap='jet')
+        cf = ax.contourf(X, Y, z, levels=50, cmap='rainbow')
         ax.contour(X, Y, mask, levels=[0.5], colors='white', 
                    linewidths=2, linestyles='--')
         if show_circle:
@@ -306,7 +306,7 @@ def plot_comparison(solutions, labels, x=None, y=None, save_path=None,
         
         for j, (field, name) in enumerate([(vel_mag, '|u|'), (u, 'u'), (p, 'p')]):
             ax = axes[i, j]
-            cf = ax.contourf(x, y, field, levels=50, cmap='jet')
+            cf = ax.contourf(x, y, field, levels=50, cmap='rainbow')
             if show_circle:
                 cx, cy, r = show_circle
                 circle = plt.Circle((cx, cy), r, fc='black')
@@ -367,7 +367,7 @@ def plot_streamlines(u, v, x=None, y=None, density=1.5, save_path=None,
     fig, ax = plt.subplots(figsize=(12, 8))
     
     # Background contour of velocity magnitude
-    cf = ax.contourf(X, Y, vel_mag, levels=50, cmap='jet', alpha=0.8)
+    cf = ax.contourf(X, Y, vel_mag, levels=50, cmap='rainbow', alpha=0.8)
     ax.set_xlim(x.min(), x.max())
     ax.set_ylim(y.min(), y.max())
 
