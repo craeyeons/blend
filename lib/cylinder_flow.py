@@ -77,7 +77,7 @@ class CylinderFlowSimulation(BaseSimulation):
         # Uniform grid spacing
         self.dx = self.Lx / (self.Nx - 1)
         self.dy = self.Ly / (self.Ny - 1)
-        self.dt = 0.001 * min(self.dx, self.dy)
+        self.dt = 0.005 * min(self.dx, self.dy)
         
         # Create coordinate grid (Ny rows, Nx columns)
         x = np.linspace(self.x_ini, self.x_f, self.Nx)
