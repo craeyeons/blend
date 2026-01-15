@@ -55,6 +55,31 @@ def compute_uv_from_psi(network, xy):
     return u.numpy(), v.numpy()
 
 
+def compute_uv_direct(network, xy):
+    """
+    Extract flow velocities (u, v) directly from network output.
+    
+    For network with output (u, v, p):
+    u and v are directly available.
+    
+    Parameters:
+    -----------
+    network : tf.keras.Model
+        Network that outputs (u, v, p)
+    xy : ndarray
+        Input coordinates
+    
+    Returns:
+    --------
+    u, v : ndarray
+        Velocity components
+    """
+    uvp = network.predict(xy, batch_size=len(xy))
+    u = uvp[..., 0]
+    v = uvp[..., 1]
+    return u, v
+
+
 def run_cavity_simulation(args):
     """Run lid-driven cavity flow simulation."""
     from lib.cavity_flow import (
@@ -178,7 +203,13 @@ def run_cavity_simulation(args):
 
 def run_cylinder_simulation(args):
     """Run flow around cylinder simulation."""
-    from lib.cylinder_flow import CylinderFlowSimulation
+    from lib.cylinder_flow import (
+        CylinderFlowSimulation,
+        CylinderFlowHybridSimulation,
+        create_cylinder_boundary_mask,
+        create_cylinder_wake_mask
+    )
+    from cylinder_network import Network as CylinderNetwork
     
     print("=" * 60)
     print("FLOW AROUND CYLINDER SIMULATION")
@@ -189,10 +220,10 @@ def run_cylinder_simulation(args):
     nu = 0.01
     rho = 1.0
     D = 2 * args.cylinder_radius  # Cylinder diameter
-    Re = rho * u0 * D / nu
+    Re = rho * u0 / nu
     
     print(f"\nPhysical parameters:")
-    print(f"  Reynolds number (based on diameter): {Re}")
+    print(f"  Reynolds number: {Re}")
     print(f"  Grid size: {args.grid_size}x{args.grid_size}")
     print(f"  Domain: x=[{args.x_min}, {args.x_max}], y=[{args.y_min}, {args.y_max}]")
     print(f"  Cylinder: center=({args.cylinder_x}, {args.cylinder_y}), radius={args.cylinder_radius}")
@@ -232,13 +263,157 @@ def run_cylinder_simulation(args):
                         show_circle=circle_info,
                         title='Flow Around Cylinder - Streamlines')
     
-    elif args.mode == 'pinn':
-        # PINN training for cylinder flow
-        from lib.cylinder_flow import CylinderFlowPINNSimulation
+    elif args.mode == 'hybrid':
+        # Hybrid PINN-CFD simulation for cylinder flow
+        # Build cylinder network (outputs u, v, p directly)
+        network = CylinderNetwork().build(num_inputs=2, layers=[48,48,48,48], 
+                                          activation='tanh', num_outputs=3)
         
-        print("PINN training for cylinder flow not yet implemented.")
-        print("Please use CFD mode or provide a pre-trained model.")
-        return None, None, None
+        # Determine model path - auto-select based on Re if not provided
+        if args.model_path:
+            model_path = args.model_path
+        else:
+            # Auto-select model based on Reynolds number
+            if Re <= 10:
+                model_path = './models/pinn_cylinder_1.0.h5'
+            else:
+                model_path = './models/pinn_cylinder_100.0.h5'
+            print(f"Auto-selected model: {model_path}")
+        
+        print(f"Loading PINN model from {model_path}")
+        network.load_weights(model_path)
+        
+        # Create mask - CFD at boundaries and wake, PINN elsewhere
+        x_domain = (args.x_min, args.x_max)
+        y_domain = (args.y_min, args.y_max)
+        cylinder_center = (args.cylinder_x, args.cylinder_y)
+        
+        border_width = int(args.grid_size * args.border_fraction)
+        
+        # Use boundary mask with wake region for better accuracy
+        if args.mask_type == 'boundary':
+            mask = create_cylinder_boundary_mask(
+                args.grid_size, x_domain, y_domain,
+                cylinder_center, args.cylinder_radius,
+                border_width=border_width,
+                include_wake=False
+            )
+        elif args.mask_type == 'wake':
+            mask = create_cylinder_wake_mask(
+                args.grid_size, x_domain, y_domain,
+                cylinder_center, args.cylinder_radius,
+                wake_length=args.wake_length
+            )
+        else:  # 'combined' - default
+            mask = create_cylinder_boundary_mask(
+                args.grid_size, x_domain, y_domain,
+                cylinder_center, args.cylinder_radius,
+                border_width=border_width,
+                include_wake=True,
+                wake_length=args.wake_length
+            )
+        
+        sim = CylinderFlowHybridSimulation(
+            network=network,
+            uv_func=compute_uv_direct,
+            mask=mask,
+            Re=Re,
+            N=args.grid_size,
+            max_iter=args.max_iter,
+            tol=args.tolerance,
+            x_domain=x_domain,
+            y_domain=y_domain,
+            cylinder_center=cylinder_center,
+            cylinder_radius=args.cylinder_radius,
+            inlet_velocity=u0
+        )
+        
+        start_time = time.time()
+        u, v, p = sim.solve()
+        elapsed = time.time() - start_time
+        
+        print(f"\nSimulation time: {elapsed:.2f} seconds")
+        
+        # Use coordinate arrays from the simulation
+        X, Y = sim.X, sim.Y
+        
+        circle_info = (args.cylinder_x, args.cylinder_y, args.cylinder_radius)
+        
+        # Plot results
+        plot_solution(u, v, p, x=X, y=Y, title_prefix='Hybrid: ',
+                     save_path='cylinder_flow_hybrid.png',
+                     show_circle=circle_info)
+        plot_hybrid_solution(u, v, p, mask, x=X, y=Y,
+                            save_path='cylinder_flow_hybrid_mask.png',
+                            show_circle=circle_info)
+        plot_streamlines(u, v, x=X, y=Y,
+                        save_path='cylinder_flow_hybrid_streamlines.png',
+                        show_circle=circle_info,
+                        title='Hybrid PINN-CFD - Streamlines')
+    
+    elif args.mode == 'pinn':
+        # PINN-only solution (using pre-trained model)
+        # Build cylinder network (outputs u, v, p directly)
+        network = CylinderNetwork().build(num_inputs=2, layers=[48,48,48,48],
+                                          activation='tanh', num_outputs=3)
+        
+        # Determine model path - auto-select based on Re if not provided
+        if args.model_path:
+            model_path = args.model_path
+        else:
+            # Auto-select model based on Reynolds number
+            if Re <= 10:
+                model_path = './models/pinn_cylinder_1.0.h5'
+            else:
+                model_path = './models/pinn_cylinder_100.0.h5'
+            print(f"Auto-selected model: {model_path}")
+        
+        print(f"Loading PINN model from {model_path}")
+        network.load_weights(model_path)
+        
+        # Create grid matching cylinder domain (Nx × Ny with aspect ratio)
+        x_domain = (args.x_min, args.x_max)
+        y_domain = (args.y_min, args.y_max)
+        Lx = args.x_max - args.x_min
+        Ly = args.y_max - args.y_min
+        aspect_ratio = Lx / Ly
+        
+        Ny = args.grid_size
+        Nx = int(args.grid_size * aspect_ratio)
+        
+        x = np.linspace(args.x_min, args.x_max, Nx)
+        y = np.linspace(args.y_min, args.y_max, Ny)
+        X, Y = np.meshgrid(x, y)
+        xy = np.stack([X.flatten(), Y.flatten()], axis=-1)
+        
+        # Predict using PINN
+        start_time = time.time()
+        uvp = network.predict(xy, batch_size=len(xy))
+        u_pinn, v_pinn = compute_uv_direct(network, xy)
+        elapsed = time.time() - start_time
+        
+        u = u_pinn.reshape(X.shape)
+        v = v_pinn.reshape(X.shape)
+        p = uvp[..., 2].reshape(X.shape)
+        
+        # Apply cylinder mask (zero velocity inside cylinder)
+        Cx, Cy = args.cylinder_x, args.cylinder_y
+        cylinder_mask = ((X - Cx)**2 + (Y - Cy)**2) <= args.cylinder_radius**2
+        u = np.where(cylinder_mask, 0.0, u)
+        v = np.where(cylinder_mask, 0.0, v)
+        
+        print(f"\nPrediction time: {elapsed:.2f} seconds")
+        
+        circle_info = (args.cylinder_x, args.cylinder_y, args.cylinder_radius)
+        
+        # Plot results
+        plot_solution(u, v, p, x=X, y=Y, title_prefix='PINN: ',
+                     save_path='cylinder_flow_pinn.png',
+                     show_circle=circle_info)
+        plot_streamlines(u, v, x=X, y=Y,
+                        save_path='cylinder_flow_pinn_streamlines.png',
+                        show_circle=circle_info,
+                        title='PINN - Flow Around Cylinder - Streamlines')
     
     return u, v, p
 
@@ -255,8 +430,23 @@ Examples:
   # Run cavity flow with hybrid PINN-CFD
   python main.py --simulation cavity --mode hybrid --model-path ./models/pinn_cavity_flow.h5
   
-  # Run cylinder flow
+  # Run cylinder flow with pure CFD
   python main.py --simulation cylinder --mode cfd --grid-size 200
+  
+  # Run cylinder flow with hybrid PINN-CFD (combined mask - default)
+  python main.py --simulation cylinder --mode hybrid --grid-size 100
+  
+  # Run cylinder flow with hybrid using only boundary CFD
+  python main.py --simulation cylinder --mode hybrid --mask-type boundary
+  
+  # Run cylinder flow with hybrid using only wake CFD
+  python main.py --simulation cylinder --mode hybrid --mask-type wake --wake-length 0.5
+  
+  # Run cylinder flow with PINN only
+  python main.py --simulation cylinder --mode pinn --grid-size 100
+  
+  # Run cylinder flow with specific model
+  python main.py --simulation cylinder --mode hybrid --model-path ./models/pinn_cylinder_100.0.h5
         """
     )
     
@@ -295,6 +485,12 @@ Examples:
                        help='Cylinder center y (default: 0.5)')
     parser.add_argument('--cylinder-radius', type=float, default=0.1,
                        help='Cylinder radius (default: 0.1)')
+    parser.add_argument('--mask-type', type=str, default='combined',
+                       choices=['boundary', 'wake', 'combined'],
+                       help='Mask type for hybrid mode: boundary (CFD at edges), '
+                            'wake (CFD in wake only), combined (both) (default: combined)')
+    parser.add_argument('--wake-length', type=float, default=1.0,
+                       help='Length of wake region for CFD in hybrid mode (default: 1.0)')
     
     args = parser.parse_args()
     

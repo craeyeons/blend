@@ -681,10 +681,10 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
 
 # Mask creation utilities for cylinder flow
 def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylinder_radius, 
-                                   border_width=10):
+                                   border_width=10, include_wake=False, wake_length=1.0):
     """
     Create a mask where PINN is used in the center (around cylinder) 
-    and CFD is used near the domain boundaries.
+    and CFD is used near the domain boundaries and optionally in the wake.
     
     Parameters:
     -----------
@@ -698,6 +698,10 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
         Cylinder radius
     border_width : int
         Width of the CFD region at each boundary
+    include_wake : bool
+        Whether to include the wake region in CFD
+    wake_length : float
+        Length of the wake region behind the cylinder (if include_wake=True)
         
     Returns:
     --------
@@ -712,19 +716,40 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
     
     Ny = N
     Nx = int(N * aspect_ratio)
+    Cx, Cy = cylinder_center
     
     mask = np.zeros((Ny, Nx), dtype=np.int32)
+    
+    # Domain boundaries - CFD region
     mask[:border_width, :] = 1   # Bottom border
     mask[-border_width:, :] = 1  # Top border
     mask[:, :border_width] = 1   # Left border (inlet)
     mask[:, -border_width:] = 1  # Right border (outlet)
+    
+    # Optionally include wake region
+    if include_wake:
+        x = np.linspace(x_ini, x_f, Nx)
+        y = np.linspace(y_ini, y_f, Ny)
+        X, Y = np.meshgrid(x, y)
+        
+        wake_start = Cx + cylinder_radius
+        wake_end = min(Cx + cylinder_radius + wake_length, x_f)
+        wake_width = 2 * cylinder_radius
+        
+        wake_region = (
+            (X >= wake_start) & (X <= wake_end) &
+            (Y >= Cy - wake_width) & (Y <= Cy + wake_width)
+        )
+        mask[wake_region] = 1
+    
     return mask
 
 
 def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_radius,
-                               wake_length=1.0):
+                               wake_length=1.0, wake_width_factor=2.0):
     """
-    Create a mask where CFD is used in the wake region behind the cylinder.
+    Create a mask where CFD is used ONLY in the wake region behind the cylinder.
+    PINN is used everywhere else.
     
     Parameters:
     -----------
@@ -738,6 +763,8 @@ def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_r
         Cylinder radius
     wake_length : float
         Length of the wake region behind the cylinder
+    wake_width_factor : float
+        Width of wake = wake_width_factor * cylinder_radius on each side
         
     Returns:
     --------
@@ -761,7 +788,7 @@ def create_cylinder_wake_mask(N, x_domain, y_domain, cylinder_center, cylinder_r
     # Wake region: rectangular region behind cylinder
     wake_start = Cx + cylinder_radius
     wake_end = min(Cx + cylinder_radius + wake_length, x_f)
-    wake_width = 2 * cylinder_radius
+    wake_width = wake_width_factor * cylinder_radius
     
     mask = np.zeros((Ny, Nx), dtype=np.int32)
     wake_region = (
