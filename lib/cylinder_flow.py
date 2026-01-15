@@ -656,10 +656,11 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
 
 # Mask creation utilities for cylinder flow
 def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylinder_radius, 
-                                   border_width=10, include_wake=False, wake_length=1.0):
+                                   border_width=10, cfd_radius_factor=3.0, include_wake=False, 
+                                   wake_length=1.0):
     """
-    Create a mask where PINN is used in the center (around cylinder) 
-    and CFD is used near the domain boundaries and optionally in the wake.
+    Create a mask where CFD is used near the cylinder, at domain boundaries,
+    and PINN is used in the middle region (far from both cylinder and edges).
     
     Parameters:
     -----------
@@ -672,7 +673,9 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
     cylinder_radius : float
         Cylinder radius
     border_width : int
-        Width of the CFD region at each boundary
+        Width of the CFD region at each boundary (in grid points)
+    cfd_radius_factor : float
+        CFD region extends to cfd_radius_factor * cylinder_radius from cylinder center
     include_wake : bool
         Whether to include the wake region in CFD
     wake_length : float
@@ -693,20 +696,26 @@ def create_cylinder_boundary_mask(N, x_domain, y_domain, cylinder_center, cylind
     Nx = int(N * aspect_ratio)
     Cx, Cy = cylinder_center
     
+    # Create coordinate grid
+    x = np.linspace(x_ini, x_f, Nx)
+    y = np.linspace(y_ini, y_f, Ny)
+    X, Y = np.meshgrid(x, y)
+    
     mask = np.zeros((Ny, Nx), dtype=np.int32)
     
-    # Domain boundaries - CFD region
+    # 1. CFD near the cylinder (within cfd_radius_factor * cylinder_radius)
+    cfd_radius = cfd_radius_factor * cylinder_radius
+    dist_from_cylinder = np.sqrt((X - Cx)**2 + (Y - Cy)**2)
+    mask[dist_from_cylinder <= cfd_radius] = 1
+    
+    # 2. CFD at domain boundaries
     mask[:border_width, :] = 1   # Bottom border
     mask[-border_width:, :] = 1  # Top border
     mask[:, :border_width] = 1   # Left border (inlet)
     mask[:, -border_width:] = 1  # Right border (outlet)
     
-    # Optionally include wake region
+    # 3. Optionally include wake region
     if include_wake:
-        x = np.linspace(x_ini, x_f, Nx)
-        y = np.linspace(y_ini, y_f, Ny)
-        X, Y = np.meshgrid(x, y)
-        
         wake_start = Cx + cylinder_radius
         wake_end = min(Cx + cylinder_radius + wake_length, x_f)
         wake_width = 2 * cylinder_radius

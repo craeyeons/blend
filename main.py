@@ -296,7 +296,8 @@ def run_cylinder_simulation(args):
                 args.grid_size, x_domain, y_domain,
                 cylinder_center, args.cylinder_radius,
                 border_width=border_width,
-                include_wake=False
+                include_wake=False,
+                cfd_radius_factor=args.cfd_radius_factor
             )
         elif args.mask_type == 'wake':
             mask = create_cylinder_wake_mask(
@@ -310,7 +311,8 @@ def run_cylinder_simulation(args):
                 cylinder_center, args.cylinder_radius,
                 border_width=border_width,
                 include_wake=True,
-                wake_length=args.wake_length
+                wake_length=args.wake_length,
+                cfd_radius_factor=args.cfd_radius_factor
             )
         
         sim = CylinderFlowHybridSimulation(
@@ -491,6 +493,8 @@ Examples:
                             'wake (CFD in wake only), combined (both) (default: combined)')
     parser.add_argument('--wake-length', type=float, default=1.0,
                        help='Length of wake region for CFD in hybrid mode (default: 1.0)')
+    parser.add_argument('--cfd-radius-factor', type=float, default=3.0,
+                       help='CFD region extends this factor times cylinder_radius from cylinder center (default: 3.0)')
     
     args = parser.parse_args()
     
