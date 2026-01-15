@@ -442,11 +442,11 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
     
     def apply_hybrid_boundary_conditions(self, u, v):
         """
-        Apply boundary conditions for hybrid solver:
-        - At domain walls: standard cylinder flow BCs
-        - At PINN-CFD interface: use PINN values as Dirichlet BC
-        - In PINN region: keep PINN values
-        - On cylinder surface: no-slip
+        Apply boundary conditions for hybrid solver (correct order):
+        1. Domain boundary conditions ALWAYS enforced (physical constraints)
+        2. PINN values in interior PINN region (not on domain boundaries)
+        3. Interface cells get PINN values as coupling BC
+        4. Cylinder surface: always no-slip
         """
         Ny, Nx = self.Ny, self.Nx
         cfd_mask = self.cfd_mask_jax
@@ -455,33 +455,41 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         v_pinn = self.v_pinn_jax
         cylinder_mask = self.cylinder_mask_jax
         
-        # First, set PINN values in PINN region (cfd_mask=0)
-        u = jnp.where(cfd_mask == 0, u_pinn, u)
-        v = jnp.where(cfd_mask == 0, v_pinn, v)
+        # Step 1: Apply domain boundary conditions (always, regardless of PINN/CFD region)
+        # Inlet (left boundary, x=0): parabolic profile
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
+        u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
+        u = u.at[:, 0].set(u_inlet_profile)
+        v = v.at[:, 0].set(0.0)
         
-        # At interface (CFD cells adjacent to PINN region): use PINN values as BC
+        # Outlet (right boundary): zero gradient
+        u = u.at[:, -1].set(u[:, -2])
+        v = v.at[:, -1].set(v[:, -2])
+        
+        # Top wall (y=y_f): no-slip
+        u = u.at[-1, :].set(0.0)
+        v = v.at[-1, :].set(0.0)
+        
+        # Bottom wall (y=y_ini): no-slip
+        u = u.at[0, :].set(0.0)
+        v = v.at[0, :].set(0.0)
+        
+        # Step 2: Set PINN values in interior PINN region (away from domain boundaries)
+        # Create a mask for interior points: PINN region but not on domain boundaries
+        interior_pinn = (cfd_mask == 0) & ~(
+            (jnp.arange(Ny)[:, None] == 0) |      # bottom wall
+            (jnp.arange(Ny)[:, None] == Ny - 1) | # top wall
+            (jnp.arange(Nx)[None, :] == 0) |      # inlet (left)
+            (jnp.arange(Nx)[None, :] == Nx - 1)   # outlet (right)
+        )
+        u = jnp.where(interior_pinn, u_pinn, u)
+        v = jnp.where(interior_pinn, v_pinn, v)
+        
+        # Step 3: At interface (CFD cells adjacent to PINN region): use PINN values as BC
         u = jnp.where(interface_mask, u_pinn, u)
         v = jnp.where(interface_mask, v_pinn, v)
         
-        # Inlet (left boundary, x=0): parabolic profile (only in CFD region)
-        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
-        u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
-        u = u.at[:, 0].set(jnp.where(cfd_mask[:, 0] == 1, u_inlet_profile, u[:, 0]))
-        v = v.at[:, 0].set(jnp.where(cfd_mask[:, 0] == 1, 0.0, v[:, 0]))
-        
-        # Outlet (right boundary): zero gradient (only in CFD region)
-        u = u.at[:, -1].set(jnp.where(cfd_mask[:, -1] == 1, u[:, -2], u[:, -1]))
-        v = v.at[:, -1].set(jnp.where(cfd_mask[:, -1] == 1, v[:, -2], v[:, -1]))
-        
-        # Top wall (y=y_f): no-slip (only in CFD region)
-        u = u.at[-1, :].set(jnp.where(cfd_mask[-1, :] == 1, 0.0, u[-1, :]))
-        v = v.at[-1, :].set(jnp.where(cfd_mask[-1, :] == 1, 0.0, v[-1, :]))
-        
-        # Bottom wall (y=y_ini): no-slip (only in CFD region)
-        u = u.at[0, :].set(jnp.where(cfd_mask[0, :] == 1, 0.0, u[0, :]))
-        v = v.at[0, :].set(jnp.where(cfd_mask[0, :] == 1, 0.0, v[0, :]))
-        
-        # Cylinder surface: no-slip (always)
+        # Step 4: Cylinder surface: always no-slip
         u = jnp.where(cylinder_mask == 1, 0.0, u)
         v = jnp.where(cylinder_mask == 1, 0.0, v)
         
