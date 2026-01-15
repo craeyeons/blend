@@ -450,19 +450,22 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         """
         Ny, Nx = self.Ny, self.Nx
         cfd_mask = self.cfd_mask_jax
-        cfd_boundary = self.cfd_boundary_jax
+        interface_mask = self.interface_jax
         u_pinn = self.u_pinn_jax
         v_pinn = self.v_pinn_jax
         cylinder_mask = self.cylinder_mask_jax
         
-        # Inlet (left boundary): parabolic profile (only in CFD region)
+        # First, set PINN values in PINN region (cfd_mask=0)
+        u = jnp.where(cfd_mask == 0, u_pinn, u)
+        v = jnp.where(cfd_mask == 0, v_pinn, v)
+        
+        # At interface (CFD cells adjacent to PINN region): use PINN values as BC
+        u = jnp.where(interface_mask, u_pinn, u)
+        v = jnp.where(interface_mask, v_pinn, v)
+        
+        # Inlet (left boundary, x=0): parabolic profile (only in CFD region)
         y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
         u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
-        
-        u = jnp.where(
-            (jnp.arange(u.shape[1])[None, :] == 0) & (cfd_mask == 1),
-            u_inlet_profile[:, None], u
-        )
         u = u.at[:, 0].set(jnp.where(cfd_mask[:, 0] == 1, u_inlet_profile, u[:, 0]))
         v = v.at[:, 0].set(jnp.where(cfd_mask[:, 0] == 1, 0.0, v[:, 0]))
         
@@ -481,20 +484,6 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         # Cylinder surface: no-slip (always)
         u = jnp.where(cylinder_mask == 1, 0.0, u)
         v = jnp.where(cylinder_mask == 1, 0.0, v)
-        
-        # At interface (CFD cells adjacent to PINN region): use PINN values
-        is_domain_boundary = (
-            (jnp.arange(u.shape[0])[:, None] == 0) |
-            (jnp.arange(u.shape[0])[:, None] == u.shape[0] - 1) |
-            (jnp.arange(u.shape[1])[None, :] == 0) |
-            (jnp.arange(u.shape[1])[None, :] == u.shape[1] - 1)
-        )
-        u = jnp.where(cfd_boundary & ~is_domain_boundary, u_pinn, u)
-        v = jnp.where(cfd_boundary & ~is_domain_boundary, v_pinn, v)
-        
-        # In PINN region (cfd_mask=0): always use PINN values
-        u = jnp.where(cfd_mask == 0, u_pinn, u)
-        v = jnp.where(cfd_mask == 0, v_pinn, v)
         
         return u, v
     
@@ -604,14 +593,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             u_star = u + dt * (-conv_u + nu * lap_u)
             v_star = v + dt * (-conv_v + nu * lap_v)
             
-            # Only update in CFD region, keep PINN values elsewhere
-            u_star = jnp.where(cfd_mask_jax == 1, u_star, u_pinn_jax)
-            v_star = jnp.where(cfd_mask_jax == 1, v_star, v_pinn_jax)
-            
-            # Zero velocity inside cylinder
-            u_star = jnp.where(cylinder_mask == 1, 0.0, u_star)
-            v_star = jnp.where(cylinder_mask == 1, 0.0, v_star)
-            
+            # Apply boundary conditions (this sets PINN values, interface, and wall BCs)
             u_star, v_star = apply_hybrid_bc(u_star, v_star)
             
             # Step 2: Solve pressure Poisson equation
@@ -619,7 +601,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             rhs = div_star / dt
             p_new = solve_pressure_poisson_hybrid(p, rhs)
             
-            # Step 3: Correct velocity
+            # Step 3: Correct velocity (only in interior CFD cells, not at interface)
             dpdx = jnp.zeros_like(p_new)
             dpdy = jnp.zeros_like(p_new)
             dpdx = dpdx.at[1:-1, 1:-1].set((p_new[1:-1, 2:] - p_new[1:-1, :-2]) / (2*dx))
@@ -628,14 +610,7 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             u_new = u_star - dt * dpdx
             v_new = v_star - dt * dpdy
             
-            # Only update in CFD region
-            u_new = jnp.where(cfd_mask_jax == 1, u_new, u_pinn_jax)
-            v_new = jnp.where(cfd_mask_jax == 1, v_new, v_pinn_jax)
-            
-            # Zero velocity inside cylinder
-            u_new = jnp.where(cylinder_mask == 1, 0.0, u_new)
-            v_new = jnp.where(cylinder_mask == 1, 0.0, v_new)
-            
+            # Apply boundary conditions again after pressure correction
             u_new, v_new = apply_hybrid_bc(u_new, v_new)
             
             return u_new, v_new, p_new
