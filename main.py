@@ -417,6 +417,44 @@ def run_cylinder_simulation(args):
                         show_circle=circle_info,
                         title='PINN - Flow Around Cylinder - Streamlines')
     
+    elif args.mode == 'rejector':
+        # Use trained rejector model to determine CFD/PINN regions
+        from inference_rejector import RejectorInference
+        
+        print("Using trained rejector for CFD/PINN region selection")
+        print(f"Rejector model directory: {args.rejector_model_dir}")
+        print(f"Rejector threshold: {args.rejector_threshold}")
+        
+        try:
+            inference = RejectorInference(
+                model_dir=args.rejector_model_dir,
+                pinn_model_dir='./models'
+            )
+            
+            results = inference.run_simulation(
+                Re=Re,
+                threshold=args.rejector_threshold,
+                max_iter=args.max_iter,
+                compare_with_cfd=args.compare_with_cfd,
+                save_results=True,
+                output_dir='./results'
+            )
+            
+            u = results['u']
+            v = results['v']
+            p = results['p']
+            
+            print(f"\nRejector Results:")
+            print(f"  CFD fraction used: {results['cfd_fraction']:.2%}")
+            
+            if 'l2_error' in results:
+                print(f"  L2 Error vs pure CFD: {results['l2_error']:.6f}")
+            
+        except FileNotFoundError as e:
+            print(f"\nError: {e}")
+            print("Please train the rejector first using: python train_rejector.py")
+            return None, None, None
+    
     return u, v, p
 
 
@@ -449,6 +487,12 @@ Examples:
   
   # Run cylinder flow with specific model
   python main.py --simulation cylinder --mode hybrid --model-path ./models/pinn_cylinder_100.0.h5
+  
+  # Run cylinder flow with trained rejector (learned CFD/PINN mask)
+  python main.py --simulation cylinder --mode rejector
+  
+  # Run rejector with comparison to pure CFD
+  python main.py --simulation cylinder --mode rejector --compare-with-cfd
         """
     )
     
@@ -457,8 +501,8 @@ Examples:
                        choices=['cavity', 'cylinder'],
                        help='Simulation type (default: cavity)')
     parser.add_argument('--mode', '-m', type=str, default='cfd',
-                       choices=['cfd', 'hybrid', 'pinn'],
-                       help='Solver mode (default: cfd)')
+                       choices=['cfd', 'hybrid', 'pinn', 'rejector'],
+                       help='Solver mode: cfd, hybrid, pinn, or rejector (default: cfd)')
     parser.add_argument('--grid-size', '-N', type=int, default=100,
                        help='Grid size (default: 100)')
     parser.add_argument('--max-iter', type=int, default=200000,
@@ -495,6 +539,14 @@ Examples:
                        help='Length of wake region for CFD in hybrid mode (default: 1.0)')
     parser.add_argument('--cfd-radius-factor', type=float, default=3.0,
                        help='CFD region extends this factor times cylinder_radius from cylinder center (default: 3.0)')
+    
+    # Rejector mode arguments
+    parser.add_argument('--rejector-model-dir', type=str, default='./rejector_output',
+                       help='Directory containing trained rejector model (default: ./rejector_output)')
+    parser.add_argument('--rejector-threshold', type=float, default=0.5,
+                       help='Threshold for rejector mask (default: 0.5)')
+    parser.add_argument('--compare-with-cfd', action='store_true',
+                       help='Compare rejector result with pure CFD')
     
     args = parser.parse_args()
     

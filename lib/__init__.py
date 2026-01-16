@@ -10,6 +10,7 @@ Modules:
 - cavity_flow: Lid-driven cavity flow simulations
 - cylinder_flow: Flow around cylinder simulations
 - network: Neural network architectures
+- rejector_network: Rejector network for CFD/PINN region selection
 - plotting: Visualization utilities
 """
 
@@ -29,6 +30,12 @@ from lib.cylinder_flow import (
     create_cylinder_wake_mask,
 )
 from lib.network import Network
+from lib.rejector_network import (
+    RejectorNetwork,
+    RejectorLoss,
+    compute_weighted_loss,
+    create_rejector_training_data,
+)
 from lib.plotting import (
     generate_filename,
     plot_contour,
@@ -59,6 +66,12 @@ __all__ = [
     
     # Network
     'Network',
+    
+    # Rejector
+    'RejectorNetwork',
+    'RejectorLoss',
+    'compute_weighted_loss',
+    'create_rejector_training_data',
     
     # Plotting
     'generate_filename',
