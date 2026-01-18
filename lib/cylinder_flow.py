@@ -11,6 +11,7 @@ from scipy import ndimage
 # Enable 64-bit precision for better numerical accuracy
 jax.config.update("jax_enable_x64", True)
 from lib.base_simulation import BaseSimulation
+from lib.complexity_scoring import ComplexityScorer, create_dynamic_mask, compute_mask_statistics
 
 
 class CylinderFlowSimulation(BaseSimulation):
@@ -640,6 +641,314 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         print(f"Domain: x=[{self.x_ini}, {self.x_f}], y=[{self.y_ini}, {self.y_f}]")
         print(f"Cylinder: center=({self.Cx}, {self.Cy}), radius={self.radius}")
         print(f"Time step: {dt:.6e}")
+        print("-" * 50)
+        
+        # Time stepping loop
+        for n in range(self.max_iter):
+            u_old, v_old = u, v
+            u, v, p = step_hybrid(u, v, p)
+            
+            if n % 50 == 0:
+                residual = compute_residual_hybrid(u, u_old, v, v_old)
+                residual_val = float(residual)
+                print(f"Iteration {n}, Residual: {residual_val:.6e}")
+                
+                if residual_val < self.tol:
+                    print(f"\nConverged at iteration {n}")
+                    break
+        else:
+            print(f"\nReached maximum iterations ({self.max_iter})")
+        
+        return np.array(u), np.array(v), np.array(p)
+
+
+class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
+    """
+    Hybrid PINN-CFD solver for cylinder flow with dynamic segregation.
+    
+    Uses complexity score to automatically segregate the domain into CFD-dominated
+    and PINN-dominated regions based on local flow diagnostics.
+    """
+    
+    def __init__(self, network, uv_func, u_init, v_init, p_init, Re=100, N=100,
+                 max_iter=200000, tol=1e-6, complexity_threshold=1.0,
+                 complexity_weights=None, normalization='mean',
+                 x_domain=(0, 2), y_domain=(0, 1),
+                 cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
+                 inlet_velocity=1.0):
+        """
+        Initialize dynamic hybrid cylinder flow simulation.
+        
+        Parameters:
+        -----------
+        network : tf.keras.Model
+            PINN model that outputs (u, v, p) given (x, y) coordinates.
+        uv_func : callable
+            Function to compute (u, v) from the network: uv_func(network, xy) -> (u, v)
+        u_init, v_init, p_init : ndarray of shape (Ny, Nx)
+            Initial velocity and pressure fields
+        Re : float
+            Reynolds number
+        N : int
+            Base number of grid points (Ny = N, Nx = N * aspect_ratio)
+        max_iter : int
+            Maximum iterations
+        tol : float
+            Convergence tolerance
+        complexity_threshold : float
+            Complexity score threshold for CFD assignment
+        complexity_weights : dict, optional
+            Weights for diagnostic components
+        normalization : str
+            Normalization method for complexity scoring
+        x_domain, y_domain : tuple
+            Domain bounds
+        cylinder_center : tuple
+            Cylinder center coordinates
+        cylinder_radius : float
+            Cylinder radius
+        inlet_velocity : float
+            Inlet velocity magnitude
+        """
+        # Initialize parent class
+        super().__init__(Re, N, max_iter, tol, x_domain, y_domain,
+                        cylinder_center, cylinder_radius, inlet_velocity)
+        
+        self.network = network
+        self.uv_func = uv_func
+        self.complexity_threshold = complexity_threshold
+        self.complexity_weights = complexity_weights
+        self.normalization = normalization
+        
+        # Store initial fields
+        self.u_init = np.array(u_init)
+        self.v_init = np.array(v_init)
+        self.p_init = np.array(p_init)
+        
+        # Compute complexity-based mask
+        self._compute_dynamic_mask()
+        
+        # Setup PINN interface
+        self._setup_pinn_interface()
+    
+    def _compute_dynamic_mask(self):
+        """
+        Compute binary mask based on complexity score of initial fields.
+        
+        High complexity regions (boundary layers, wake) → CFD
+        Low complexity regions (smooth, far-field) → PINN
+        """
+        print("Computing dynamic segregation mask based on complexity scoring...")
+        
+        # Compute complexity score
+        self.mask, self.complexity_score = create_dynamic_mask(
+            self.u_init, self.v_init, self.p_init,
+            nu=self.nu, dx=self.dx, dy=self.dy,
+            threshold=self.complexity_threshold,
+            weights=self.complexity_weights,
+            normalization=self.normalization,
+            rho=1.0
+        )
+        
+        # Compute and display statistics
+        stats = compute_mask_statistics(self.mask, self.complexity_score)
+        print(f"  CFD region: {stats['cfd_count']} cells ({stats['cfd_percentage']:.1f}%)")
+        print(f"  PINN region: {stats['pinn_count']} cells ({stats['pinn_percentage']:.1f}%)")
+        print(f"  Complexity score range: [{stats['complexity_min']:.4f}, {stats['complexity_max']:.4f}]")
+        print(f"  Mean complexity: {stats['complexity_mean']:.4f} ± {stats['complexity_std']:.4f}")
+        print(f"  CFD avg complexity: {stats['cfd_avg_complexity']:.4f}")
+        print(f"  PINN avg complexity: {stats['pinn_avg_complexity']:.4f}")
+    
+    def _setup_pinn_interface(self):
+        """Compute PINN values and find interface between PINN and CFD regions."""
+        # Query PINN for the entire domain
+        print("Querying PINN for initial field values...")
+        uvp = self.network.predict(self.xy, batch_size=len(self.xy))
+        self.u_pinn = uvp[..., 0].reshape(self.X.shape)
+        self.v_pinn = uvp[..., 1].reshape(self.X.shape)
+        self.p_pinn = uvp[..., 2].reshape(self.X.shape)
+        
+        # Find interface: boundary between PINN and CFD regions
+        pinn_region = (self.mask == 0).astype(float)
+        dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)
+        
+        # Interface is where CFD region meets dilated PINN region
+        self.interface_mask = (self.mask == 1) & (dilated_pinn == 1)
+        
+        # Domain boundaries (in CFD region only)
+        domain_boundary = np.zeros_like(self.mask, dtype=bool)
+        domain_boundary[0, :] = True   # Bottom
+        domain_boundary[-1, :] = True  # Top
+        domain_boundary[:, 0] = True   # Left (inlet)
+        domain_boundary[:, -1] = True  # Right (outlet)
+        
+        # Combined boundary for CFD
+        self.cfd_boundary = self.interface_mask | (domain_boundary & (self.mask == 1))
+        
+        # Add cylinder boundary
+        self.cfd_boundary = self.cfd_boundary | (self.cylinder_mask_jax == 1)
+        
+        # Convert to JAX arrays
+        self.mask_jax = jnp.array(self.mask, dtype=jnp.float64)
+        self.interface_jax = jnp.array(self.interface_mask, dtype=bool)
+        self.cfd_boundary_jax = jnp.array(self.cfd_boundary, dtype=bool)
+        self.u_pinn_jax = jnp.array(self.u_pinn)
+        self.v_pinn_jax = jnp.array(self.v_pinn)
+        self.p_pinn_jax = jnp.array(self.p_pinn)
+        
+        Ny, Nx = self.mask.shape
+        total = Ny * Nx
+        print(f"CFD region: {np.sum(self.mask)} cells ({100*np.sum(self.mask)/total:.1f}%)")
+        print(f"PINN region: {total - np.sum(self.mask)} cells ({100*(total - np.sum(self.mask))/total:.1f}%)")
+        print(f"Interface cells: {np.sum(self.interface_mask)}")
+    
+    def apply_hybrid_boundary_conditions(self, u, v):
+        """
+        Apply boundary conditions for hybrid solver with dynamic segregation.
+        
+        - At domain walls: inlet flow (left), no-slip (top/bottom), outlet (right)
+        - At cylinder surface: no-slip
+        - At PINN-CFD interface: use PINN values as Dirichlet BC
+        - In PINN region: keep PINN values
+        """
+        mask = self.mask_jax
+        cfd_boundary = self.cfd_boundary_jax
+        u_pinn = self.u_pinn_jax
+        v_pinn = self.v_pinn_jax
+        cylinder_mask = self.cylinder_mask_jax
+        
+        # Inlet BC (left, x=x_min): inlet velocity profile
+        u = jnp.where((jnp.arange(u.shape[1])[None, :] == 0) & (mask == 1), 
+                     self.u_inlet, u)
+        v = jnp.where((jnp.arange(v.shape[1])[None, :] == 0) & (mask == 1), 
+                     0.0, v)
+        
+        # Top and bottom walls: no-slip
+        u = jnp.where((jnp.arange(u.shape[0])[:, None] == 0) & (mask == 1), 0.0, u)
+        v = jnp.where((jnp.arange(v.shape[0])[:, None] == 0) & (mask == 1), 0.0, v)
+        u = jnp.where((jnp.arange(u.shape[0])[:, None] == u.shape[0] - 1) & (mask == 1), 0.0, u)
+        v = jnp.where((jnp.arange(v.shape[0])[:, None] == v.shape[0] - 1) & (mask == 1), 0.0, v)
+        
+        # Cylinder surface: no-slip
+        u = jnp.where(cylinder_mask == 1, 0.0, u)
+        v = jnp.where(cylinder_mask == 1, 0.0, v)
+        
+        # At interface: use PINN values
+        is_boundary = (
+            (jnp.arange(u.shape[0])[:, None] == 0) |
+            (jnp.arange(u.shape[0])[:, None] == u.shape[0] - 1) |
+            (jnp.arange(u.shape[1])[None, :] == 0) |
+            (jnp.arange(u.shape[1])[None, :] == u.shape[1] - 1) |
+            (cylinder_mask == 1)
+        )
+        u = jnp.where(cfd_boundary & ~is_boundary, u_pinn, u)
+        v = jnp.where(cfd_boundary & ~is_boundary, v_pinn, v)
+        
+        # In PINN region: always use PINN values
+        u = jnp.where(mask == 0, u_pinn, u)
+        v = jnp.where(mask == 0, v_pinn, v)
+        
+        return u, v
+    
+    def solve(self):
+        """
+        Solve Navier-Stokes equations using dynamic hybrid PINN-CFD method.
+        
+        Returns:
+        --------
+        u, v, p : ndarray
+            Velocity and pressure fields
+        """
+        Ny, Nx = self.u_init.shape
+        dx, dy, dt = self.dx, self.dy, self.dt
+        nu = self.nu
+        
+        # Initialize with PINN values
+        u = jnp.array(self.u_pinn)
+        v = jnp.array(self.v_pinn)
+        p = jnp.array(self.p_pinn)
+        
+        # Get helper functions
+        laplacian, divergence, convection, pressure_gradient = self._create_jit_functions()
+        
+        mask_jax = self.mask_jax
+        u_pinn_jax = self.u_pinn_jax
+        v_pinn_jax = self.v_pinn_jax
+        p_pinn_jax = self.p_pinn_jax
+        cfd_boundary_jax = self.cfd_boundary_jax
+        
+        apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
+        
+        @jit
+        def pressure_poisson_iteration_hybrid(p, rhs):
+            """Single Jacobi iteration for pressure Poisson (hybrid version)"""
+            p_new = jnp.zeros_like(p)
+            p_new = p_new.at[1:-1, 1:-1].set(
+                0.25 * (
+                    p[1:-1, 2:] + p[1:-1, :-2] +
+                    p[2:, 1:-1] + p[:-2, 1:-1] -
+                    dx**2 * rhs[1:-1, 1:-1]
+                )
+            )
+            # Neumann BC at domain walls
+            p_new = p_new.at[0, :].set(p_new[1, :])
+            p_new = p_new.at[-1, :].set(p_new[-2, :])
+            p_new = p_new.at[:, 0].set(p_new[:, 1])
+            p_new = p_new.at[:, -1].set(p_new[:, -2])
+            return p_new
+        
+        @jit
+        def step_hybrid(u, v, p):
+            """Single time step with hybrid segregation"""
+            # Compute convection and viscous terms
+            conv_u = convection(u, v)
+            conv_v = convection(v, v)
+            lap_u = laplacian(u)
+            lap_v = laplacian(v)
+            
+            # Predict velocities
+            u_star = u - dt * conv_u - dt * convection(u, u) + dt * nu * lap_u
+            v_star = v - dt * conv_v - dt * convection(v, v) + dt * nu * lap_v
+            
+            # Pressure Poisson RHS
+            rhs = divergence(u_star, v_star) / dt
+            
+            # Solve pressure Poisson iteratively
+            p_new = p
+            for _ in range(20):
+                p_new = pressure_poisson_iteration_hybrid(p_new, rhs)
+            
+            # Pressure correction
+            dpdy, dpdx = pressure_gradient(p_new)
+            u_new = u_star - dt * dpdx
+            v_new = v_star - dt * dpdy
+            
+            # Apply hybrid BCs
+            u_new, v_new = apply_hybrid_bc(u_new, v_new)
+            
+            # Ensure PINN region maintains PINN solution
+            u_new = jnp.where(mask_jax == 0, u_pinn_jax, u_new)
+            v_new = jnp.where(mask_jax == 0, v_pinn_jax, v_new)
+            p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+            
+            return u_new, v_new, p_new
+        
+        @jit
+        def compute_residual_hybrid(u_new, u_old, v_new, v_old):
+            """Compute convergence residual only in CFD region"""
+            diff_u = jnp.sum(((u_new - u_old) * mask_jax)**2)
+            diff_v = jnp.sum(((v_new - v_old) * mask_jax)**2)
+            return jnp.sqrt(diff_u + diff_v)
+        
+        # Apply initial boundary conditions
+        u, v = apply_hybrid_bc(u, v)
+        p = jnp.where(mask_jax == 0, p_pinn_jax, p)
+        
+        print(f"Solving {self.get_simulation_name()} with dynamic hybrid PINN-CFD method...")
+        print(f"Reynolds number: {self.Re}")
+        print(f"Grid size: {Ny}x{Nx}")
+        print(f"Time step: {dt:.6e}")
+        print(f"Complexity threshold: {self.complexity_threshold}")
         print("-" * 50)
         
         # Time stepping loop

@@ -9,6 +9,7 @@ Modules:
 - base_simulation: Abstract base class for simulations
 - cavity_flow: Lid-driven cavity flow simulations
 - cylinder_flow: Flow around cylinder simulations
+- complexity_scoring: Dynamic segregation based on local complexity scoring
 - network: Neural network architectures
 - plotting: Visualization utilities
 """
@@ -17,6 +18,7 @@ from lib.base_simulation import BaseSimulation
 from lib.cavity_flow import (
     CavityFlowSimulation,
     CavityFlowHybridSimulation,
+    CavityFlowDynamicHybridSimulation,
     create_center_pinn_mask,
     create_boundary_pinn_mask,
     create_custom_mask,
@@ -24,9 +26,15 @@ from lib.cavity_flow import (
 from lib.cylinder_flow import (
     CylinderFlowSimulation,
     CylinderFlowHybridSimulation,
+    CylinderFlowDynamicHybridSimulation,
     CylinderFlowPINNSimulation,
     create_cylinder_boundary_mask,
     create_cylinder_wake_mask,
+)
+from lib.complexity_scoring import (
+    ComplexityScorer,
+    create_dynamic_mask,
+    compute_mask_statistics,
 )
 from lib.network import Network
 from lib.plotting import (
@@ -46,6 +54,7 @@ __all__ = [
     # Cavity flow
     'CavityFlowSimulation',
     'CavityFlowHybridSimulation',
+    'CavityFlowDynamicHybridSimulation',
     'create_center_pinn_mask',
     'create_boundary_pinn_mask',
     'create_custom_mask',
@@ -53,9 +62,15 @@ __all__ = [
     # Cylinder flow
     'CylinderFlowSimulation',
     'CylinderFlowHybridSimulation',
+    'CylinderFlowDynamicHybridSimulation',
     'CylinderFlowPINNSimulation',
     'create_cylinder_boundary_mask',
     'create_cylinder_wake_mask',
+    
+    # Complexity scoring
+    'ComplexityScorer',
+    'create_dynamic_mask',
+    'compute_mask_statistics',
     
     # Network
     'Network',

@@ -85,6 +85,7 @@ def run_cavity_simulation(args):
     from lib.cavity_flow import (
         CavityFlowSimulation,
         CavityFlowHybridSimulation,
+        CavityFlowDynamicHybridSimulation,
         create_center_pinn_mask,
         create_boundary_pinn_mask
     )
@@ -198,6 +199,67 @@ def run_cavity_simulation(args):
         plot_solution(u, v, p, x=X, y=Y, title_prefix='PINN: ',
                      save_path='cavity_flow_pinn.png')
     
+    elif args.mode == 'dynamic':
+        # Dynamic hybrid PINN-CFD simulation with complexity-based segregation
+        network = Network().build()
+        
+        if args.model_path:
+            print(f"Loading PINN model from {args.model_path}")
+            network.load_weights(args.model_path)
+        else:
+            print("Warning: No model path provided. Using untrained network.")
+        
+        # Create initial flow field from PINN
+        N = args.grid_size
+        x = np.linspace(0, 1, N)
+        y = np.linspace(0, 1, N)
+        X, Y = np.meshgrid(x, y)
+        xy = np.stack([X.flatten(), Y.flatten()], axis=-1)
+        
+        print("Computing initial flow field from PINN...")
+        psi_p = network.predict(xy, batch_size=len(xy))
+        u_init, v_init = compute_uv_from_psi(network, xy)
+        u_init = u_init.reshape(X.shape)
+        v_init = v_init.reshape(X.shape)
+        p_init = psi_p[..., 1].reshape(X.shape)
+        
+        # Parse complexity weights
+        complexity_weights = {
+            'strain': args.weight_strain,
+            'vorticity': args.weight_vorticity,
+            'momentum': args.weight_momentum,
+            'continuity': args.weight_continuity
+        }
+        
+        sim = CavityFlowDynamicHybridSimulation(
+            network=network,
+            uv_func=compute_uv_from_psi,
+            u_init=u_init,
+            v_init=v_init,
+            p_init=p_init,
+            Re=Re,
+            N=args.grid_size,
+            max_iter=args.max_iter,
+            tol=args.tolerance,
+            complexity_threshold=args.complexity_threshold,
+            complexity_weights=complexity_weights,
+            normalization=args.normalization
+        )
+        
+        start_time = time.time()
+        u, v, p = sim.solve()
+        elapsed = time.time() - start_time
+        
+        print(f"\nSimulation time: {elapsed:.2f} seconds")
+        
+        # Plot results
+        plot_solution(u, v, p, title_prefix='Dynamic Hybrid: ',
+                     save_path='cavity_flow_dynamic.png')
+        plot_hybrid_solution(u, v, p, sim.mask, 
+                            save_path='cavity_flow_dynamic_mask.png')
+        plot_streamlines(u, v, save_path='cavity_flow_dynamic_streamlines.png',
+                        title='Dynamic Hybrid PINN-CFD Streamlines')
+    
     return u, v, p
 
 
@@ -206,6 +268,7 @@ def run_cylinder_simulation(args):
     from lib.cylinder_flow import (
         CylinderFlowSimulation,
         CylinderFlowHybridSimulation,
+        CylinderFlowDynamicHybridSimulation,
         create_cylinder_boundary_mask,
         create_cylinder_wake_mask
     )
@@ -417,6 +480,105 @@ def run_cylinder_simulation(args):
                         show_circle=circle_info,
                         title='PINN - Flow Around Cylinder - Streamlines')
     
+    elif args.mode == 'dynamic':
+        # Dynamic hybrid PINN-CFD simulation with complexity-based segregation
+        # Build cylinder network (outputs u, v, p directly)
+        network = CylinderNetwork().build(num_inputs=2, layers=[48,48,48,48],
+                                          activation='tanh', num_outputs=3)
+        
+        # Determine model path - auto-select based on Re if not provided
+        if args.model_path:
+            model_path = args.model_path
+        else:
+            if Re <= 10:
+                model_path = './models/pinn_cylinder_1.0.h5'
+            else:
+                model_path = './models/pinn_cylinder_100.0.h5'
+            print(f"Auto-selected model: {model_path}")
+        
+        print(f"Loading PINN model from {model_path}")
+        network.load_weights(model_path)
+        
+        # Create grid matching cylinder domain
+        x_domain = (args.x_min, args.x_max)
+        y_domain = (args.y_min, args.y_max)
+        cylinder_center = (args.cylinder_x, args.cylinder_y)
+        Lx = args.x_max - args.x_min
+        Ly = args.y_max - args.y_min
+        aspect_ratio = Lx / Ly
+        
+        Ny = args.grid_size
+        Nx = int(args.grid_size * aspect_ratio)
+        
+        x = np.linspace(args.x_min, args.x_max, Nx)
+        y = np.linspace(args.y_min, args.y_max, Ny)
+        X, Y = np.meshgrid(x, y)
+        xy = np.stack([X.flatten(), Y.flatten()], axis=-1)
+        
+        # Compute initial flow field from PINN
+        print("Computing initial flow field from PINN...")
+        uvp = network.predict(xy, batch_size=len(xy))
+        u_init = uvp[..., 0].reshape(X.shape)
+        v_init = uvp[..., 1].reshape(X.shape)
+        p_init = uvp[..., 2].reshape(X.shape)
+        
+        # Apply cylinder mask (zero velocity inside cylinder)
+        Cx, Cy = args.cylinder_x, args.cylinder_y
+        cylinder_mask = ((X - Cx)**2 + (Y - Cy)**2) <= args.cylinder_radius**2
+        u_init = np.where(cylinder_mask, 0.0, u_init)
+        v_init = np.where(cylinder_mask, 0.0, v_init)
+        
+        # Parse complexity weights
+        complexity_weights = {
+            'strain': args.weight_strain,
+            'vorticity': args.weight_vorticity,
+            'momentum': args.weight_momentum,
+            'continuity': args.weight_continuity
+        }
+        
+        sim = CylinderFlowDynamicHybridSimulation(
+            network=network,
+            uv_func=compute_uv_direct,
+            u_init=u_init,
+            v_init=v_init,
+            p_init=p_init,
+            Re=Re,
+            N=args.grid_size,
+            max_iter=args.max_iter,
+            tol=args.tolerance,
+            complexity_threshold=args.complexity_threshold,
+            complexity_weights=complexity_weights,
+            normalization=args.normalization,
+            x_domain=x_domain,
+            y_domain=y_domain,
+            cylinder_center=cylinder_center,
+            cylinder_radius=args.cylinder_radius,
+            inlet_velocity=u0
+        )
+        
+        start_time = time.time()
+        u, v, p = sim.solve()
+        elapsed = time.time() - start_time
+        
+        print(f"\nSimulation time: {elapsed:.2f} seconds")
+        
+        # Use coordinate arrays from the simulation
+        X, Y = sim.X, sim.Y
+        
+        circle_info = (args.cylinder_x, args.cylinder_y, args.cylinder_radius)
+        
+        # Plot results
+        plot_solution(u, v, p, x=X, y=Y, title_prefix='Dynamic Hybrid: ',
+                     save_path='cylinder_flow_dynamic.png',
+                     show_circle=circle_info)
+        plot_hybrid_solution(u, v, p, sim.mask, x=X, y=Y,
+                            save_path='cylinder_flow_dynamic_mask.png',
+                            show_circle=circle_info)
+        plot_streamlines(u, v, x=X, y=Y,
+                        save_path='cylinder_flow_dynamic_streamlines.png',
+                        show_circle=circle_info,
+                        title='Dynamic Hybrid PINN-CFD - Streamlines')
+    
     return u, v, p
 
 
@@ -449,6 +611,15 @@ Examples:
   
   # Run cylinder flow with specific model
   python main.py --simulation cylinder --mode hybrid --model-path ./models/pinn_cylinder_100.0.h5
+  
+  # Run cavity flow with dynamic segregation
+  python main.py --simulation cavity --mode dynamic --complexity-threshold 1.0
+  
+  # Run cylinder flow with dynamic segregation and custom weights
+  python main.py --simulation cylinder --mode dynamic --complexity-threshold 1.5 --weight-momentum 3.0
+  
+  # Run with percentile-based normalization
+  python main.py --simulation cavity --mode dynamic --normalization percentile
         """
     )
     
@@ -457,8 +628,8 @@ Examples:
                        choices=['cavity', 'cylinder'],
                        help='Simulation type (default: cavity)')
     parser.add_argument('--mode', '-m', type=str, default='cfd',
-                       choices=['cfd', 'hybrid', 'pinn'],
-                       help='Solver mode (default: cfd)')
+                       choices=['cfd', 'hybrid', 'pinn', 'dynamic'],
+                       help='Solver mode: cfd, hybrid, pinn, or dynamic (default: cfd)')
     parser.add_argument('--grid-size', '-N', type=int, default=100,
                        help='Grid size (default: 100)')
     parser.add_argument('--max-iter', type=int, default=200000,
@@ -495,6 +666,21 @@ Examples:
                        help='Length of wake region for CFD in hybrid mode (default: 1.0)')
     parser.add_argument('--cfd-radius-factor', type=float, default=3.0,
                        help='CFD region extends this factor times cylinder_radius from cylinder center (default: 3.0)')
+    
+    # Dynamic segregation arguments
+    parser.add_argument('--complexity-threshold', type=float, default=1.0,
+                       help='Complexity score threshold for CFD/PINN segregation (default: 1.0)')
+    parser.add_argument('--normalization', type=str, default='mean',
+                       choices=['mean', 'max', 'percentile'],
+                       help='Normalization method for complexity scoring (default: mean)')
+    parser.add_argument('--weight-strain', type=float, default=1.0,
+                       help='Weight for strain-rate in complexity score (default: 1.0)')
+    parser.add_argument('--weight-vorticity', type=float, default=1.0,
+                       help='Weight for vorticity in complexity score (default: 1.0)')
+    parser.add_argument('--weight-momentum', type=float, default=2.0,
+                       help='Weight for momentum residual in complexity score (default: 2.0)')
+    parser.add_argument('--weight-continuity', type=float, default=2.0,
+                       help='Weight for continuity residual in complexity score (default: 2.0)')
     
     args = parser.parse_args()
     
