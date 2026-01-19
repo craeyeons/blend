@@ -431,7 +431,7 @@ def plot_region_mask(mask, x=None, y=None, save_path=None, show_circle=None,
     
     fig, ax = plt.subplots(figsize=figsize)
     
-    # Plot mask: white = CFD (mask=1), black = PINN (mask=0)
+    # Plot mask: white = PINN (mask=1), black = CFD (mask=0)
     im = ax.pcolormesh(X, Y, mask, cmap='binary', vmin=0, vmax=1, shading='auto')
     
     # Add contour line at interface
@@ -450,8 +450,8 @@ def plot_region_mask(mask, x=None, y=None, save_path=None, show_circle=None,
     # Add legend
     from matplotlib.patches import Patch
     legend_elements = [
-        Patch(facecolor='white', edgecolor='black', label='CFD Region'),
-        Patch(facecolor='black', edgecolor='black', label='PINN Region'),
+        Patch(facecolor='white', edgecolor='black', label='PINN Region'),
+        Patch(facecolor='black', edgecolor='black', label='CFD Region'),
     ]
     ax.legend(handles=legend_elements, loc='upper right', fontsize=12)
     
