@@ -9,7 +9,7 @@ from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 
 
-def generate_filename(simulation_type, mode, Re, suffix='', output_dir='results'):
+def generate_filename(simulation_type, mode, Re, suffix='', output_dir=''):
     """
     Generate a standardized filename for saving figures.
     
