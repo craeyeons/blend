@@ -601,6 +601,10 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             u_star = u + dt * (-conv_u + nu * lap_u)
             v_star = v + dt * (-conv_v + nu * lap_v)
             
+            # Only update in CFD region
+            u_star = jnp.where(cfd_mask_jax == 1, u_star, u_pinn_jax)
+            v_star = jnp.where(cfd_mask_jax == 1, v_star, v_pinn_jax)
+            
             # Apply boundary conditions (this sets PINN values, interface, and wall BCs)
             u_star, v_star = apply_hybrid_bc(u_star, v_star)
             
@@ -912,6 +916,16 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
             return p_new
         
         @jit
+        def solve_pressure_poisson_hybrid(p, rhs, n_iter=100):
+            """Solve pressure Poisson equation with Jacobi iterations"""
+            def body_fn(i, p):
+                p_new = pressure_poisson_iteration_hybrid(p, rhs)
+                # Enforce PINN pressure in PINN region during iteration
+                p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+                return p_new
+            return lax.fori_loop(0, n_iter, body_fn, p)
+        
+        @jit
         def step_hybrid(u, v, p):
             """Single time step with hybrid segregation"""
             # Compute convection and viscous terms
@@ -920,17 +934,21 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
             lap_u = laplacian(u)
             lap_v = laplacian(v)
             
-            # Predict velocities
-            u_star = u - dt * conv_u + dt * nu * lap_u
-            v_star = v - dt * conv_v + dt * nu * lap_v
+            # Predict velocities (only in CFD region)
+            u_star = u + dt * (-conv_u + nu * lap_u)
+            v_star = v + dt * (-conv_v + nu * lap_v)
+            
+            # Only update in CFD region
+            u_star = jnp.where(mask_jax == 1, u_star, u_pinn_jax)
+            v_star = jnp.where(mask_jax == 1, v_star, v_pinn_jax)
+            
+            u_star, v_star = apply_hybrid_bc(u_star, v_star)
             
             # Pressure Poisson RHS
             rhs = divergence(u_star, v_star) / dt
             
             # Solve pressure Poisson iteratively
-            p_new = p
-            for _ in range(20):
-                p_new = pressure_poisson_iteration_hybrid(p_new, rhs)
+            p_new = solve_pressure_poisson_hybrid(p, rhs)
             
             # Pressure correction
             dpdx, dpdy = pressure_gradient(p_new)
