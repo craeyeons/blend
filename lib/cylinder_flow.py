@@ -816,42 +816,43 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         - At PINN-CFD interface: use PINN values as Dirichlet BC
         - In PINN region: keep PINN values
         """
+        Ny, Nx = self.Ny, self.Nx
         mask = self.mask_jax
         cfd_boundary = self.cfd_boundary_jax
         u_pinn = self.u_pinn_jax
         v_pinn = self.v_pinn_jax
         cylinder_mask = self.cylinder_mask_jax
         
-        # Inlet BC (left, x=x_min): inlet velocity profile
-        u = jnp.where((jnp.arange(u.shape[1])[None, :] == 0) & (mask == 1), 
-                     self.u_inlet, u)
-        v = jnp.where((jnp.arange(v.shape[1])[None, :] == 0) & (mask == 1), 
-                     0.0, v)
+        # Step 1: Set PINN values in PINN region (mask=0)
+        u = jnp.where(mask == 0, u_pinn, u)
+        v = jnp.where(mask == 0, v_pinn, v)
         
-        # Top and bottom walls: no-slip
-        u = jnp.where((jnp.arange(u.shape[0])[:, None] == 0) & (mask == 1), 0.0, u)
-        v = jnp.where((jnp.arange(v.shape[0])[:, None] == 0) & (mask == 1), 0.0, v)
-        u = jnp.where((jnp.arange(u.shape[0])[:, None] == u.shape[0] - 1) & (mask == 1), 0.0, u)
-        v = jnp.where((jnp.arange(v.shape[0])[:, None] == v.shape[0] - 1) & (mask == 1), 0.0, v)
+        # Step 2: At interface (CFD cells adjacent to PINN region): use PINN values as coupling BC
+        u = jnp.where(self.interface_jax, u_pinn, u)
+        v = jnp.where(self.interface_jax, v_pinn, v)
         
-        # Cylinder surface: no-slip
+        # Step 3: Cylinder surface: no-slip
         u = jnp.where(cylinder_mask == 1, 0.0, u)
         v = jnp.where(cylinder_mask == 1, 0.0, v)
         
-        # At interface: use PINN values
-        is_boundary = (
-            (jnp.arange(u.shape[0])[:, None] == 0) |
-            (jnp.arange(u.shape[0])[:, None] == u.shape[0] - 1) |
-            (jnp.arange(u.shape[1])[None, :] == 0) |
-            (jnp.arange(u.shape[1])[None, :] == u.shape[1] - 1) |
-            (cylinder_mask == 1)
-        )
-        u = jnp.where(cfd_boundary & ~is_boundary, u_pinn, u)
-        v = jnp.where(cfd_boundary & ~is_boundary, v_pinn, v)
+        # Step 4: Domain boundary conditions - ALWAYS enforced last (override everything)
+        # Inlet (left boundary, x=0): parabolic profile
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
+        u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
+        u = u.at[:, 0].set(u_inlet_profile)
+        v = v.at[:, 0].set(0.0)
         
-        # In PINN region: always use PINN values
-        u = jnp.where(mask == 0, u_pinn, u)
-        v = jnp.where(mask == 0, v_pinn, v)
+        # Outlet (right boundary): zero gradient
+        u = u.at[:, -1].set(u[:, -2])
+        v = v.at[:, -1].set(v[:, -2])
+        
+        # Top wall (y=y_f): no-slip
+        u = u.at[-1, :].set(0.0)
+        v = v.at[-1, :].set(0.0)
+        
+        # Bottom wall (y=y_ini): no-slip
+        u = u.at[0, :].set(0.0)
+        v = v.at[0, :].set(0.0)
         
         return u, v
     
