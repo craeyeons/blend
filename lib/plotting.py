@@ -396,3 +396,79 @@ def plot_streamlines(u, v, x=None, y=None, density=1.5, save_path=None,
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
+
+
+def plot_region_mask(mask, x=None, y=None, save_path=None, show_circle=None,
+                     title='Solver Region Assignment', figsize=(12, 8),
+                     simulation_type=None, mode=None, Re=None):
+    """
+    Plot black and white visualization of CFD vs PINN regions.
+    
+    Parameters:
+    -----------
+    mask : ndarray
+        Binary mask (1 = CFD region, 0 = PINN region)
+    x, y : ndarray, optional
+        Coordinate arrays. If None, uses indices.
+    save_path : str, optional
+        Path to save figure
+    show_circle : tuple, optional
+        (cx, cy, r) for cylinder visualization
+    title : str
+        Plot title
+    figsize : tuple
+        Figure size
+    simulation_type, mode, Re : optional
+        For auto-generating filename
+    """
+    Ny, Nx = mask.shape
+    if x is None or y is None:
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
+        X, Y = np.meshgrid(x, y)
+    else:
+        X, Y = x, y
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot mask: white = CFD (mask=1), black = PINN (mask=0)
+    im = ax.pcolormesh(X, Y, mask, cmap='binary', vmin=0, vmax=1, shading='auto')
+    
+    # Add contour line at interface
+    ax.contour(X, Y, mask, levels=[0.5], colors='red', linewidths=2, linestyles='-')
+    
+    if show_circle:
+        cx, cy, r = show_circle
+        circle = plt.Circle((cx, cy), r, fc='gray', ec='red', linewidth=2)
+        ax.add_patch(circle)
+    
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel('x', fontsize=14)
+    ax.set_ylabel('y', fontsize=14)
+    ax.set_aspect('equal')
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='white', edgecolor='black', label='CFD Region'),
+        Patch(facecolor='black', edgecolor='black', label='PINN Region'),
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=12)
+    
+    # Add statistics text
+    cfd_pct = 100 * np.sum(mask) / mask.size
+    pinn_pct = 100 - cfd_pct
+    stats_text = f'CFD: {cfd_pct:.1f}%  |  PINN: {pinn_pct:.1f}%'
+    ax.text(0.5, -0.08, stats_text, transform=ax.transAxes, 
+            ha='center', fontsize=12, style='italic')
+    
+    plt.tight_layout()
+    
+    if save_path is None and simulation_type and mode and Re is not None:
+        save_path = generate_filename(simulation_type, mode, Re, 'regions')
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    plt.close(fig)

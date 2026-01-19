@@ -9,6 +9,7 @@ from scipy import ndimage
 
 from lib.base_simulation import BaseSimulation
 from lib.complexity_scoring import ComplexityScorer, create_dynamic_mask, compute_mask_statistics
+from lib.plotting import plot_region_mask
 
 
 class CavityFlowSimulation(BaseSimulation):

@@ -12,6 +12,7 @@ from scipy import ndimage
 jax.config.update("jax_enable_x64", True)
 from lib.base_simulation import BaseSimulation
 from lib.complexity_scoring import ComplexityScorer, create_dynamic_mask, compute_mask_statistics
+from lib.plotting import plot_region_mask
 
 
 class CylinderFlowSimulation(BaseSimulation):
@@ -1003,6 +1004,14 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
                     break
         else:
             print(f"\nReached maximum iterations ({self.max_iter})")
+        
+        # Plot region mask showing CFD vs PINN regions
+        plot_region_mask(
+            self.mask, x=self.X, y=self.Y,
+            title=f'CFD vs PINN Regions (threshold={self.complexity_threshold})',
+            show_circle=(self.Cx, self.Cy, self.radius),
+            simulation_type='cylinder', mode='dynamic_hybrid', Re=self.Re
+        )
         
         return np.array(u), np.array(v), np.array(p)
 
