@@ -901,14 +901,14 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         def step_hybrid(u, v, p):
             """Single time step with hybrid segregation"""
             # Compute convection and viscous terms
-            conv_u = convection(u, v)
-            conv_v = convection(v, v)
+            conv_u = convection(u, v, u)
+            conv_v = convection(u, v, v)
             lap_u = laplacian(u)
             lap_v = laplacian(v)
             
             # Predict velocities
-            u_star = u - dt * conv_u - dt * convection(u, u) + dt * nu * lap_u
-            v_star = v - dt * conv_v - dt * convection(v, v) + dt * nu * lap_v
+            u_star = u - dt * conv_u + dt * nu * lap_u
+            v_star = v - dt * conv_v + dt * nu * lap_v
             
             # Pressure Poisson RHS
             rhs = divergence(u_star, v_star) / dt
@@ -919,7 +919,7 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
                 p_new = pressure_poisson_iteration_hybrid(p_new, rhs)
             
             # Pressure correction
-            dpdy, dpdx = pressure_gradient(p_new)
+            dpdx, dpdy = pressure_gradient(p_new)
             u_new = u_star - dt * dpdx
             v_new = v_star - dt * dpdy
             
