@@ -360,7 +360,7 @@ class ComplexityScorer:
 
 def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0, 
                        weights=None, normalization='mean', rho=1.0,
-                       invert=False):
+                       invert=False, boundary_width=1, obstacle_mask=None):
     """
     Create binary mask based on complexity score threshold.
     
@@ -386,6 +386,12 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
         Fluid density
     invert : bool
         If True, invert the mask (swap CFD and PINN regions)
+    boundary_width : int
+        Width of forced CFD region at domain boundaries (default: 1).
+        Set to 0 to disable boundary forcing.
+    obstacle_mask : ndarray of shape (Ny, Nx), optional
+        Binary mask where 1 indicates obstacle (e.g., cylinder).
+        These regions and their immediate neighbors will be forced to CFD.
         
     Returns:
     --------
@@ -404,6 +410,24 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
         mask = (complexity_score <= threshold).astype(np.int32)
     else:
         mask = (complexity_score > threshold).astype(np.int32)
+    
+    Ny, Nx = mask.shape
+    
+    # Force domain boundaries to CFD
+    if boundary_width > 0:
+        mask[:boundary_width, :] = 1   # Bottom
+        mask[-boundary_width:, :] = 1  # Top
+        mask[:, :boundary_width] = 1   # Left
+        mask[:, -boundary_width:] = 1  # Right
+    
+    # Force obstacle region and surrounding cells to CFD
+    if obstacle_mask is not None:
+        from scipy import ndimage
+        # Dilate obstacle to include boundary layer region
+        dilated_obstacle = ndimage.binary_dilation(
+            obstacle_mask > 0, iterations=2
+        ).astype(np.int32)
+        mask = np.maximum(mask, dilated_obstacle)
     
     return mask, complexity_score
 

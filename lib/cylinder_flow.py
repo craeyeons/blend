@@ -737,17 +737,22 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         
         High complexity regions (boundary layers, wake) → CFD
         Low complexity regions (smooth, far-field) → PINN
+        
+        Domain boundaries and cylinder region are always forced to CFD.
         """
         print("Computing dynamic segregation mask based on complexity scoring...")
+        print("  (Forcing CFD at domain boundaries and around cylinder)")
         
-        # Compute complexity score
+        # Compute complexity score with forced boundaries
         self.mask, self.complexity_score = create_dynamic_mask(
             self.u_init, self.v_init, self.p_init,
             nu=self.nu, dx=self.dx, dy=self.dy,
             threshold=self.complexity_threshold,
             weights=self.complexity_weights,
             normalization=self.normalization,
-            rho=1.0
+            rho=1.0,
+            boundary_width=2,  # Force 2-cell boundary layer at domain edges
+            obstacle_mask=self.cylinder_mask  # Force CFD around cylinder
         )
         
         # Compute and display statistics
