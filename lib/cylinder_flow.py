@@ -894,6 +894,7 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         v_pinn_jax = self.v_pinn_jax
         p_pinn_jax = self.p_pinn_jax
         cfd_boundary_jax = self.cfd_boundary_jax
+        cylinder_mask = self.cylinder_mask_jax
         
         apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
         
@@ -908,11 +909,15 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
                     dx**2 * rhs[1:-1, 1:-1]
                 )
             )
-            # Neumann BC at domain walls
-            p_new = p_new.at[0, :].set(p_new[1, :])
-            p_new = p_new.at[-1, :].set(p_new[-2, :])
-            p_new = p_new.at[:, 0].set(p_new[:, 1])
-            p_new = p_new.at[:, -1].set(p_new[:, -2])
+            # Boundary conditions for pressure
+            p_new = p_new.at[0, :].set(p_new[1, :])      # Bottom (Neumann)
+            p_new = p_new.at[-1, :].set(p_new[-2, :])    # Top (Neumann)
+            p_new = p_new.at[:, 0].set(p_new[:, 1])      # Inlet (Neumann)
+            p_new = p_new.at[:, -1].set(0.0)             # Outlet (reference pressure)
+            
+            # Inside cylinder: zero pressure
+            p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
+            
             return p_new
         
         @jit
