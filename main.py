@@ -555,7 +555,7 @@ def run_cylinder_simulation(args):
             y_domain=y_domain,
             cylinder_center=cylinder_center,
             cylinder_radius=args.cylinder_radius,
-            inlet_velocity=u_inlet
+            inlet_velocity=u0
         )
         
         start_time = time.time()
