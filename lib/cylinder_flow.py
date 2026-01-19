@@ -675,7 +675,7 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
                  complexity_weights=None, normalization='mean',
                  x_domain=(0, 2), y_domain=(0, 1),
                  cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
-                 inlet_velocity=1.0):
+                 inlet_velocity=1.0, merge_distance=0):
         """
         Initialize dynamic hybrid cylinder flow simulation.
         
@@ -709,6 +709,9 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
             Cylinder radius
         inlet_velocity : float
             Inlet velocity magnitude
+        merge_distance : int
+            Number of grid cells for merging nearby CFD regions (default: 0).
+            Connects CFD regions within 2*merge_distance cells of each other.
         """
         # Initialize parent class
         super().__init__(Re, N, max_iter, tol, x_domain, y_domain,
@@ -719,6 +722,7 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         self.complexity_threshold = complexity_threshold
         self.complexity_weights = complexity_weights
         self.normalization = normalization
+        self.merge_distance = merge_distance
         
         # Store initial fields
         self.u_init = np.array(u_init)
@@ -739,9 +743,12 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         Low complexity regions (smooth, far-field) → PINN
         
         Domain boundaries and cylinder region are always forced to CFD.
+        Nearby CFD regions can be merged using merge_distance.
         """
         print("Computing dynamic segregation mask based on complexity scoring...")
         print("  (Forcing CFD at domain boundaries and around cylinder)")
+        if self.merge_distance > 0:
+            print(f"  (Merging nearby CFD regions within {2*self.merge_distance} cells)")
         
         # Compute complexity score with forced boundaries
         self.mask, self.complexity_score = create_dynamic_mask(
@@ -752,7 +759,8 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
             normalization=self.normalization,
             rho=1.0,
             boundary_width=2,  # Force 2-cell boundary layer at domain edges
-            obstacle_mask=self.cylinder_mask  # Force CFD around cylinder
+            obstacle_mask=self.cylinder_mask,  # Force CFD around cylinder
+            merge_distance=self.merge_distance  # Merge nearby CFD regions
         )
         
         # Compute and display statistics

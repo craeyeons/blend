@@ -389,7 +389,7 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
     
     def __init__(self, network, uv_func, u_init, v_init, p_init, Re=100, N=100,
                  max_iter=200000, tol=1e-6, complexity_threshold=1.0,
-                 complexity_weights=None, normalization='mean'):
+                 complexity_weights=None, normalization='mean', merge_distance=0):
         """
         Initialize dynamic hybrid cavity flow simulation.
         
@@ -415,6 +415,8 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
             Weights for diagnostic components
         normalization : str
             Normalization method for complexity scoring ('mean', 'max', 'percentile')
+        merge_distance : int
+            Grid cells for merging nearby CFD regions (default: 0, disabled)
         """
         super().__init__(Re, N, max_iter, tol)
         self.network = network
@@ -422,6 +424,7 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
         self.complexity_threshold = complexity_threshold
         self.complexity_weights = complexity_weights
         self.normalization = normalization
+        self.merge_distance = merge_distance
         
         # Store initial fields
         self.u_init = np.array(u_init)
@@ -445,6 +448,8 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
         """
         print("Computing dynamic segregation mask based on complexity scoring...")
         print("  (Forcing CFD at domain boundaries)")
+        if self.merge_distance > 0:
+            print(f"  (Merging nearby CFD regions within {self.merge_distance} cells)")
         
         # Compute complexity score with forced boundaries
         self.mask, self.complexity_score = create_dynamic_mask(
@@ -454,7 +459,8 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
             weights=self.complexity_weights,
             normalization=self.normalization,
             rho=1.0,
-            boundary_width=2  # Force 2-cell boundary layer at domain edges
+            boundary_width=2,  # Force 2-cell boundary layer at domain edges
+            merge_distance=self.merge_distance
         )
         
         # Compute and display statistics

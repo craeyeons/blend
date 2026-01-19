@@ -243,7 +243,8 @@ def run_cavity_simulation(args):
             tol=args.tolerance,
             complexity_threshold=args.complexity_threshold,
             complexity_weights=complexity_weights,
-            normalization=args.normalization
+            normalization=args.normalization,
+            merge_distance=args.merge_distance
         )
         
         start_time = time.time()
@@ -549,11 +550,12 @@ def run_cylinder_simulation(args):
             complexity_threshold=args.complexity_threshold,
             complexity_weights=complexity_weights,
             normalization=args.normalization,
+            merge_distance=args.merge_distance,
             x_domain=x_domain,
             y_domain=y_domain,
             cylinder_center=cylinder_center,
             cylinder_radius=args.cylinder_radius,
-            inlet_velocity=u0
+            inlet_velocity=u_inlet
         )
         
         start_time = time.time()
@@ -681,6 +683,8 @@ Examples:
                        help='Weight for momentum residual in complexity score (default: 2.0)')
     parser.add_argument('--weight-continuity', type=float, default=2.0,
                        help='Weight for continuity residual in complexity score (default: 2.0)')
+    parser.add_argument('--merge-distance', type=int, default=0,
+                       help='Grid cells for merging nearby CFD regions (default: 0, disabled)')
     
     args = parser.parse_args()
     

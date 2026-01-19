@@ -360,7 +360,8 @@ class ComplexityScorer:
 
 def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0, 
                        weights=None, normalization='mean', rho=1.0,
-                       invert=False, boundary_width=1, obstacle_mask=None):
+                       invert=False, boundary_width=1, obstacle_mask=None,
+                       merge_distance=0):
     """
     Create binary mask based on complexity score threshold.
     
@@ -392,6 +393,10 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     obstacle_mask : ndarray of shape (Ny, Nx), optional
         Binary mask where 1 indicates obstacle (e.g., cylinder).
         These regions and their immediate neighbors will be forced to CFD.
+    merge_distance : int
+        Number of grid cells for merging nearby CFD regions (default: 0).
+        Uses morphological closing: dilate then erode by this amount.
+        This connects CFD regions that are within 2*merge_distance cells of each other.
         
     Returns:
     --------
@@ -400,6 +405,8 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     complexity_score : ndarray of shape (Ny, Nx)
         Local complexity scores
     """
+    from scipy import ndimage
+    
     scorer = ComplexityScorer(weights=weights, normalization=normalization)
     
     # Compute complexity score
@@ -422,12 +429,19 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     
     # Force obstacle region and surrounding cells to CFD
     if obstacle_mask is not None:
-        from scipy import ndimage
         # Dilate obstacle to include boundary layer region
         dilated_obstacle = ndimage.binary_dilation(
             obstacle_mask > 0, iterations=2
         ).astype(np.int32)
         mask = np.maximum(mask, dilated_obstacle)
+    
+    # Merge nearby CFD regions using morphological closing
+    if merge_distance > 0:
+        # Binary closing = dilation followed by erosion
+        # This connects regions within 2*merge_distance of each other
+        mask = ndimage.binary_closing(
+            mask > 0, iterations=merge_distance
+        ).astype(np.int32)
     
     return mask, complexity_score
 
