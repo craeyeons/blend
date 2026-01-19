@@ -439,7 +439,7 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     if merge_distance > 0:
         # Binary closing = dilation followed by erosion
         # This connects regions within 2*merge_distance of each other
-        mask = ndimage.binary_closing(
+        mask = ndimage.binary_dilation(
             mask > 0, iterations=merge_distance
         ).astype(np.int32)
     
