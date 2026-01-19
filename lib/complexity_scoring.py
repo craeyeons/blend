@@ -439,9 +439,19 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     if merge_distance > 0:
         # Binary closing = dilation followed by erosion
         # This connects regions within 2*merge_distance of each other
-        mask = ndimage.binary_dilation(
+        mask = ndimage.binary_closing(
             mask > 0, iterations=merge_distance
         ).astype(np.int32)
+        
+        # Re-enforce boundaries and obstacle after closing
+        if boundary_width > 0:
+            mask[:boundary_width, :] = 1   # Bottom
+            mask[-boundary_width:, :] = 1  # Top
+            mask[:, :boundary_width] = 1   # Left
+            mask[:, -boundary_width:] = 1  # Right
+        
+        if obstacle_mask is not None:
+            mask = np.maximum(mask, dilated_obstacle)
     
     return mask, complexity_score
 
