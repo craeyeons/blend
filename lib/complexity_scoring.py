@@ -422,9 +422,9 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
     
     # Force domain boundaries to CFD
     if boundary_width > 0:
-        mask[:50, :] = 1   # Bottom
+        mask[:boundary_width, :] = 1   # Bottom
         mask[-boundary_width:, :] = 1  # Top
-        mask[:, :boundary_width] = 1   # Left
+        mask[:, :50] = 1   # Left
         mask[:, -boundary_width:] = 1  # Right
     
     # Force obstacle region and surrounding cells to CFD
@@ -445,9 +445,9 @@ def create_dynamic_mask(u, v, p, nu, dx, dy, threshold=1.0,
         
         # Re-enforce boundaries and obstacle after closing
         if boundary_width > 0:
-            mask[:50, :] = 1   # Bottom
+            mask[:boundary_width, :] = 1   # Bottom
             mask[-boundary_width:, :] = 1  # Top
-            mask[:, :boundary_width] = 1   # Left
+            mask[:, :50] = 1   # Left
             mask[:, -boundary_width:] = 1  # Right
         
         if obstacle_mask is not None:
