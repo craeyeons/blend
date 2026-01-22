@@ -396,17 +396,16 @@ Examples:
                         help='Check existing data only')
     parser.add_argument('--missing', action='store_true',
                         help='Compute only missing cases')
-    parser.add_argument('--N', type=int, default=N,
-                        help=f'Grid resolution (default: {N})')
-    parser.add_argument('--max-iter', type=int, default=MAX_ITER,
-                        help=f'Max iterations (default: {MAX_ITER})')
+    parser.add_argument('--N', type=int, default=100,
+                        help='Grid resolution (default: 100)')
+    parser.add_argument('--max-iter', type=int, default=100000,
+                        help='Max iterations (default: 100000)')
     
     args = parser.parse_args()
     
-    # Update global settings
-    global N, MAX_ITER
-    N = args.N
-    MAX_ITER = args.max_iter
+    # Use command-line args for grid resolution and max iterations
+    grid_N = args.N
+    max_iterations = args.max_iter
     
     # Check existing data
     if args.check:
