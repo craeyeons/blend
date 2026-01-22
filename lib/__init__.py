@@ -10,6 +10,7 @@ Modules:
 - cavity_flow: Lid-driven cavity flow simulations
 - cylinder_flow: Flow around cylinder simulations
 - complexity_scoring: Dynamic segregation based on local complexity scoring
+- router: Learned router for intelligent PINN-CFD domain segregation
 - network: Neural network architectures
 - plotting: Visualization utilities
 """
@@ -27,6 +28,7 @@ from lib.cylinder_flow import (
     CylinderFlowSimulation,
     CylinderFlowHybridSimulation,
     CylinderFlowDynamicHybridSimulation,
+    CylinderFlowLearnedRouterSimulation,
     CylinderFlowPINNSimulation,
     create_cylinder_boundary_mask,
     create_cylinder_wake_mask,
@@ -35,6 +37,14 @@ from lib.complexity_scoring import (
     ComplexityScorer,
     create_dynamic_mask,
     compute_mask_statistics,
+)
+from lib.router import (
+    RouterFeatureExtractor,
+    RouterCNN,
+    RouterLoss,
+    RouterTrainer,
+    LearnedRouter,
+    create_router,
 )
 from lib.network import Network
 from lib.plotting import (
@@ -63,6 +73,7 @@ __all__ = [
     'CylinderFlowSimulation',
     'CylinderFlowHybridSimulation',
     'CylinderFlowDynamicHybridSimulation',
+    'CylinderFlowLearnedRouterSimulation',
     'CylinderFlowPINNSimulation',
     'create_cylinder_boundary_mask',
     'create_cylinder_wake_mask',
@@ -71,6 +82,14 @@ __all__ = [
     'ComplexityScorer',
     'create_dynamic_mask',
     'compute_mask_statistics',
+    
+    # Learned Router
+    'RouterFeatureExtractor',
+    'RouterCNN',
+    'RouterLoss',
+    'RouterTrainer',
+    'LearnedRouter',
+    'create_router',
     
     # Network
     'Network',

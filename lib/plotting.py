@@ -472,3 +472,211 @@ def plot_region_mask(mask, x=None, y=None, save_path=None, show_circle=None,
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
+
+
+def plot_router_probability(r_prob, x=None, y=None, save_path=None, show_circle=None,
+                            title='Router Rejection Probability', figsize=(12, 8),
+                            simulation_type=None, mode=None, Re=None):
+    """
+    Plot the router's rejection probability map.
+    
+    Parameters:
+    -----------
+    r_prob : ndarray
+        Rejection probability (0 = accept PINN, 1 = reject/use CFD)
+    x, y : ndarray, optional
+        Coordinate arrays
+    save_path : str, optional
+        Path to save figure
+    show_circle : tuple, optional
+        (cx, cy, r) for cylinder visualization
+    title : str
+        Plot title
+    figsize : tuple
+        Figure size
+    simulation_type, mode, Re : optional
+        For auto-generating filename
+    """
+    Ny, Nx = r_prob.shape
+    if x is None or y is None:
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
+        X, Y = np.meshgrid(x, y)
+    else:
+        X, Y = x, y
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot probability map with RdBu colormap (red = reject/CFD, blue = accept/PINN)
+    cf = ax.contourf(X, Y, r_prob, levels=50, cmap='RdBu_r', vmin=0, vmax=1)
+    cbar = plt.colorbar(cf, ax=ax, label='Rejection Probability')
+    cbar.ax.set_ylabel('r(x): 0=PINN, 1=CFD', fontsize=12)
+    
+    # Add contour at threshold (0.5)
+    ax.contour(X, Y, r_prob, levels=[0.5], colors='white', linewidths=2, linestyles='--')
+    
+    if show_circle:
+        cx, cy, r = show_circle
+        circle = plt.Circle((cx, cy), r, fc='gray', ec='white', linewidth=2)
+        ax.add_patch(circle)
+    
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel('x', fontsize=14)
+    ax.set_ylabel('y', fontsize=14)
+    ax.set_aspect('equal')
+    
+    # Add annotation
+    ax.text(0.5, -0.08, 'White dashed line: r(x) = 0.5 threshold', 
+            transform=ax.transAxes, ha='center', fontsize=10, style='italic')
+    
+    plt.tight_layout()
+    
+    if save_path is None and simulation_type and mode and Re is not None:
+        save_path = generate_filename(simulation_type, mode, Re, 'router_prob')
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    plt.close(fig)
+
+
+def plot_router_training_history(history, save_path=None, figsize=(12, 8)):
+    """
+    Plot the training history of the learned router.
+    
+    Parameters:
+    -----------
+    history : dict
+        Training history with 'total', 'base', 'spatial', 'upstream', 'connect' losses
+    save_path : str, optional
+        Path to save figure
+    figsize : tuple
+        Figure size
+    """
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    
+    epochs = range(1, len(history.get('total', [])) + 1)
+    
+    # Total loss
+    ax = axes[0, 0]
+    if 'total' in history and history['total']:
+        ax.plot(epochs, history['total'], 'b-', linewidth=2, label='Total')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Total Loss')
+    ax.set_yscale('log')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Component losses
+    ax = axes[0, 1]
+    colors = {'base': 'blue', 'spatial': 'green', 'upstream': 'red', 'connect': 'orange'}
+    for key, color in colors.items():
+        if key in history and history[key]:
+            ax.plot(epochs, history[key], color=color, linewidth=1.5, label=key.capitalize())
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Loss Components')
+    ax.set_yscale('log')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Base vs spatial+upstream
+    ax = axes[1, 0]
+    if 'base' in history and history['base']:
+        ax.plot(epochs, history['base'], 'b-', linewidth=2, label='Base (complexity)')
+    if 'spatial' in history and 'upstream' in history:
+        regularization = [s + u for s, u in zip(history.get('spatial', [0]*len(epochs)), 
+                                                 history.get('upstream', [0]*len(epochs)))]
+        if regularization:
+            ax.plot(epochs, regularization, 'r-', linewidth=2, label='Regularization')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title('Base vs Regularization')
+    ax.set_yscale('log')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    
+    # Loss ratios
+    ax = axes[1, 1]
+    if 'total' in history and len(history['total']) > 1:
+        final_losses = {k: history[k][-1] for k in colors.keys() if k in history and history[k]}
+        if final_losses:
+            bars = ax.bar(final_losses.keys(), final_losses.values(), 
+                         color=[colors.get(k, 'gray') for k in final_losses.keys()])
+            ax.set_ylabel('Final Loss Value')
+            ax.set_title('Final Loss Breakdown')
+            ax.tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    plt.close(fig)
+
+
+def plot_mask_comparison(masks, titles, x=None, y=None, save_path=None, 
+                         show_circle=None, figsize=(16, 5)):
+    """
+    Plot side-by-side comparison of multiple masks.
+    
+    Parameters:
+    -----------
+    masks : list of ndarray
+        List of binary masks to compare
+    titles : list of str
+        Titles for each mask
+    x, y : ndarray, optional
+        Coordinate arrays
+    save_path : str, optional
+        Path to save figure
+    show_circle : tuple, optional
+        (cx, cy, r) for cylinder visualization
+    figsize : tuple
+        Figure size
+    """
+    n_masks = len(masks)
+    fig, axes = plt.subplots(1, n_masks, figsize=figsize)
+    if n_masks == 1:
+        axes = [axes]
+    
+    Ny, Nx = masks[0].shape
+    if x is None or y is None:
+        x = np.linspace(0, 1, Nx)
+        y = np.linspace(0, 1, Ny)
+        X, Y = np.meshgrid(x, y)
+    else:
+        X, Y = x, y
+    
+    for ax, mask, title in zip(axes, masks, titles):
+        # Plot mask
+        im = ax.pcolormesh(X, Y, mask, cmap='RdBu_r', vmin=0, vmax=1, shading='auto')
+        
+        # Add interface contour
+        ax.contour(X, Y, mask, levels=[0.5], colors='white', linewidths=2)
+        
+        if show_circle:
+            cx, cy, r = show_circle
+            circle = plt.Circle((cx, cy), r, fc='gray', ec='white', linewidth=2)
+            ax.add_patch(circle)
+        
+        ax.set_title(title, fontsize=14)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_aspect('equal')
+        
+        # Add statistics
+        cfd_pct = 100 * np.sum(mask) / mask.size
+        ax.text(0.5, -0.12, f'CFD: {cfd_pct:.1f}%', transform=ax.transAxes, 
+                ha='center', fontsize=10)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved figure to {save_path}")
+    
+    plt.close(fig)

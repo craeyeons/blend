@@ -1286,3 +1286,305 @@ class CylinderFlowPINNSimulation:
 
 # Import jax at module level for use in methods
 import jax
+
+class CylinderFlowLearnedRouterSimulation(CylinderFlowSimulation):
+    """
+    Hybrid PINN-CFD solver for cylinder flow using a learned router.
+    
+    Instead of threshold-based segregation, uses a neural network router
+    to predict smooth, connected CFD/PINN regions based on learned features.
+    
+    The router is trained to recognize:
+    - Regions where PINN performs poorly (near inlet, boundaries)
+    - Regions where PINN is accurate (far-field, downstream)
+    - Smooth transitions between regions
+    """
+    
+    def __init__(self, network, uv_func, learned_router, u_init, v_init, p_init,
+                 Re=100, N=100, max_iter=200000, tol=1e-6,
+                 x_domain=(0, 2), y_domain=(0, 1),
+                 cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
+                 inlet_velocity=1.0):
+        """
+        Initialize learned router hybrid simulation.
+        
+        Parameters:
+        -----------
+        network : tf.keras.Model
+            PINN model that outputs (u, v, p) given (x, y) coordinates.
+        uv_func : callable
+            Function to compute (u, v) from the network.
+        learned_router : LearnedRouter
+            Trained router for predicting masks.
+        u_init, v_init, p_init : ndarray of shape (Ny, Nx)
+            Initial velocity and pressure fields (from PINN).
+        Re : float
+            Reynolds number
+        N : int
+            Base number of grid points
+        max_iter : int
+            Maximum iterations
+        tol : float
+            Convergence tolerance
+        x_domain, y_domain : tuple
+            Domain bounds
+        cylinder_center : tuple
+            Cylinder center coordinates
+        cylinder_radius : float
+            Cylinder radius
+        inlet_velocity : float
+            Inlet velocity magnitude
+        """
+        # Initialize parent class
+        super().__init__(Re, N, max_iter, tol, x_domain, y_domain,
+                        cylinder_center, cylinder_radius, inlet_velocity)
+        
+        self.network = network
+        self.uv_func = uv_func
+        self.learned_router = learned_router
+        
+        # Store initial fields (from PINN)
+        self.u_init = np.array(u_init)
+        self.v_init = np.array(v_init)
+        self.p_init = np.array(p_init)
+        
+        # Compute mask using learned router
+        self._compute_learned_mask()
+        
+        # Setup PINN interface
+        self._setup_pinn_interface()
+    
+    def _compute_learned_mask(self):
+        """
+        Compute binary mask using the learned router.
+        
+        The router produces smooth, connected masks by considering:
+        - Local complexity metrics
+        - Distance to boundaries
+        - Flow-aligned coordinates
+        - Boundary condition violations
+        """
+        print("Computing mask using learned router...")
+        
+        # Get mask from learned router
+        self.mask, self.r_prob = self.learned_router.predict_mask(
+            u_pinn=self.u_init,
+            v_pinn=self.v_init,
+            p_pinn=self.p_init,
+            X=self.X,
+            Y=self.Y,
+            dx=self.dx,
+            dy=self.dy,
+            cylinder_mask=self.cylinder_mask
+        )
+        
+        # Compute statistics
+        Ny, Nx = self.mask.shape
+        total = Ny * Nx
+        cfd_count = np.sum(self.mask)
+        pinn_count = total - cfd_count
+        
+        print(f"  CFD region: {cfd_count} cells ({100*cfd_count/total:.1f}%)")
+        print(f"  PINN region: {pinn_count} cells ({100*pinn_count/total:.1f}%)")
+        print(f"  Rejection probability range: [{self.r_prob.min():.3f}, {self.r_prob.max():.3f}]")
+    
+    def _setup_pinn_interface(self):
+        """Setup PINN values and interface between PINN and CFD regions."""
+        # Query PINN for the entire domain
+        print("Querying PINN for field values...")
+        uvp = self.network.predict(self.xy, batch_size=len(self.xy))
+        self.u_pinn = uvp[..., 0].reshape(self.X.shape)
+        self.v_pinn = uvp[..., 1].reshape(self.X.shape)
+        self.p_pinn = uvp[..., 2].reshape(self.X.shape)
+        
+        # Find interface: CFD cells adjacent to PINN region
+        pinn_region = (self.mask == 0).astype(float)
+        dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)
+        self.interface_mask = (self.mask == 1) & (dilated_pinn == 1)
+        
+        # Domain boundaries (in CFD region)
+        domain_boundary = np.zeros_like(self.mask, dtype=bool)
+        domain_boundary[0, :] = True
+        domain_boundary[-1, :] = True
+        domain_boundary[:, 0] = True
+        domain_boundary[:, -1] = True
+        
+        self.cfd_boundary = self.interface_mask | (domain_boundary & (self.mask == 1))
+        self.cfd_boundary = self.cfd_boundary | (self.cylinder_mask == 1)
+        
+        # Convert to JAX arrays
+        self.mask_jax = jnp.array(self.mask, dtype=jnp.float64)
+        self.interface_jax = jnp.array(self.interface_mask, dtype=bool)
+        self.cfd_boundary_jax = jnp.array(self.cfd_boundary, dtype=bool)
+        self.u_pinn_jax = jnp.array(self.u_pinn)
+        self.v_pinn_jax = jnp.array(self.v_pinn)
+        self.p_pinn_jax = jnp.array(self.p_pinn)
+        
+        print(f"Interface cells: {np.sum(self.interface_mask)}")
+    
+    def apply_hybrid_boundary_conditions(self, u, v):
+        """
+        Apply boundary conditions for learned router hybrid solver.
+        """
+        Ny, Nx = self.Ny, self.Nx
+        mask = self.mask_jax
+        interface_mask = self.interface_jax
+        u_pinn = self.u_pinn_jax
+        v_pinn = self.v_pinn_jax
+        cylinder_mask = self.cylinder_mask_jax
+        
+        # PINN region: use PINN values
+        u = jnp.where(mask == 0, u_pinn, u)
+        v = jnp.where(mask == 0, v_pinn, v)
+        
+        # Interface: use PINN values as coupling BC
+        u = jnp.where(interface_mask, u_pinn, u)
+        v = jnp.where(interface_mask, v_pinn, v)
+        
+        # Cylinder: no-slip
+        u = jnp.where(cylinder_mask == 1, 0.0, u)
+        v = jnp.where(cylinder_mask == 1, 0.0, v)
+        
+        # Domain boundaries
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
+        u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
+        u = u.at[:, 0].set(u_inlet_profile)
+        v = v.at[:, 0].set(0.0)
+        
+        u = u.at[:, -1].set(u[:, -2])
+        v = v.at[:, -1].set(v[:, -2])
+        
+        u = u.at[-1, :].set(0.0)
+        v = v.at[-1, :].set(0.0)
+        u = u.at[0, :].set(0.0)
+        v = v.at[0, :].set(0.0)
+        
+        return u, v
+    
+    def solve(self):
+        """
+        Solve Navier-Stokes using learned router hybrid method.
+        
+        Returns:
+        --------
+        u, v, p : ndarray
+            Velocity and pressure fields
+        """
+        Ny, Nx = self.Ny, self.Nx
+        dx, dy, dt = self.dx, self.dy, self.dt
+        nu = self.nu
+        
+        # Initialize with PINN values
+        u = jnp.array(self.u_pinn)
+        v = jnp.array(self.v_pinn)
+        p = jnp.array(self.p_pinn)
+        
+        # Get helper functions
+        laplacian, divergence, convection, pressure_gradient = self._create_jit_functions()
+        
+        mask_jax = self.mask_jax
+        u_pinn_jax = self.u_pinn_jax
+        v_pinn_jax = self.v_pinn_jax
+        p_pinn_jax = self.p_pinn_jax
+        cylinder_mask = self.cylinder_mask_jax
+        
+        apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
+        
+        @jit
+        def pressure_poisson_iteration(p, rhs):
+            p_new = jnp.zeros_like(p)
+            p_new = p_new.at[1:-1, 1:-1].set(
+                0.25 * (
+                    p[1:-1, 2:] + p[1:-1, :-2] +
+                    p[2:, 1:-1] + p[:-2, 1:-1] -
+                    dx**2 * rhs[1:-1, 1:-1]
+                )
+            )
+            p_new = p_new.at[0, :].set(p_new[1, :])
+            p_new = p_new.at[-1, :].set(p_new[-2, :])
+            p_new = p_new.at[:, 0].set(p_new[:, 1])
+            p_new = p_new.at[:, -1].set(0.0)
+            p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
+            return p_new
+        
+        @jit
+        def solve_pressure_poisson(p, rhs, n_iter=100):
+            def body_fn(i, p):
+                p_new = pressure_poisson_iteration(p, rhs)
+                p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+                return p_new
+            return lax.fori_loop(0, n_iter, body_fn, p)
+        
+        @jit
+        def step(u, v, p):
+            conv_u = convection(u, v, u)
+            conv_v = convection(u, v, v)
+            lap_u = laplacian(u)
+            lap_v = laplacian(v)
+            
+            u_star = u + dt * (-conv_u + nu * lap_u)
+            v_star = v + dt * (-conv_v + nu * lap_v)
+            
+            u_star = jnp.where(mask_jax == 1, u_star, u_pinn_jax)
+            v_star = jnp.where(mask_jax == 1, v_star, v_pinn_jax)
+            
+            u_star, v_star = apply_hybrid_bc(u_star, v_star)
+            
+            rhs = divergence(u_star, v_star) / dt
+            p_new = solve_pressure_poisson(p, rhs)
+            
+            dpdx, dpdy = pressure_gradient(p_new)
+            u_new = u_star - dt * dpdx
+            v_new = v_star - dt * dpdy
+            
+            u_new, v_new = apply_hybrid_bc(u_new, v_new)
+            
+            u_new = jnp.where(mask_jax == 0, u_pinn_jax, u_new)
+            v_new = jnp.where(mask_jax == 0, v_pinn_jax, v_new)
+            p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+            
+            return u_new, v_new, p_new
+        
+        @jit
+        def compute_residual(u_new, u_old, v_new, v_old):
+            diff_u = jnp.sum(((u_new - u_old) * mask_jax)**2)
+            diff_v = jnp.sum(((v_new - v_old) * mask_jax)**2)
+            return jnp.sqrt(diff_u + diff_v)
+        
+        u, v = apply_hybrid_bc(u, v)
+        p = jnp.where(mask_jax == 0, p_pinn_jax, p)
+        
+        print(f"Solving {self.get_simulation_name()} with learned router hybrid method...")
+        print(f"Reynolds number: {self.Re}")
+        print(f"Grid size: {Nx}x{Ny}")
+        print(f"Time step: {dt:.6e}")
+        print("-" * 50)
+        
+        for n in range(self.max_iter):
+            u_old, v_old = u, v
+            u, v, p = step(u, v, p)
+            
+            if n % 50 == 0:
+                residual = compute_residual(u, u_old, v, v_old)
+                residual_val = float(residual)
+                print(f"Iteration {n}, Residual: {residual_val:.6e}")
+                
+                if residual_val < self.tol:
+                    print(f"\nConverged at iteration {n}")
+                    break
+        else:
+            print(f"\nReached maximum iterations ({self.max_iter})")
+        
+        # Plot region mask
+        plot_region_mask(
+            self.mask, x=self.X, y=self.Y,
+            title='CFD vs PINN Regions (Learned Router)',
+            show_circle=(self.Cx, self.Cy, self.radius),
+            simulation_type='cylinder', mode='learned_router', Re=self.Re
+        )
+        
+        return np.array(u), np.array(v), np.array(p)
+    
+    def get_rejection_probability_map(self):
+        """Return the raw rejection probability map from the router."""
+        return self.r_prob
