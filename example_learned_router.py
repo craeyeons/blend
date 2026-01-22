@@ -42,15 +42,19 @@ from lib.plotting import plot_solution, plot_hybrid_solution, plot_streamlines
 # =============================================================================
 
 # Reynolds numbers for training
-RE_VALUES = [1.0, 10.0, 40.0, 100.0, 200.0]
+# RE_VALUES = [1.0, 10.0, 40.0, 100.0, 200.0]
+RE_VALUES = [100.0]
 
 # Cylinder positions (Cx, Cy) for training
+# CYLINDER_POSITIONS = [
+#     (0.5, 0.3),
+#     (0.5, 0.4),
+#     (0.5, 0.5),
+#     (0.5, 0.6),
+#     (0.5, 0.7),
+# ]
 CYLINDER_POSITIONS = [
-    (0.5, 0.3),
-    (0.5, 0.4),
-    (0.5, 0.5),
-    (0.5, 0.6),
-    (0.5, 0.7),
+    (0.5, 0.5)
 ]
 
 # Domain settings
