@@ -800,20 +800,54 @@ class HybridRouterTrainer:
             
             L_physics = tf.reduce_mean(R_u**2 + R_v**2 + R_c**2)
             
-            # Boundary loss
+            # ================================================================
+            # Enhanced Boundary Condition Loss
+            # ================================================================
             Ny = tf.shape(u_hybrid)[0]
+            Nx = tf.shape(u_hybrid)[1]
             y_min = tf.cast(self.physics_loss.y_min, tf.float32)
             y_max = tf.cast(self.physics_loss.y_max, tf.float32)
             u_inlet = tf.cast(self.physics_loss.u_inlet, tf.float32)
             Ly = tf.cast(self.physics_loss.Ly, tf.float32)
             
             y_vals = tf.linspace(y_min, y_max, Ny)
-            u_inlet_bc = 4.0 * u_inlet * (y_vals - y_min) * (y_max - y_vals) / (Ly**2)
             
-            inlet_loss = tf.reduce_mean((u_hybrid[:, 0] - u_inlet_bc)**2 + v_hybrid[:, 0]**2)
-            wall_loss = tf.reduce_mean(u_hybrid[0, :]**2 + v_hybrid[0, :]**2)
-            wall_loss += tf.reduce_mean(u_hybrid[-1, :]**2 + v_hybrid[-1, :]**2)
-            L_BC = inlet_loss + wall_loss
+            # 1. Inlet BC: parabolic profile u = 4*u_max*y*(H-y)/H^2, v = 0
+            u_inlet_bc = 4.0 * u_inlet * (y_vals - y_min) * (y_max - y_vals) / (Ly**2)
+            inlet_u_loss = tf.reduce_mean((u_hybrid[:, 0] - u_inlet_bc)**2)
+            inlet_v_loss = tf.reduce_mean(v_hybrid[:, 0]**2)
+            
+            # 2. Inlet gradient: du/dy should match parabolic derivative
+            # d/dy[4*u_max*y*(H-y)/H^2] = 4*u_max*(H-2y)/H^2
+            du_dy_inlet_bc = 4.0 * u_inlet * (y_max - 2.0*y_vals) / (Ly**2)
+            # Compute actual du/dy at inlet using one-sided difference
+            du_dy_inlet = (u_hybrid[1:, 0] - u_hybrid[:-1, 0]) / dy
+            du_dy_inlet_bc_interior = (du_dy_inlet_bc[1:] + du_dy_inlet_bc[:-1]) / 2.0
+            inlet_grad_loss = tf.reduce_mean((du_dy_inlet - du_dy_inlet_bc_interior)**2)
+            
+            # 3. Wall BCs (top and bottom): no-slip u=0, v=0
+            wall_loss = tf.reduce_mean(u_hybrid[0, :]**2 + v_hybrid[0, :]**2)   # Bottom
+            wall_loss += tf.reduce_mean(u_hybrid[-1, :]**2 + v_hybrid[-1, :]**2)  # Top
+            
+            # 4. Wall gradient: du/dy should be non-zero at walls (shear stress)
+            # Near wall, the velocity profile should be linear (no-slip -> du/dy ≠ 0)
+            # Penalize if velocity doesn't go to zero smoothly at walls
+            wall_grad_loss = tf.reduce_mean((u_hybrid[1, :] - u_hybrid[0, :])**2 / dy**2)   # Bottom shear
+            wall_grad_loss += tf.reduce_mean((u_hybrid[-1, :] - u_hybrid[-2, :])**2 / dy**2)  # Top shear
+            
+            # 5. Outlet BC: zero gradient (Neumann BC)
+            # du/dx = 0 at outlet, dv/dx = 0 at outlet
+            outlet_grad_u = tf.reduce_mean((u_hybrid[:, -1] - u_hybrid[:, -2])**2)
+            outlet_grad_v = tf.reduce_mean((v_hybrid[:, -1] - v_hybrid[:, -2])**2)
+            outlet_loss = outlet_grad_u + outlet_grad_v
+            
+            # Combined BC loss with heavy weighting on inlet accuracy
+            L_BC = (10.0 * inlet_u_loss +      # Primary: inlet u value
+                    5.0 * inlet_v_loss +        # Inlet v = 0
+                    5.0 * inlet_grad_loss +     # Inlet du/dy matches parabolic
+                    2.0 * wall_loss +           # No-slip walls
+                    0.5 * wall_grad_loss +      # Wall shear
+                    1.0 * outlet_loss)          # Outlet Neumann
             
             # Spatial smoothness (total variation)
             r_diff_x = tf.abs(r_soft[:, 1:] - r_soft[:, :-1])
