@@ -740,6 +740,10 @@ class HybridRouterTrainer:
         The key insight: use r_soft for blending (differentiable) 
         but r_binary for CFD region selection (non-differentiable).
         """
+        # Cast dx, dy to float32 for consistency with TF tensors
+        dx = tf.cast(dx, tf.float32)
+        dy = tf.cast(dy, tf.float32)
+        
         with tf.GradientTape() as tape:
             # Router forward pass
             r_soft = self.router(features, training=True)
@@ -755,7 +759,10 @@ class HybridRouterTrainer:
             
             # Physics residual (simplified for TF graph)
             # Using finite difference approximation
-            mu = self.physics_loss.nu * self.physics_loss.rho
+            # Cast physics parameters to float32
+            nu = tf.cast(self.physics_loss.nu, tf.float32)
+            rho = tf.cast(self.physics_loss.rho, tf.float32)
+            mu = nu * rho
             
             # Central differences for derivatives
             u_x = (u_hybrid[:, 2:] - u_hybrid[:, :-2]) / (2 * dx)
@@ -786,18 +793,22 @@ class HybridRouterTrainer:
             v_xx_int = v_xx[1:-1, :]
             v_yy_int = v_yy[:, 1:-1]
             
-            # Momentum residuals
-            R_u = self.physics_loss.rho * (u_int * u_x_int + v_int * u_y_int) + p_x_int - mu * (u_xx_int + u_yy_int)
-            R_v = self.physics_loss.rho * (u_int * v_x_int + v_int * v_y_int) + p_y_int - mu * (v_xx_int + v_yy_int)
+            # Momentum residuals (using casted rho)
+            R_u = rho * (u_int * u_x_int + v_int * u_y_int) + p_x_int - mu * (u_xx_int + u_yy_int)
+            R_v = rho * (u_int * v_x_int + v_int * v_y_int) + p_y_int - mu * (v_xx_int + v_yy_int)
             R_c = u_x_int + v_y_int
             
             L_physics = tf.reduce_mean(R_u**2 + R_v**2 + R_c**2)
             
             # Boundary loss
             Ny = tf.shape(u_hybrid)[0]
-            y_vals = tf.linspace(self.physics_loss.y_min, self.physics_loss.y_max, Ny)
-            u_inlet_bc = 4 * self.physics_loss.u_inlet * (y_vals - self.physics_loss.y_min) * \
-                         (self.physics_loss.y_max - y_vals) / (self.physics_loss.Ly**2)
+            y_min = tf.cast(self.physics_loss.y_min, tf.float32)
+            y_max = tf.cast(self.physics_loss.y_max, tf.float32)
+            u_inlet = tf.cast(self.physics_loss.u_inlet, tf.float32)
+            Ly = tf.cast(self.physics_loss.Ly, tf.float32)
+            
+            y_vals = tf.linspace(y_min, y_max, Ny)
+            u_inlet_bc = 4.0 * u_inlet * (y_vals - y_min) * (y_max - y_vals) / (Ly**2)
             
             inlet_loss = tf.reduce_mean((u_hybrid[:, 0] - u_inlet_bc)**2 + v_hybrid[:, 0]**2)
             wall_loss = tf.reduce_mean(u_hybrid[0, :]**2 + v_hybrid[0, :]**2)
@@ -812,11 +823,15 @@ class HybridRouterTrainer:
             # Cost penalty
             L_cost = tf.reduce_mean(r_soft)
             
-            # Total loss
+            # Total loss (cast lambda weights to float32)
+            lambda_BC = tf.cast(self.physics_loss.lambda_BC, tf.float32)
+            lambda_spatial = tf.cast(self.physics_loss.lambda_spatial, tf.float32)
+            lambda_cost = tf.cast(self.physics_loss.lambda_cost, tf.float32)
+            
             total_loss = (L_physics + 
-                         self.physics_loss.lambda_BC * L_BC + 
-                         self.physics_loss.lambda_spatial * L_spatial + 
-                         self.physics_loss.lambda_cost * L_cost)
+                         lambda_BC * L_BC + 
+                         lambda_spatial * L_spatial + 
+                         lambda_cost * L_cost)
         
         # Compute gradients
         gradients = tape.gradient(total_loss, self.router.trainable_variables)
