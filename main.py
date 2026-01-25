@@ -270,6 +270,7 @@ def run_cylinder_simulation(args):
         CylinderFlowSimulation,
         CylinderFlowHybridSimulation,
         CylinderFlowDynamicHybridSimulation,
+        CylinderFlowRouterHybridSimulation,
         create_cylinder_boundary_mask,
         create_cylinder_wake_mask
     )
@@ -581,6 +582,116 @@ def run_cylinder_simulation(args):
                         show_circle=circle_info,
                         title='Dynamic Hybrid PINN-CFD - Streamlines')
     
+    elif args.mode == 'router':
+        # Router-based hybrid PINN-CFD simulation with learned mask
+        from lib.router import RouterNetwork, RouterFeatureExtractor
+        
+        # Build cylinder network
+        network = CylinderNetwork().build(num_inputs=2, layers=[48,48,48,48],
+                                          activation='tanh', num_outputs=3)
+        
+        # Determine PINN model path
+        if args.model_path:
+            model_path = args.model_path
+        else:
+            if Re <= 10:
+                model_path = './models/pinn_cylinder_1.0.h5'
+            else:
+                model_path = './models/pinn_cylinder_100.0.h5'
+            print(f"Auto-selected PINN model: {model_path}")
+        
+        print(f"Loading PINN model from {model_path}")
+        network.load_weights(model_path)
+        
+        # Create grid
+        x_domain = (args.x_min, args.x_max)
+        y_domain = (args.y_min, args.y_max)
+        cylinder_center = (args.cylinder_x, args.cylinder_y)
+        Lx = args.x_max - args.x_min
+        Ly = args.y_max - args.y_min
+        aspect_ratio = Lx / Ly
+        
+        Ny = args.grid_size
+        Nx = int(args.grid_size * aspect_ratio)
+        dx = Lx / (Nx - 1)
+        dy = Ly / (Ny - 1)
+        
+        # Build router network
+        router = RouterNetwork(
+            num_input_features=14,
+            num_filters=args.router_filters,
+            kernel_size=3,
+            num_layers=args.router_layers
+        )
+        
+        # Build router with dummy input
+        dummy_input = np.zeros((1, Ny, Nx, 14), dtype=np.float32)
+        _ = router(dummy_input)
+        
+        # Load router weights
+        if args.router_weights:
+            print(f"Loading router weights from {args.router_weights}")
+            router.load_weights(args.router_weights)
+        else:
+            default_router_path = './images/router/router_weights.h5'
+            try:
+                router.load_weights(default_router_path)
+                print(f"Loaded router weights from {default_router_path}")
+            except Exception as e:
+                print(f"Warning: Could not load router weights: {e}")
+                print("Router will use random initialization (results will be poor)")
+                print("Run router_train.py first to train the router.")
+        
+        # Create feature extractor
+        feature_extractor = RouterFeatureExtractor(
+            x_domain=x_domain,
+            y_domain=y_domain,
+            cylinder_center=cylinder_center,
+            cylinder_radius=args.cylinder_radius,
+            inlet_velocity=u0,
+            dx=dx,
+            dy=dy
+        )
+        
+        sim = CylinderFlowRouterHybridSimulation(
+            network=network,
+            uv_func=compute_uv_direct,
+            router=router,
+            feature_extractor=feature_extractor,
+            Re=Re,
+            N=args.grid_size,
+            max_iter=args.max_iter,
+            tol=args.tolerance,
+            threshold=args.router_threshold,
+            use_soft_blending=args.soft_blending,
+            x_domain=x_domain,
+            y_domain=y_domain,
+            cylinder_center=cylinder_center,
+            cylinder_radius=args.cylinder_radius,
+            inlet_velocity=u0
+        )
+        
+        start_time = time.time()
+        u, v, p = sim.solve()
+        elapsed = time.time() - start_time
+        
+        print(f"\nSimulation time: {elapsed:.2f} seconds")
+        
+        X, Y = sim.X, sim.Y
+        circle_info = (args.cylinder_x, args.cylinder_y, args.cylinder_radius)
+        
+        # Plot results
+        plot_solution(u, v, p, x=X, y=Y, title_prefix='Router Hybrid: ',
+                     save_path='cylinder_flow_router.png',
+                     show_circle=circle_info)
+        plot_hybrid_solution(u, v, p, sim.mask, x=X, y=Y,
+                            save_path='cylinder_flow_router_mask.png',
+                            show_circle=circle_info)
+        plot_streamlines(u, v, x=X, y=Y,
+                        save_path='cylinder_flow_router_streamlines.png',
+                        show_circle=circle_info,
+                        title='Router Hybrid PINN-CFD - Streamlines')
+    
     return u, v, p
 
 
@@ -622,6 +733,15 @@ Examples:
   
   # Run with percentile-based normalization
   python main.py --simulation cavity --mode dynamic --normalization percentile
+  
+  # Run cylinder flow with learned router (physics-based mask)
+  python main.py --simulation cylinder --mode router --grid-size 100
+  
+  # Run router mode with custom router weights
+  python main.py --simulation cylinder --mode router --router-weights ./images/router/router_weights.h5
+  
+  # Run router mode with hard binary mask (no soft blending)
+  python main.py --simulation cylinder --mode router --no-soft-blending
         """
     )
     
@@ -630,8 +750,8 @@ Examples:
                        choices=['cavity', 'cylinder'],
                        help='Simulation type (default: cavity)')
     parser.add_argument('--mode', '-m', type=str, default='cfd',
-                       choices=['cfd', 'hybrid', 'pinn', 'dynamic'],
-                       help='Solver mode: cfd, hybrid, pinn, or dynamic (default: cfd)')
+                       choices=['cfd', 'hybrid', 'pinn', 'dynamic', 'router'],
+                       help='Solver mode: cfd, hybrid, pinn, dynamic, or router (default: cfd)')
     parser.add_argument('--grid-size', '-N', type=int, default=100,
                        help='Grid size (default: 100)')
     parser.add_argument('--max-iter', type=int, default=200000,
@@ -685,6 +805,20 @@ Examples:
                        help='Weight for continuity residual in complexity score (default: 2.0)')
     parser.add_argument('--merge-distance', type=int, default=0,
                        help='Grid cells for merging nearby CFD regions (default: 0, disabled)')
+    
+    # Router-based hybrid arguments
+    parser.add_argument('--router-weights', type=str, default=None,
+                       help='Path to pre-trained router weights (default: ./images/router/router_weights.h5)')
+    parser.add_argument('--router-threshold', type=float, default=0.5,
+                       help='Threshold for binary CFD/PINN decision in router mode (default: 0.5)')
+    parser.add_argument('--router-filters', type=int, default=32,
+                       help='Number of conv filters in router network (default: 32)')
+    parser.add_argument('--router-layers', type=int, default=4,
+                       help='Number of conv layers in router network (default: 4)')
+    parser.add_argument('--soft-blending', action='store_true', default=True,
+                       help='Use soft blending for smooth transitions in router mode (default: True)')
+    parser.add_argument('--no-soft-blending', dest='soft_blending', action='store_false',
+                       help='Disable soft blending, use hard binary mask')
     
     args = parser.parse_args()
     

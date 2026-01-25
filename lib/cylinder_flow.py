@@ -1286,3 +1286,396 @@ class CylinderFlowPINNSimulation:
 
 # Import jax at module level for use in methods
 import jax
+
+class CylinderFlowRouterHybridSimulation(CylinderFlowSimulation):
+    """
+    Hybrid PINN-CFD solver for cylinder flow with learned router.
+    
+    Uses a pre-trained router network to automatically segregate the domain
+    into CFD-dominated and PINN-dominated regions based on physics-learned
+    features. Unlike dynamic segregation, this approach:
+    
+    - Does NOT force CFD at boundaries or around the cylinder
+    - Learns the mask purely from physics-based loss (NS residuals)
+    - Uses soft blending for smooth transitions
+    
+    The router was trained to minimize Navier-Stokes residuals in the
+    hybrid solution, automatically identifying where PINN fails.
+    """
+    
+    def __init__(self, network, uv_func, router, feature_extractor,
+                 Re=100, N=100, max_iter=200000, tol=1e-6,
+                 threshold=0.5, use_soft_blending=True,
+                 x_domain=(0, 2), y_domain=(0, 1),
+                 cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
+                 inlet_velocity=1.0):
+        """
+        Initialize router-based hybrid cylinder flow simulation.
+        
+        Parameters:
+        -----------
+        network : tf.keras.Model
+            PINN model that outputs (u, v, p) given (x, y) coordinates.
+        uv_func : callable
+            Function to compute (u, v) from the network: uv_func(network, xy) -> (u, v)
+        router : RouterNetwork
+            Pre-trained router network that outputs soft probabilities.
+        feature_extractor : RouterFeatureExtractor
+            Feature extraction for router input.
+        Re : float
+            Reynolds number
+        N : int
+            Base number of grid points (Ny = N, Nx = N * aspect_ratio)
+        max_iter : int
+            Maximum iterations
+        tol : float
+            Convergence tolerance
+        threshold : float
+            Threshold for binary CFD/PINN decision
+        use_soft_blending : bool
+            If True, use soft blending for smooth transitions.
+            If False, use hard binary mask.
+        x_domain, y_domain : tuple
+            Domain bounds
+        cylinder_center : tuple
+            Cylinder center coordinates
+        cylinder_radius : float
+            Cylinder radius
+        inlet_velocity : float
+            Inlet velocity magnitude
+        """
+        # Initialize parent class
+        super().__init__(Re, N, max_iter, tol, x_domain, y_domain,
+                        cylinder_center, cylinder_radius, inlet_velocity)
+        
+        self.network = network
+        self.uv_func = uv_func
+        self.router = router
+        self.feature_extractor = feature_extractor
+        self.threshold = threshold
+        self.use_soft_blending = use_soft_blending
+        
+        # Compute router mask and setup PINN interface
+        self._compute_router_mask()
+        self._setup_pinn_interface()
+    
+    def _compute_router_mask(self):
+        """
+        Compute mask from learned router.
+        
+        Unlike dynamic segregation, this mask is purely learned from physics
+        without any forced boundary or cylinder regions.
+        """
+        print("Computing mask from learned router...")
+        print("  (Mask is purely learned from physics - no forced regions)")
+        
+        # Get PINN predictions
+        uvp = self.network.predict(self.xy, batch_size=len(self.xy))
+        self.u_pinn = uvp[..., 0].reshape(self.X.shape)
+        self.v_pinn = uvp[..., 1].reshape(self.X.shape)
+        self.p_pinn = uvp[..., 2].reshape(self.X.shape)
+        
+        # Apply cylinder mask to PINN
+        self.u_pinn = np.where(self.cylinder_mask == 1, 0.0, self.u_pinn)
+        self.v_pinn = np.where(self.cylinder_mask == 1, 0.0, self.v_pinn)
+        
+        # Extract features for router
+        features = self.feature_extractor.extract_features(
+            self.X, self.Y, self.u_pinn, self.v_pinn, self.p_pinn,
+            self.cylinder_mask
+        )
+        
+        # Get router prediction
+        r_soft = self.router(features, training=False)
+        self.r_soft = r_soft.numpy().squeeze()
+        
+        # Binary mask from threshold
+        self.mask = (self.r_soft > self.threshold).astype(np.int32)
+        
+        # Statistics
+        total_cells = self.Ny * self.Nx
+        cfd_cells = np.sum(self.mask)
+        
+        print(f"  Router mask computed:")
+        print(f"    CFD region: {cfd_cells} cells ({100*cfd_cells/total_cells:.1f}%)")
+        print(f"    PINN region: {total_cells - cfd_cells} cells ({100*(total_cells - cfd_cells)/total_cells:.1f}%)")
+        print(f"    Soft probability range: [{self.r_soft.min():.4f}, {self.r_soft.max():.4f}]")
+        
+        # Check inlet rejection rate (should be high if router learned well)
+        inlet_cols = int(self.Nx * 0.1)
+        inlet_rejection = np.mean(self.r_soft[:, :inlet_cols])
+        print(f"    Inlet rejection rate (first 10%): {100*inlet_rejection:.1f}%")
+    
+    def _setup_pinn_interface(self):
+        """Setup PINN interface for hybrid solver."""
+        # Find interface between PINN and CFD regions
+        pinn_region = (self.mask == 0).astype(float)
+        dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)
+        
+        # Interface is where CFD region meets dilated PINN region
+        self.interface_mask = (self.mask == 1) & (dilated_pinn == 1)
+        
+        # Domain boundaries
+        domain_boundary = np.zeros_like(self.mask, dtype=bool)
+        domain_boundary[0, :] = True   # Bottom
+        domain_boundary[-1, :] = True  # Top
+        domain_boundary[:, 0] = True   # Left (inlet)
+        domain_boundary[:, -1] = True  # Right (outlet)
+        
+        # Combined boundary for CFD
+        self.cfd_boundary = self.interface_mask | (domain_boundary & (self.mask == 1))
+        
+        # Add cylinder boundary
+        self.cfd_boundary = self.cfd_boundary | (self.cylinder_mask == 1)
+        
+        # Convert to JAX arrays
+        self.mask_jax = jnp.array(self.mask, dtype=jnp.float64)
+        self.r_soft_jax = jnp.array(self.r_soft, dtype=jnp.float64)
+        self.interface_jax = jnp.array(self.interface_mask, dtype=bool)
+        self.cfd_boundary_jax = jnp.array(self.cfd_boundary, dtype=bool)
+        self.u_pinn_jax = jnp.array(self.u_pinn)
+        self.v_pinn_jax = jnp.array(self.v_pinn)
+        self.p_pinn_jax = jnp.array(self.p_pinn)
+        
+        print(f"  Interface cells: {np.sum(self.interface_mask)}")
+    
+    def apply_hybrid_boundary_conditions(self, u, v):
+        """
+        Apply boundary conditions for router-based hybrid solver.
+        
+        Uses soft blending if enabled, otherwise hard mask.
+        """
+        Ny, Nx = self.Ny, self.Nx
+        u_pinn = self.u_pinn_jax
+        v_pinn = self.v_pinn_jax
+        cylinder_mask = self.cylinder_mask_jax
+        
+        if self.use_soft_blending:
+            # Soft blending: u_hybrid = (1 - r) * u_pinn + r * u_cfd
+            # For BCs, we set PINN values where r is low
+            r = self.r_soft_jax
+            u = (1 - r) * u_pinn + r * u
+            v = (1 - r) * v_pinn + r * v
+        else:
+            # Hard mask
+            mask = self.mask_jax
+            u = jnp.where(mask == 0, u_pinn, u)
+            v = jnp.where(mask == 0, v_pinn, v)
+            
+            # At interface: use PINN values as coupling BC
+            u = jnp.where(self.interface_jax, u_pinn, u)
+            v = jnp.where(self.interface_jax, v_pinn, v)
+        
+        # Cylinder surface: no-slip
+        u = jnp.where(cylinder_mask == 1, 0.0, u)
+        v = jnp.where(cylinder_mask == 1, 0.0, v)
+        
+        # Domain boundary conditions - ALWAYS enforced last
+        y_inlet = jnp.linspace(self.y_ini, self.y_f, Ny)
+        u_inlet_profile = 4 * self.u_inlet * (y_inlet - self.y_ini) * (self.y_f - y_inlet) / (self.Ly**2)
+        u = u.at[:, 0].set(u_inlet_profile)
+        v = v.at[:, 0].set(0.0)
+        
+        # Outlet: zero gradient
+        u = u.at[:, -1].set(u[:, -2])
+        v = v.at[:, -1].set(v[:, -2])
+        
+        # Top and bottom walls: no-slip
+        u = u.at[-1, :].set(0.0)
+        v = v.at[-1, :].set(0.0)
+        u = u.at[0, :].set(0.0)
+        v = v.at[0, :].set(0.0)
+        
+        return u, v
+    
+    def solve(self):
+        """
+        Solve Navier-Stokes equations using router-based hybrid PINN-CFD method.
+        
+        Returns:
+        --------
+        u, v, p : ndarray
+            Velocity and pressure fields
+        """
+        Ny, Nx = self.Ny, self.Nx
+        dx, dy, dt = self.dx, self.dy, self.dt
+        nu = self.nu
+        
+        # Initialize with PINN values
+        u = jnp.array(self.u_pinn)
+        v = jnp.array(self.v_pinn)
+        p = jnp.array(self.p_pinn)
+        
+        mask_jax = self.mask_jax
+        r_soft_jax = self.r_soft_jax
+        u_pinn_jax = self.u_pinn_jax
+        v_pinn_jax = self.v_pinn_jax
+        p_pinn_jax = self.p_pinn_jax
+        cylinder_mask = self.cylinder_mask_jax
+        use_soft = self.use_soft_blending
+        
+        apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
+        
+        @jit
+        def laplacian(f):
+            lap = jnp.zeros_like(f)
+            lap = lap.at[1:-1, 1:-1].set(
+                (f[1:-1, 2:] - 2*f[1:-1, 1:-1] + f[1:-1, :-2]) / dx**2 +
+                (f[2:, 1:-1] - 2*f[1:-1, 1:-1] + f[:-2, 1:-1]) / dy**2
+            )
+            return lap
+        
+        @jit
+        def divergence(u, v):
+            div = jnp.zeros_like(u)
+            div = div.at[1:-1, 1:-1].set(
+                (u[1:-1, 2:] - u[1:-1, :-2]) / (2*dx) +
+                (v[2:, 1:-1] - v[:-2, 1:-1]) / (2*dy)
+            )
+            return div
+        
+        @jit
+        def convection(u, v, f):
+            dfdx = jnp.zeros_like(f)
+            dfdy = jnp.zeros_like(f)
+            dfdx = dfdx.at[1:-1, 1:-1].set((f[1:-1, 2:] - f[1:-1, :-2]) / (2*dx))
+            dfdy = dfdy.at[1:-1, 1:-1].set((f[2:, 1:-1] - f[:-2, 1:-1]) / (2*dy))
+            return u * dfdx + v * dfdy
+        
+        @jit
+        def pressure_gradient(p):
+            dpdx = jnp.zeros_like(p)
+            dpdy = jnp.zeros_like(p)
+            dpdx = dpdx.at[1:-1, 1:-1].set((p[1:-1, 2:] - p[1:-1, :-2]) / (2*dx))
+            dpdy = dpdy.at[1:-1, 1:-1].set((p[2:, 1:-1] - p[:-2, 1:-1]) / (2*dy))
+            return dpdx, dpdy
+        
+        @jit
+        def pressure_poisson_iteration(p, rhs):
+            p_new = jnp.zeros_like(p)
+            p_new = p_new.at[1:-1, 1:-1].set(
+                0.25 * (
+                    p[1:-1, 2:] + p[1:-1, :-2] +
+                    p[2:, 1:-1] + p[:-2, 1:-1] -
+                    dx**2 * rhs[1:-1, 1:-1]
+                )
+            )
+            # Pressure BCs
+            p_new = p_new.at[0, :].set(p_new[1, :])
+            p_new = p_new.at[-1, :].set(p_new[-2, :])
+            p_new = p_new.at[:, 0].set(p_new[:, 1])
+            p_new = p_new.at[:, -1].set(0.0)
+            
+            # Cylinder: zero pressure
+            p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
+            
+            return p_new
+        
+        @jit
+        def solve_pressure_poisson(p, rhs, n_iter=100):
+            def body_fn(i, p):
+                p_new = pressure_poisson_iteration(p, rhs)
+                # In PINN region (low r), blend with PINN pressure
+                if use_soft:
+                    p_new = (1 - r_soft_jax) * p_pinn_jax + r_soft_jax * p_new
+                else:
+                    p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+                return p_new
+            return lax.fori_loop(0, n_iter, body_fn, p)
+        
+        @jit
+        def step_hybrid(u, v, p):
+            # Compute convection and viscous terms
+            conv_u = convection(u, v, u)
+            conv_v = convection(u, v, v)
+            lap_u = laplacian(u)
+            lap_v = laplacian(v)
+            
+            # Predict velocities
+            u_star = u + dt * (-conv_u + nu * lap_u)
+            v_star = v + dt * (-conv_v + nu * lap_v)
+            
+            # Blend with PINN based on router weights
+            if use_soft:
+                u_star = (1 - r_soft_jax) * u_pinn_jax + r_soft_jax * u_star
+                v_star = (1 - r_soft_jax) * v_pinn_jax + r_soft_jax * v_star
+            else:
+                u_star = jnp.where(mask_jax == 1, u_star, u_pinn_jax)
+                v_star = jnp.where(mask_jax == 1, v_star, v_pinn_jax)
+            
+            u_star, v_star = apply_hybrid_bc(u_star, v_star)
+            
+            # Pressure Poisson
+            rhs = divergence(u_star, v_star) / dt
+            p_new = solve_pressure_poisson(p, rhs)
+            
+            # Pressure correction
+            dpdx, dpdy = pressure_gradient(p_new)
+            u_new = u_star - dt * dpdx
+            v_new = v_star - dt * dpdy
+            
+            u_new, v_new = apply_hybrid_bc(u_new, v_new)
+            
+            # Final blend
+            if use_soft:
+                u_new = (1 - r_soft_jax) * u_pinn_jax + r_soft_jax * u_new
+                v_new = (1 - r_soft_jax) * v_pinn_jax + r_soft_jax * v_new
+                p_new = (1 - r_soft_jax) * p_pinn_jax + r_soft_jax * p_new
+            else:
+                u_new = jnp.where(mask_jax == 0, u_pinn_jax, u_new)
+                v_new = jnp.where(mask_jax == 0, v_pinn_jax, v_new)
+                p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
+            
+            return u_new, v_new, p_new
+        
+        @jit
+        def compute_residual_hybrid(u_new, u_old, v_new, v_old):
+            # Only compute residual in CFD region (high r)
+            if use_soft:
+                weight = r_soft_jax
+            else:
+                weight = mask_jax
+            diff_u = jnp.sum(((u_new - u_old) * weight)**2)
+            diff_v = jnp.sum(((v_new - v_old) * weight)**2)
+            return jnp.sqrt(diff_u + diff_v)
+        
+        # Apply initial boundary conditions
+        u, v = apply_hybrid_bc(u, v)
+        if use_soft:
+            p = (1 - r_soft_jax) * p_pinn_jax + r_soft_jax * p
+        else:
+            p = jnp.where(mask_jax == 0, p_pinn_jax, p)
+        
+        print(f"\nSolving {self.get_simulation_name()} with router-based hybrid PINN-CFD method...")
+        print(f"  Reynolds number: {self.Re}")
+        print(f"  Grid size: {Ny}x{Nx}")
+        print(f"  Time step: {dt:.6e}")
+        print(f"  Soft blending: {self.use_soft_blending}")
+        print(f"  Threshold: {self.threshold}")
+        print("-" * 50)
+        
+        # Time stepping loop
+        for n in range(self.max_iter):
+            u_old, v_old = u, v
+            u, v, p = step_hybrid(u, v, p)
+            
+            if n % 50 == 0:
+                residual = compute_residual_hybrid(u, u_old, v, v_old)
+                residual_val = float(residual)
+                print(f"Iteration {n}, Residual: {residual_val:.6e}")
+                
+                if residual_val < self.tol:
+                    print(f"\nConverged at iteration {n}")
+                    break
+        else:
+            print(f"\nReached maximum iterations ({self.max_iter})")
+        
+        # Plot region mask
+        plot_region_mask(
+            self.mask, x=self.X, y=self.Y,
+            title=f'Router Learned Mask (CFD vs PINN)',
+            show_circle=(self.Cx, self.Cy, self.radius),
+            simulation_type='cylinder', mode='router_hybrid', Re=self.Re
+        )
+        
+        return np.array(u), np.array(v), np.array(p)
