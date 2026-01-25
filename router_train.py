@@ -169,24 +169,24 @@ def plot_solution_comparison(u_pinn, v_pinn, u_hybrid, v_hybrid, u_cfd, v_cfd,
     
     vmax = max(vel_pinn.max(), vel_hybrid.max(), vel_cfd.max())
     
-    # PINN solution
-    im1 = axes[0, 0].pcolormesh(X, Y, vel_pinn, cmap='viridis', vmin=0, vmax=vmax)
+    # PINN solution (rainbow colormap for consistency)
+    im1 = axes[0, 0].pcolormesh(X, Y, vel_pinn, cmap='rainbow', vmin=0, vmax=vmax)
     plt.colorbar(im1, ax=axes[0, 0])
     circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
     axes[0, 0].add_patch(circle)
     axes[0, 0].set_title('PINN: |u|')
     axes[0, 0].set_aspect('equal')
     
-    # Hybrid solution
-    im2 = axes[0, 1].pcolormesh(X, Y, vel_hybrid, cmap='viridis', vmin=0, vmax=vmax)
+    # Hybrid solution (rainbow colormap for consistency)
+    im2 = axes[0, 1].pcolormesh(X, Y, vel_hybrid, cmap='rainbow', vmin=0, vmax=vmax)
     plt.colorbar(im2, ax=axes[0, 1])
     circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
     axes[0, 1].add_patch(circle)
     axes[0, 1].set_title('Hybrid (Router): |u|')
     axes[0, 1].set_aspect('equal')
     
-    # Pure CFD solution
-    im3 = axes[0, 2].pcolormesh(X, Y, vel_cfd, cmap='viridis', vmin=0, vmax=vmax)
+    # Pure CFD solution (rainbow colormap for consistency)
+    im3 = axes[0, 2].pcolormesh(X, Y, vel_cfd, cmap='rainbow', vmin=0, vmax=vmax)
     plt.colorbar(im3, ax=axes[0, 2])
     circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
     axes[0, 2].add_patch(circle)
@@ -235,7 +235,7 @@ def plot_solution_comparison(u_pinn, v_pinn, u_hybrid, v_hybrid, u_cfd, v_cfd,
     # Print summary statistics
     rmse_pinn = np.sqrt(np.mean(err_pinn**2))
     rmse_hybrid = np.sqrt(np.mean(err_hybrid**2))
-    improvement_pct = 100 * (rmse_pinn - rmse_hybrid) / rmse_pinn
+    improvement_pct = 100 * (rmse_pinn - rmse_hybrid) / rmse_pinn if rmse_pinn > 0 else 0
     
     print(f"\n{'='*50}")
     print("Solution Quality Comparison (vs Pure CFD)")
@@ -244,6 +244,167 @@ def plot_solution_comparison(u_pinn, v_pinn, u_hybrid, v_hybrid, u_cfd, v_cfd,
     print(f"Hybrid RMSE: {rmse_hybrid:.6f}")
     print(f"Improvement: {improvement_pct:.1f}%")
     print(f"{'='*50}\n")
+
+
+def plot_field_components(u_hybrid, v_hybrid, p_hybrid, X, Y, 
+                          cylinder_center, cylinder_radius, 
+                          title_prefix="Hybrid", save_path=None):
+    """
+    Plot individual field components: |u|, u, v, and p.
+    
+    Parameters:
+    -----------
+    u_hybrid, v_hybrid, p_hybrid : ndarray
+        Velocity and pressure fields
+    X, Y : ndarray
+        Coordinate grids
+    cylinder_center : tuple
+        (Cx, Cy) cylinder center
+    cylinder_radius : float
+        Cylinder radius
+    title_prefix : str
+        Prefix for plot titles
+    save_path : str, optional
+        Path to save the figure
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Velocity magnitude
+    vel_mag = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    
+    # 1. Velocity magnitude |u| (top-left)
+    im1 = axes[0, 0].pcolormesh(X, Y, vel_mag, cmap='rainbow', shading='auto')
+    plt.colorbar(im1, ax=axes[0, 0], label='|u|')
+    circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+    axes[0, 0].add_patch(circle)
+    axes[0, 0].set_xlabel('x')
+    axes[0, 0].set_ylabel('y')
+    axes[0, 0].set_title(f'{title_prefix}: Velocity Magnitude |u|')
+    axes[0, 0].set_aspect('equal')
+    
+    # 2. u-velocity component (bottom-left)
+    u_max = max(abs(u_hybrid.min()), abs(u_hybrid.max()))
+    im2 = axes[1, 0].pcolormesh(X, Y, u_hybrid, cmap='RdBu_r', vmin=-u_max, vmax=u_max, shading='auto')
+    plt.colorbar(im2, ax=axes[1, 0], label='u')
+    circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+    axes[1, 0].add_patch(circle)
+    axes[1, 0].set_xlabel('x')
+    axes[1, 0].set_ylabel('y')
+    axes[1, 0].set_title(f'{title_prefix}: u-velocity')
+    axes[1, 0].set_aspect('equal')
+    
+    # 3. v-velocity component (bottom-right)
+    v_max = max(abs(v_hybrid.min()), abs(v_hybrid.max()))
+    if v_max < 1e-10:
+        v_max = 1.0
+    im3 = axes[1, 1].pcolormesh(X, Y, v_hybrid, cmap='RdBu_r', vmin=-v_max, vmax=v_max, shading='auto')
+    plt.colorbar(im3, ax=axes[1, 1], label='v')
+    circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+    axes[1, 1].add_patch(circle)
+    axes[1, 1].set_xlabel('x')
+    axes[1, 1].set_ylabel('y')
+    axes[1, 1].set_title(f'{title_prefix}: v-velocity')
+    axes[1, 1].set_aspect('equal')
+    
+    # 4. Pressure field (bottom-left)
+    p_max = max(abs(p_hybrid.min()), abs(p_hybrid.max()))
+    if p_max < 1e-10:
+        p_max = 1.0
+    im4 = axes[1, 0].pcolormesh(X, Y, p_hybrid, cmap='coolwarm', vmin=-p_max, vmax=p_max, shading='auto')
+    plt.colorbar(im4, ax=axes[1, 0], label='p')
+    circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+    axes[1, 0].add_patch(circle)
+    axes[1, 0].set_xlabel('x')
+    axes[1, 0].set_ylabel('y')
+    axes[1, 0].set_title(f'{title_prefix}: Pressure p')
+    axes[1, 0].set_aspect('equal')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved field components to {save_path}")
+    
+    plt.show()
+
+
+def plot_all_solutions_components(u_pinn, v_pinn, p_pinn,
+                                   u_hybrid, v_hybrid, p_hybrid,
+                                   u_cfd, v_cfd, p_cfd,
+                                   X, Y, cylinder_center, cylinder_radius,
+                                   save_path=None):
+    """
+    Plot all field components for PINN, Hybrid, and CFD solutions side by side.
+    
+    Creates a 4x3 grid: rows = |u|, u, v, p; columns = PINN, Hybrid, CFD
+    """
+    fig, axes = plt.subplots(4, 3, figsize=(18, 20))
+    
+    solutions = [
+        ('PINN', u_pinn, v_pinn, p_pinn),
+        ('Hybrid', u_hybrid, v_hybrid, p_hybrid),
+        ('CFD', u_cfd, v_cfd, p_cfd)
+    ]
+    
+    # Compute common scales
+    all_u = [u_pinn, u_hybrid, u_cfd]
+    all_v = [v_pinn, v_hybrid, v_cfd]
+    all_p = [p_pinn, p_hybrid, p_cfd]
+    
+    vel_max = max(np.sqrt(u**2 + v**2).max() for u, v in zip(all_u, all_v))
+    u_max = max(max(abs(u.min()), abs(u.max())) for u in all_u)
+    v_max = max(max(abs(v.min()), abs(v.max())) for v in all_v)
+    p_max = max(max(abs(p.min()), abs(p.max())) for p in all_p)
+    
+    if v_max < 1e-10: v_max = 1.0
+    if p_max < 1e-10: p_max = 1.0
+    
+    for col, (name, u, v, p) in enumerate(solutions):
+        vel_mag = np.sqrt(u**2 + v**2)
+        
+        # Row 0: Velocity magnitude
+        im = axes[0, col].pcolormesh(X, Y, vel_mag, cmap='rainbow', vmin=0, vmax=vel_max, shading='auto')
+        plt.colorbar(im, ax=axes[0, col])
+        circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+        axes[0, col].add_patch(circle)
+        axes[0, col].set_title(f'{name}: |u|')
+        axes[0, col].set_aspect('equal')
+        
+        # Row 1: u-velocity
+        im = axes[1, col].pcolormesh(X, Y, u, cmap='RdBu_r', vmin=-u_max, vmax=u_max, shading='auto')
+        plt.colorbar(im, ax=axes[1, col])
+        circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+        axes[1, col].add_patch(circle)
+        axes[1, col].set_title(f'{name}: u')
+        axes[1, col].set_aspect('equal')
+        
+        # Row 2: v-velocity
+        im = axes[2, col].pcolormesh(X, Y, v, cmap='RdBu_r', vmin=-v_max, vmax=v_max, shading='auto')
+        plt.colorbar(im, ax=axes[2, col])
+        circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+        axes[2, col].add_patch(circle)
+        axes[2, col].set_title(f'{name}: v')
+        axes[2, col].set_aspect('equal')
+        
+        # Row 3: Pressure
+        im = axes[3, col].pcolormesh(X, Y, p, cmap='coolwarm', vmin=-p_max, vmax=p_max, shading='auto')
+        plt.colorbar(im, ax=axes[3, col])
+        circle = plt.Circle(cylinder_center, cylinder_radius, fill=True, color='gray')
+        axes[3, col].add_patch(circle)
+        axes[3, col].set_title(f'{name}: p')
+        axes[3, col].set_aspect('equal')
+    
+    # Add row labels
+    for row, label in enumerate(['|u|', 'u', 'v', 'p']):
+        axes[row, 0].set_ylabel(label, fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved all solution components to {save_path}")
+    
+    plt.show()
 
 
 def main():
@@ -271,7 +432,7 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.5, help='Binary threshold')
     
     # Loss weights
-    parser.add_argument('--lambda_BC', type=float, default=10.0, help='BC loss weight')
+    parser.add_argument('--lambda_BC', type=float, default=100.0, help='BC loss weight (high for accurate BCs)')
     parser.add_argument('--lambda_spatial', type=float, default=0.1, help='Spatial smoothness weight')
     parser.add_argument('--lambda_cost', type=float, default=0.01, help='Cost penalty weight')
     
@@ -526,13 +687,30 @@ def main():
         save_path=os.path.join(args.output_dir, 'solution_comparison.png')
     )
     
+    # Plot individual field components for hybrid solution
+    plot_field_components(
+        u_hybrid, v_hybrid, p_hybrid, X, Y,
+        cylinder_center, cylinder_radius,
+        title_prefix="Hybrid",
+        save_path=os.path.join(args.output_dir, 'hybrid_field_components.png')
+    )
+    
+    # Plot all solutions components side by side
+    plot_all_solutions_components(
+        u_pinn, v_pinn, p_pinn,
+        u_hybrid, v_hybrid, p_hybrid,
+        u_cfd, v_cfd, p_cfd,
+        X, Y, cylinder_center, cylinder_radius,
+        save_path=os.path.join(args.output_dir, 'all_solutions_components.png')
+    )
+    
     # =========================================================================
     # Step 7: Save results
     # =========================================================================
     print("\nStep 7: Saving results...")
     
     # Save router weights
-    router_weights_path = os.path.join(args.output_dir, 'router_weights.h5')
+    router_weights_path = os.path.join(args.output_dir, 'router_weights.weights.h5')
     router.save_weights(router_weights_path)
     print(f"  Saved router weights to {router_weights_path}")
     

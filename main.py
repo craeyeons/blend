@@ -633,7 +633,7 @@ def run_cylinder_simulation(args):
             print(f"Loading router weights from {args.router_weights}")
             router.load_weights(args.router_weights)
         else:
-            default_router_path = './images/router/router_weights.h5'
+            default_router_path = './images/router/router_weights.weights.h5'
             try:
                 router.load_weights(default_router_path)
                 print(f"Loaded router weights from {default_router_path}")
