@@ -432,7 +432,7 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.5, help='Binary threshold')
     
     # Loss weights
-    parser.add_argument('--lambda_BC', type=float, default=100.0, help='BC loss weight (high for accurate BCs)')
+    parser.add_argument('--lambda_BC', type=float, default=10.0, help='BC loss weight (high for accurate BCs)')
     parser.add_argument('--lambda_spatial', type=float, default=0.1, help='Spatial smoothness weight')
     parser.add_argument('--lambda_cost', type=float, default=0.01, help='Cost penalty weight')
     
