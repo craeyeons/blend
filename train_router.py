@@ -240,7 +240,7 @@ def main():
     print("\n[Step 7] Saving results...")
     
     # Save router weights
-    router_path = os.path.join(args.output_dir, 'router_weights.h5')
+    router_path = os.path.join(args.output_dir, 'router.weights.h5')
     router.save_weights(router_path)
     print(f"  ✓ Saved router weights to {router_path}")
     
@@ -301,7 +301,7 @@ def main():
     print("TRAINING COMPLETE")
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
-    print(f"  - router_weights.h5: Trained router model")
+    print(f"  - router.weights.h5: Trained router model")
     print(f"  - predictions.npz: Router output and mask")
     print(f"  - training_history.npz: Loss history")
     print(f"  - router_output.png: Visualization")

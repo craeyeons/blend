@@ -66,7 +66,7 @@ echo "=== Router training completed ==="
 # Run hybrid simulation with trained router
 echo "=== Running Hybrid Simulation ==="
 python run_router_hybrid.py \
-    --router-path ./router_output/router_weights.h5 \
+    --router-path ./router_output/router.weights.h5 \
     --pinn-path ./models/pinn_cylinder_100.0.h5 \
     --output-dir ./router_hybrid_output \
     --Re 100 \

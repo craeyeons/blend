@@ -8,7 +8,7 @@ This script:
 4. Visualizes and saves results
 
 Usage:
-    python run_router_hybrid.py --router-path ./router_output/router_weights.h5
+    python run_router_hybrid.py --router-path ./router_output/router.weights.h5
 """
 
 import argparse
@@ -56,7 +56,7 @@ def main():
     
     # Model paths
     parser.add_argument('--router-path', type=str,
-                        default='./router_output/router_weights.h5',
+                        default='./router_output/router.weights.h5',
                         help='Path to trained router weights')
     parser.add_argument('--pinn-path', type=str,
                         default='./models/pinn_cylinder_100.0.h5',
