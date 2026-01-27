@@ -392,7 +392,7 @@ class PINNResidualComputer:
         x_max_dist = self.x_domain[1] - x_min
         
         # Decay factor: 1 at inlet, decays to ~0.3 at outlet
-        decay = tf.exp(-0.5 * x_dist_from_inlet / x_max_dist)
+        decay = tf.exp(-10 * x_dist_from_inlet / x_max_dist)
         
         # Inlet error propagates to all downstream points
         inlet_propagated = inlet_error * decay
