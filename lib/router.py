@@ -405,7 +405,7 @@ class PINNResidualComputer:
         
         # Wake region: downstream of cylinder
         in_wake = tf.cast(X > Cx, tf.float32)
-        wake_decay = tf.exp(-0.3 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
+        wake_decay = tf.exp(-10 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
         cyl_propagated = cyl_bc_error * in_wake * wake_decay
         
         # Combine: local BC error + propagated errors
