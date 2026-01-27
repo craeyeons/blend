@@ -29,6 +29,10 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 
+# TensorFlow GPU memory settings to avoid cuDNN errors
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TF_GPU_ALLOCATOR=cuda_malloc_async
+
 echo "=== Checking CUDA version ==="
 nvcc --version 2>/dev/null || echo "nvcc not found, using nvidia-smi info:"
 nvidia-smi | grep "CUDA Version"

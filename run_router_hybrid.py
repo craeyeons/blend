@@ -15,6 +15,17 @@ import argparse
 import os
 import numpy as np
 import tensorflow as tf
+
+# Configure TensorFlow GPU memory growth to avoid cuDNN issues
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"GPU memory growth enabled for {len(gpus)} GPU(s)")
+    except RuntimeError as e:
+        print(f"GPU memory growth setting failed: {e}")
+
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 

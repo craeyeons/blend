@@ -29,6 +29,16 @@ Loss Function:
 
 import numpy as np
 import tensorflow as tf
+
+# Configure TensorFlow GPU memory growth to avoid cuDNN issues
+_gpus = tf.config.list_physical_devices('GPU')
+if _gpus:
+    try:
+        for _gpu in _gpus:
+            tf.config.experimental.set_memory_growth(_gpu, True)
+    except RuntimeError:
+        pass  # Memory growth must be set before GPUs are initialized
+
 from tensorflow import keras
 from tensorflow.keras import layers
 import matplotlib.pyplot as plt
