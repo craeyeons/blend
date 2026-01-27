@@ -391,9 +391,9 @@ class PINNResidualComputer:
         x_dist_from_inlet = X - x_min
         x_max_dist = self.x_domain[1] - x_min
         
-        # Decay factor: 1 at inlet, decays slower (was -0.5, now -0.1)
-        # At outlet: exp(-0.1) ≈ 0.9, so error stays strong throughout domain
-        decay = tf.exp(-20 * x_dist_from_inlet / x_max_dist)
+        # Decay factor: 1 at inlet, moderate decay
+        # At outlet: exp(-1.0) ≈ 0.37, so ~37% of inlet error reaches outlet
+        decay = tf.exp(-0.01 * x_dist_from_inlet / x_max_dist)
         
         # Inlet error propagates to all downstream points
         inlet_propagated = inlet_error * decay
@@ -406,8 +406,8 @@ class PINNResidualComputer:
         
         # Wake region: downstream of cylinder
         in_wake = tf.cast(X > Cx, tf.float32)
-        # Slower decay in wake (was -0.3, now -0.05)
-        wake_decay = tf.exp(-20 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
+        # Moderate decay in wake: exp(-0.5) ≈ 0.61 at outlet
+        wake_decay = tf.exp(-0.01 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
         cyl_propagated = cyl_bc_error * in_wake * wake_decay
         
         # Combine: local BC error + propagated errors
