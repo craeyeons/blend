@@ -172,10 +172,13 @@ class PINNResidualComputer:
     Computes PINN physics residuals for the Navier-Stokes equations.
     
     Used to evaluate how well the PINN solution satisfies the governing equations
-    at each spatial point.
+    at each spatial point. Includes boundary condition error propagation.
     """
     
-    def __init__(self, pinn_model, nu=0.01, rho=1.0):
+    def __init__(self, pinn_model, nu=0.01, rho=1.0,
+                 x_domain=(0, 2), y_domain=(0, 1),
+                 cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
+                 inlet_velocity=1.0):
         """
         Initialize the residual computer.
         
@@ -187,10 +190,23 @@ class PINNResidualComputer:
             Kinematic viscosity
         rho : float
             Fluid density
+        x_domain, y_domain : tuple
+            Domain bounds
+        cylinder_center : tuple
+            Cylinder center coordinates
+        cylinder_radius : float
+            Cylinder radius
+        inlet_velocity : float
+            Inlet velocity magnitude
         """
         self.pinn_model = pinn_model
         self.nu = nu
         self.rho = rho
+        self.x_domain = x_domain
+        self.y_domain = y_domain
+        self.cylinder_center = cylinder_center
+        self.cylinder_radius = cylinder_radius
+        self.inlet_velocity = inlet_velocity
     
     @tf.function
     def compute_residuals(self, x, y):
@@ -298,6 +314,155 @@ class PINNResidualComputer:
                  weights['momentum'] * momentum_norm)
         
         return total
+    
+    def get_pinn_predictions(self, X, Y):
+        """Get PINN u, v, p predictions for entire field."""
+        xy = tf.stack([tf.reshape(X, [-1]), tf.reshape(Y, [-1])], axis=-1)
+        xy = tf.cast(xy, tf.float32)
+        uvp = self.pinn_model(xy, training=False)
+        
+        shape = tf.shape(X)
+        u = tf.reshape(uvp[:, 0], shape)
+        v = tf.reshape(uvp[:, 1], shape)
+        p = tf.reshape(uvp[:, 2], shape)
+        return u, v, p
+    
+    def compute_bc_error(self, X, Y, bc_mask, bc_u, bc_v):
+        """
+        Compute boundary condition error at BC locations.
+        
+        Parameters:
+        -----------
+        X, Y : tf.Tensor
+            Coordinate grids (Ny, Nx)
+        bc_mask : tf.Tensor
+            Mask where BCs are specified (1 = BC, 0 = no BC)
+        bc_u, bc_v : tf.Tensor
+            Prescribed BC values for velocity
+            
+        Returns:
+        --------
+        bc_error : tf.Tensor
+            BC error at each point (0 where no BC)
+        """
+        u, v, p = self.get_pinn_predictions(X, Y)
+        
+        # Error is difference between PINN prediction and prescribed BC
+        u_error = tf.abs(u - bc_u) * bc_mask
+        v_error = tf.abs(v - bc_v) * bc_mask
+        
+        bc_error = tf.sqrt(u_error**2 + v_error**2 + 1e-10)
+        return bc_error
+    
+    def compute_upstream_propagated_error(self, X, Y, bc_mask, bc_u, bc_v):
+        """
+        Compute error that propagates from upstream BC violations.
+        
+        Key insight: If the PINN gets the inlet wrong, EVERYTHING downstream
+        is wrong, even if it locally satisfies PDEs. This function assigns
+        high error to all points downstream of BC violations.
+        
+        Parameters:
+        -----------
+        X, Y : tf.Tensor
+            Coordinate grids (Ny, Nx)
+        bc_mask : tf.Tensor
+            Mask where BCs are specified
+        bc_u, bc_v : tf.Tensor
+            Prescribed BC values
+            
+        Returns:
+        --------
+        propagated_error : tf.Tensor
+            Error field that includes downstream propagation
+        """
+        x_min = self.x_domain[0]
+        Cx = self.cylinder_center[0]
+        
+        # Get BC error at boundary locations
+        bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
+        
+        # For inlet specifically: compute mean inlet error
+        # Inlet is first column (x = x_min)
+        inlet_error = tf.reduce_mean(bc_error[:, 0])
+        
+        # Propagate inlet error downstream with decay
+        # Points further from inlet still affected but less
+        x_dist_from_inlet = X - x_min
+        x_max_dist = self.x_domain[1] - x_min
+        
+        # Decay factor: 1 at inlet, decays to ~0.3 at outlet
+        decay = tf.exp(-0.5 * x_dist_from_inlet / x_max_dist)
+        
+        # Inlet error propagates to all downstream points
+        inlet_propagated = inlet_error * decay
+        
+        # Also propagate from cylinder surface errors
+        # Points in wake region are affected by cylinder BC errors
+        dist_from_cyl = tf.sqrt((X - Cx)**2 + (Y - self.cylinder_center[1])**2)
+        cyl_mask = tf.cast(dist_from_cyl <= self.cylinder_radius * 1.5, tf.float32)
+        cyl_bc_error = tf.reduce_sum(bc_error * cyl_mask) / (tf.reduce_sum(cyl_mask) + 1e-10)
+        
+        # Wake region: downstream of cylinder
+        in_wake = tf.cast(X > Cx, tf.float32)
+        wake_decay = tf.exp(-0.3 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
+        cyl_propagated = cyl_bc_error * in_wake * wake_decay
+        
+        # Combine: local BC error + propagated errors
+        propagated_error = bc_error + inlet_propagated + cyl_propagated
+        
+        return propagated_error
+    
+    def compute_total_residual_with_bc(self, X, Y, bc_mask, bc_u, bc_v,
+                                       weights=None):
+        """
+        Compute total residual including BC error propagation.
+        
+        Parameters:
+        -----------
+        X, Y : tf.Tensor
+            Coordinate grids
+        bc_mask : tf.Tensor
+            Boundary condition mask
+        bc_u, bc_v : tf.Tensor
+            Prescribed BC values
+        weights : dict
+            Weights for: continuity, momentum, bc_local, bc_propagated
+            
+        Returns:
+        --------
+        total_residual : tf.Tensor
+            Comprehensive residual at each point
+        """
+        if weights is None:
+            weights = {
+                'continuity': 1.0,
+                'momentum': 1.0,
+                'bc_local': 2.0,       # Local BC error (high weight)
+                'bc_propagated': 1.5   # Propagated error from upstream
+            }
+        
+        # Standard PDE residuals
+        continuity, momentum = self.compute_residuals(X, Y)
+        continuity_norm = continuity / (tf.reduce_mean(continuity) + 1e-10)
+        momentum_norm = momentum / (tf.reduce_mean(momentum) + 1e-10)
+        
+        pde_residual = (weights.get('continuity', 1.0) * continuity_norm + 
+                        weights.get('momentum', 1.0) * momentum_norm)
+        
+        # BC error with propagation
+        if weights.get('bc_local', 0) > 0 or weights.get('bc_propagated', 0) > 0:
+            bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
+            bc_error_norm = bc_error / (tf.reduce_mean(bc_error) + 1e-10)
+            
+            propagated = self.compute_upstream_propagated_error(X, Y, bc_mask, bc_u, bc_v)
+            propagated_norm = propagated / (tf.reduce_mean(propagated) + 1e-10)
+            
+            pde_residual = (pde_residual + 
+                           weights.get('bc_local', 0) * bc_error_norm +
+                           weights.get('bc_propagated', 0) * propagated_norm)
+        
+        return pde_residual
 
 
 class RouterTrainer:
@@ -306,12 +471,17 @@ class RouterTrainer:
     
     Implements the training loop with the loss function:
     L = β · Σ r(x_i) + Σ (1 - r(x_i)) · L_residual + λ · TV(r)
+    
+    Includes BC error propagation to detect upstream errors.
     """
     
     def __init__(self, router, pinn_model, 
                  beta=0.1, lambda_tv=0.01,
-                 residual_weights={'continuity': 1.0, 'momentum': 1.0},
-                 nu=0.01, rho=1.0):
+                 residual_weights=None,
+                 nu=0.01, rho=1.0,
+                 x_domain=(0, 2), y_domain=(0, 1),
+                 cylinder_center=(0.5, 0.5), cylinder_radius=0.1,
+                 inlet_velocity=1.0):
         """
         Initialize the trainer.
         
@@ -326,20 +496,42 @@ class RouterTrainer:
         lambda_tv : float
             Weight for total variation regularization
         residual_weights : dict
-            Weights for different residual components
+            Weights for: continuity, momentum, bc_local, bc_propagated
         nu : float
             Kinematic viscosity
         rho : float
             Fluid density
+        x_domain, y_domain : tuple
+            Domain bounds
+        cylinder_center : tuple
+            Cylinder center
+        cylinder_radius : float
+            Cylinder radius
+        inlet_velocity : float
+            Inlet velocity
         """
         self.router = router
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
-        self.residual_weights = residual_weights
         
-        # Initialize residual computer
-        self.residual_computer = PINNResidualComputer(pinn_model, nu, rho)
+        # Default residual weights with BC propagation
+        self.residual_weights = residual_weights or {
+            'continuity': 1.0,
+            'momentum': 1.0,
+            'bc_local': 2.0,        # Direct BC error (high weight!)
+            'bc_propagated': 1.5    # Propagated error from upstream
+        }
+        
+        # Initialize residual computer with domain info
+        self.residual_computer = PINNResidualComputer(
+            pinn_model, nu, rho,
+            x_domain=x_domain,
+            y_domain=y_domain,
+            cylinder_center=cylinder_center,
+            cylinder_radius=cylinder_radius,
+            inlet_velocity=inlet_velocity
+        )
         
         # Optimizer
         self.optimizer = keras.optimizers.Adam(learning_rate=1e-4)
@@ -382,6 +574,7 @@ class RouterTrainer:
         -----------
         inputs : tf.Tensor
             Router input of shape (batch, H, W, 5)
+            Channel 0: layout, Channel 1: bc_mask, Channels 2-4: bc_u, bc_v, bc_p
         X, Y : tf.Tensor
             Coordinate grids of shape (H, W)
         layout_mask : tf.Tensor
@@ -394,6 +587,11 @@ class RouterTrainer:
         metrics : dict
             Dictionary of individual loss components
         """
+        # Extract BC info from inputs
+        bc_mask = inputs[0, :, :, 1]
+        bc_u = inputs[0, :, :, 2]
+        bc_v = inputs[0, :, :, 3]
+        
         with tf.GradientTape() as tape:
             # Forward pass
             r = self.router(inputs, training=True)  # Shape: (batch, H, W, 1)
@@ -406,9 +604,9 @@ class RouterTrainer:
             cfd_cost = self.beta * tf.reduce_sum(r_masked)
             
             # 2. PINN residual weighted by (1 - r)
-            # Compute PINN residuals at all points
-            total_residual = self.residual_computer.compute_total_residual(
-                X, Y, self.residual_weights
+            # Compute PINN residuals including BC error propagation
+            total_residual = self.residual_computer.compute_total_residual_with_bc(
+                X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)

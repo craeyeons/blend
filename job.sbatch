@@ -66,6 +66,8 @@ python train_router.py \
     --lr 1e-4 \
     --weight-continuity 1.0 \
     --weight-momentum 1.0 \
+    --weight-bc-local 2.0 \
+    --weight-bc-propagated 1.5 \
     --nx 200 \
     --ny 100 \
     --threshold 0.5
