@@ -159,13 +159,11 @@ class RouterCNN(keras.Model):
         return output
     
     def _match_size(self, x, target):
-        """Resize x to match target spatial dimensions."""
-        target_shape = tf.shape(target)
-        x_shape = tf.shape(x)
-        
-        # Crop or pad to match
-        if x_shape[1] != target_shape[1] or x_shape[2] != target_shape[2]:
-            x = tf.image.resize(x, [target_shape[1], target_shape[2]], method='bilinear')
+        """Resize x to match target spatial dimensions using tf ops only."""
+        # Always resize to target shape - works in graph mode
+        target_h = tf.shape(target)[1]
+        target_w = tf.shape(target)[2]
+        x = tf.image.resize(x, [target_h, target_w], method='bilinear')
         return x
 
 
