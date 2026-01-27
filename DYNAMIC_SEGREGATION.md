@@ -265,3 +265,165 @@ The complexity scoring approach is based on the principle that:
 - **Low complexity regions** (smooth, diffusion-dominated) → Use PINN
 
 This ensures physics-informed allocation of computational resources between expensive CFD (accurate, slow) and learned PINN (faster, needs smooth regions).
+---
+
+# Learned Router-Based Segregation
+
+In addition to the threshold-based complexity scoring approach, we provide a **CNN-based learned router** that automatically learns optimal domain segregation.
+
+## Overview
+
+The router is a convolutional neural network trained to predict which regions should use PINN vs CFD. Unlike threshold-based methods, the router learns this mapping directly from the domain geometry and boundary conditions.
+
+### Input (5 channels, 200×100):
+1. **Layout mask**: 0=obstacle, 1=fluid domain
+2. **Boundary condition mask**: 1 where BCs are specified
+3. **u boundary values**: Velocity x-component at BC locations
+4. **v boundary values**: Velocity y-component at BC locations  
+5. **p boundary values**: Pressure at BC locations
+
+### Output (200×100):
+- Continuous values in [0, 1]
+- 0 → Use PINN solution
+- 1 → Use CFD solution
+- Masked to 0 at obstacle locations
+
+## Training Loss Function
+
+The router is trained to minimize:
+
+$$\mathcal{L} = \beta \sum_i r(x_i) + \sum_i (1 - r(x_i)) \cdot R_{\text{PINN}}(x_i) + \lambda \sum_{i,j} w_{ij} |r(x_i) - r(x_j)|$$
+
+Where:
+- $r(x_i) \in [0,1]$: Router output at location $i$
+- $\beta$: CFD cost coefficient (higher = less CFD usage)
+- $R_{\text{PINN}}(x_i)$: PINN residual (continuity + momentum)
+- $\lambda$: Total variation regularization weight
+- $w_{ij}$: Adjacency weights (1 if $i,j$ are neighbors)
+
+### Loss Components
+
+1. **CFD Cost** ($\beta \sum r$): Penalizes using CFD, encouraging PINN usage
+2. **PINN Residual** ($\sum (1-r) \cdot R$): Points assigned to PINN should have low residual
+3. **Total Variation** ($\lambda \sum |r_i - r_j|$): Encourages spatially smooth regions
+
+**Key insight**: Training does NOT require running CFD - only evaluating PINN residuals.
+
+## Usage
+
+### Training the Router
+
+```python
+from lib.router import RouterCNN, RouterTrainer, create_router_input, create_cylinder_setup
+from cylinder_network import Network as CylinderNetwork
+
+# Load pre-trained PINN
+pinn = CylinderNetwork().build(num_inputs=2, layers=[48,48,48,48], 
+                                activation='tanh', num_outputs=3)
+pinn.load_weights('./models/pinn_cylinder_100.0.h5')
+
+# Create domain setup
+X, Y, layout, bc_mask, bc_u, bc_v, bc_p = create_cylinder_setup(
+    Nx=200, Ny=100,
+    x_domain=(0, 2), y_domain=(0, 1),
+    cylinder_center=(0.5, 0.5), cylinder_radius=0.1
+)
+
+# Create router input
+inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p)
+
+# Initialize router and trainer
+router = RouterCNN(base_filters=32)
+trainer = RouterTrainer(
+    router=router,
+    pinn_model=pinn,
+    beta=0.1,          # CFD cost coefficient
+    lambda_tv=0.01,    # Smoothness regularization
+    nu=0.01            # Kinematic viscosity
+)
+
+# Train
+history = trainer.train(inputs, X, Y, layout, epochs=200)
+
+# Get predictions
+r, mask = trainer.predict(inputs, threshold=0.5)
+```
+
+### Command Line Training
+
+```bash
+python train_router.py \
+    --model-path ./models/pinn_cylinder_100.0.h5 \
+    --epochs 200 \
+    --beta 0.1 \
+    --lambda-tv 0.01 \
+    --output-dir ./router_output
+```
+
+### Running Hybrid Simulation with Trained Router
+
+```bash
+python run_router_hybrid.py \
+    --router-path ./router_output/router_weights.h5 \
+    --pinn-path ./models/pinn_cylinder_100.0.h5 \
+    --output-dir ./router_hybrid_output
+```
+
+## Key Parameters
+
+### `beta` (CFD Cost Coefficient)
+- **Type**: float
+- **Default**: 0.1
+- **Effect**:
+  - Low values (< 0.05): More CFD usage, higher accuracy
+  - Mid values (0.05-0.2): Balanced cost/accuracy
+  - High values (> 0.2): Less CFD, relies more on PINN
+- **Interpretation**: Trade-off between computational cost and accuracy
+
+### `lambda_tv` (Total Variation Weight)
+- **Type**: float
+- **Default**: 0.01
+- **Effect**:
+  - Low values (< 0.005): May produce fragmented regions
+  - Mid values (0.01-0.05): Smooth, contiguous regions
+  - High values (> 0.1): Very smooth, may over-regularize
+
+### `threshold` (Inference)
+- **Type**: float
+- **Default**: 0.5
+- **Effect**: Converts continuous router output to binary mask
+  - Higher threshold → More PINN, less CFD
+  - Lower threshold → More CFD, less PINN
+
+## Comparison: Threshold vs Learned Router
+
+| Aspect | Threshold-Based | Learned Router |
+|--------|-----------------|----------------|
+| Input | Flow field (u, v, p) | Geometry + BCs only |
+| Requires initial solution | Yes | No |
+| Adaptable to new geometries | Limited | Generalizable |
+| Computation | Cheap (one-time) | Training + inference |
+| Physical interpretability | High | Lower |
+| Optimality | Heuristic | Learned optimal |
+
+## Architecture Details
+
+The router uses a U-Net-like CNN architecture:
+
+```
+Input (H, W, 5)
+    ↓
+Encoder: Conv→Conv→Pool (×3)
+    ↓
+Bottleneck: Conv→Conv
+    ↓
+Decoder: Upsample→Concat→Conv (×3)
+    ↓
+Output: Conv 1×1 + Sigmoid
+    ↓
+Output (H, W, 1) × Layout Mask
+```
+
+- **Skip connections** preserve spatial detail
+- **Sigmoid output** ensures [0, 1] range
+- **Layout masking** ensures obstacles output 0

@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=cfd_sim
+#SBATCH --job-name=router_train
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=1:00:00
+#SBATCH --time=2:00:00
 #SBATCH --export=NONE
 
 echo "=== Job Info ==="
@@ -24,7 +24,7 @@ export PATH="$HOME/miniforge3/envs/cfd_jax/bin:$PATH"
 # Load CUDA module (required on Compute Canada clusters)
 module load cuda/12.2 cudnn/8.9.5.29
 
-# Set CUDA environment variables for JAX
+# Set environment variables
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
@@ -33,22 +33,13 @@ echo "=== Checking CUDA version ==="
 nvcc --version 2>/dev/null || echo "nvcc not found, using nvidia-smi info:"
 nvidia-smi | grep "CUDA Version"
 
-# Uninstall CPU-only JAX and install CUDA version
-echo "=== Installing JAX with CUDA support ==="
-pip uninstall -y jax jaxlib
-pip install --upgrade pip
-
-# Install JAX with CUDA 12 support
-pip install --upgrade "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
-# Verify GPU is now available
-echo "=== Verifying JAX GPU support ==="
+# Verify TensorFlow GPU support
+echo "=== Verifying TensorFlow GPU support ==="
 python -c "
-import jax
-print('JAX version:', jax.__version__)
-print('JAX devices:', jax.devices())
-print('GPU available:', len(jax.devices('gpu')) > 0)
-print('Default backend:', jax.default_backend())
+import tensorflow as tf
+print('TensorFlow version:', tf.__version__)
+print('GPU devices:', tf.config.list_physical_devices('GPU'))
+print('GPU available:', len(tf.config.list_physical_devices('GPU')) > 0)
 "
 
 # Train router

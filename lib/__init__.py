@@ -37,6 +37,15 @@ from lib.complexity_scoring import (
     compute_mask_statistics,
 )
 from lib.network import Network
+from lib.router import (
+    RouterCNN,
+    RouterTrainer,
+    PINNResidualComputer,
+    create_router_input,
+    create_cylinder_setup,
+    plot_router_output,
+    plot_training_history,
+)
 from lib.plotting import (
     generate_filename,
     plot_contour,
@@ -74,6 +83,15 @@ __all__ = [
     
     # Network
     'Network',
+    
+    # Router
+    'RouterCNN',
+    'RouterTrainer',
+    'PINNResidualComputer',
+    'create_router_input',
+    'create_cylinder_setup',
+    'plot_router_output',
+    'plot_training_history',
     
     # Plotting
     'generate_filename',
