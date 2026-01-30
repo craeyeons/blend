@@ -195,7 +195,7 @@ def main():
     
     # Plot at each threshold
     for i, threshold in enumerate(thresholds):
-        save_path = os.path.join(args.output_dir, f'threshold_{threshold:.6f}.png')
+        save_path = os.path.join(args.output_dir, f'threshold_{threshold:.10f}.png')
         plot_separation_at_threshold(
             r, X, Y, layout, threshold,
             cylinder_center, args.cylinder_radius,
