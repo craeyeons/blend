@@ -443,7 +443,7 @@ class PINNResidualComputer:
         """
         Compute total residual including BC error propagation.
         
-        Residuals are normalized by the 95th percentile to produce values
+        Residuals are normalized by the 99th percentile to produce values
         roughly in [0, 1] range for most points.
         
         Parameters:
@@ -470,24 +470,24 @@ class PINNResidualComputer:
                 'bc_propagated': 1.5   # Propagated error from upstream
             }
         
-        # Helper function to compute 95th percentile
-        def percentile_95(x):
-            """Compute 95th percentile of a tensor."""
+        # Helper function to compute 99th percentile
+        def percentile_99(x):
+            """Compute 99th percentile of a tensor."""
             x_flat = tf.reshape(x, [-1])
-            k = tf.cast(tf.cast(tf.size(x_flat), tf.float32) * 0.95, tf.int32)
+            k = tf.cast(tf.cast(tf.size(x_flat), tf.float32) * 0.99, tf.int32)
             k = tf.maximum(k, 1)  # At least 1
-            # Use top_k to find the value at 95th percentile
+            # Use top_k to find the value at 99th percentile
             top_values, _ = tf.nn.top_k(x_flat, k)
             return top_values[-1]  # The k-th largest value
         
         # Standard PDE residuals
         continuity, momentum = self.compute_residuals(X, Y)
         
-        # Normalize by 95th percentile (more robust than mean)
-        cont_p95 = percentile_95(continuity) + 1e-10
-        mom_p95 = percentile_95(momentum) + 1e-10
-        continuity_norm = continuity / cont_p95
-        momentum_norm = momentum / mom_p95
+        # Normalize by 99th percentile (more robust than mean)
+        cont_p99 = percentile_99(continuity) + 1e-10
+        mom_p99 = percentile_99(momentum) + 1e-10
+        continuity_norm = continuity / cont_p99
+        momentum_norm = momentum / mom_p99
         
         pde_residual = (weights.get('continuity', 1.0) * continuity_norm + 
                         weights.get('momentum', 1.0) * momentum_norm)
@@ -495,12 +495,12 @@ class PINNResidualComputer:
         # BC error with propagation
         if weights.get('bc_local', 0) > 0 or weights.get('bc_propagated', 0) > 0:
             bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
-            bc_p95 = percentile_95(bc_error + 1e-10) + 1e-10
-            bc_error_norm = bc_error / bc_p95
+            bc_p99 = percentile_99(bc_error + 1e-10) + 1e-10
+            bc_error_norm = bc_error / bc_p99
             
             propagated = self.compute_upstream_propagated_error(X, Y, bc_mask, bc_u, bc_v)
-            prop_p95 = percentile_95(propagated + 1e-10) + 1e-10
-            propagated_norm = propagated / prop_p95
+            prop_p99 = percentile_99(propagated + 1e-10) + 1e-10
+            propagated_norm = propagated / prop_p99
             
             pde_residual = (pde_residual + 
                            weights.get('bc_local', 0) * bc_error_norm +
