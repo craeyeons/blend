@@ -93,6 +93,8 @@ def main():
                         help='Threshold for binary mask')
     parser.add_argument('--base-filters', type=int, default=32,
                         help='Base filters in router CNN')
+    parser.add_argument('--temperature', type=float, default=0.5,
+                        help='Sigmoid temperature for router (should match training)')
     
     args = parser.parse_args()
     
@@ -134,10 +136,11 @@ def main():
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p)
     
     # Load router
-    router = RouterCNN(base_filters=args.base_filters)
+    router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     _ = router(inputs)  # Build model
     router.load_weights(args.router_path)
     print(f"  ✓ Loaded router from {args.router_path}")
+    print(f"  Temperature: {args.temperature}")
     
     # =========================================================================
     # Step 2: Generate mask from router

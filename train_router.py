@@ -56,8 +56,16 @@ def main():
                         help='CFD cost coefficient (higher = less CFD)')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
-    parser.add_argument('--lr', type=float, default=1e-4,
-                        help='Learning rate')
+    parser.add_argument('--lambda-entropy', type=float, default=0.1,
+                        help='Entropy regularization weight (higher = more intermediate values)')
+    parser.add_argument('--lambda-variance', type=float, default=0.05,
+                        help='Variance regularization weight (higher = more diverse outputs)')
+    parser.add_argument('--lr', type=float, default=5e-5,
+                        help='Learning rate (lower for stability)')
+    parser.add_argument('--grad-clip', type=float, default=1.0,
+                        help='Gradient clipping norm (set to 0 to disable)')
+    parser.add_argument('--temperature', type=float, default=0.5,
+                        help='Sigmoid temperature (lower = softer outputs, try 0.3-1.0)')
     
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0,
@@ -172,11 +180,12 @@ def main():
     # =========================================================================
     print("\n[Step 3] Initializing router CNN...")
     
-    router = RouterCNN(base_filters=args.base_filters)
+    router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     
     # Build the model by running a forward pass
     _ = router(inputs)
     print(f"  Router parameters: {router.count_params():,}")
+    print(f"  Temperature: {args.temperature}"))
     
     # =========================================================================
     # Step 4: Initialize trainer
@@ -195,6 +204,9 @@ def main():
         pinn_model=pinn_model,
         beta=args.beta,
         lambda_tv=args.lambda_tv,
+        lambda_entropy=args.lambda_entropy,
+        lambda_variance=args.lambda_variance,
+        grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
         residual_weights=residual_weights,
         nu=args.nu,
         rho=args.rho,
@@ -207,7 +219,10 @@ def main():
     trainer.optimizer.learning_rate.assign(args.lr)
     
     print(f"  β (CFD cost): {args.beta}")
-    print(f"  λ (TV reg): {args.lambda_tv}")
+    print(f"  λ_tv (TV reg): {args.lambda_tv}")
+    print(f"  λ_entropy: {args.lambda_entropy}")
+    print(f"  λ_variance: {args.lambda_variance}")
+    print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
     print(f"  Residual weights: {residual_weights}")
     
