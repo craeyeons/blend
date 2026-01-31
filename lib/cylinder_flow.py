@@ -557,6 +557,8 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             
             return u * dfdx + v * dfdy
         
+        interface_jax = self.interface_jax
+        
         @jit
         def pressure_poisson_iteration_hybrid(p, rhs):
             """Single Jacobi iteration for pressure Poisson equation (hybrid version)"""
@@ -578,13 +580,16 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
             # Inside cylinder: zero pressure
             p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
             
+            # At PINN-CFD interface: use PINN pressure as Dirichlet BC
+            p_new = jnp.where(interface_jax, p_pinn_jax, p_new)
+            
             # In PINN region: use PINN pressure
             p_new = jnp.where(cfd_mask_jax == 0, p_pinn_jax, p_new)
             
             return p_new
         
         @jit
-        def solve_pressure_poisson_hybrid(p, rhs, n_iter=100):
+        def solve_pressure_poisson_hybrid(p, rhs, n_iter=200):
             """Solve pressure Poisson equation with Jacobi iterations"""
             def body_fn(i, p):
                 return pressure_poisson_iteration_hybrid(p, rhs)
@@ -899,6 +904,8 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         
         apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
         
+        interface_jax = self.interface_jax
+        
         @jit
         def pressure_poisson_iteration_hybrid(p, rhs):
             """Single Jacobi iteration for pressure Poisson (hybrid version)"""
@@ -919,10 +926,13 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
             # Inside cylinder: zero pressure
             p_new = jnp.where(cylinder_mask == 1, 0.0, p_new)
             
+            # At PINN-CFD interface: use PINN pressure as Dirichlet BC
+            p_new = jnp.where(interface_jax, p_pinn_jax, p_new)
+            
             return p_new
         
         @jit
-        def solve_pressure_poisson_hybrid(p, rhs, n_iter=100):
+        def solve_pressure_poisson_hybrid(p, rhs, n_iter=200):
             """Solve pressure Poisson equation with Jacobi iterations"""
             def body_fn(i, p):
                 p_new = pressure_poisson_iteration_hybrid(p, rhs)
