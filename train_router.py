@@ -185,7 +185,7 @@ def main():
     # Build the model by running a forward pass
     _ = router(inputs)
     print(f"  Router parameters: {router.count_params():,}")
-    print(f"  Temperature: {args.temperature}"))
+    print(f"  Temperature: {args.temperature}")
     
     # =========================================================================
     # Step 4: Initialize trainer
