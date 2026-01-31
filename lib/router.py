@@ -749,13 +749,21 @@ class RouterTrainer:
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
+            
+            # Normalize total_residual by its 99th percentile to ensure [0, ~1]
+            residual_flat = tf.reshape(total_residual, [-1])
+            k = tf.cast(tf.cast(tf.size(residual_flat), tf.float32) * 0.99, tf.int32)
+            k = tf.maximum(k, 1)
+            top_values, _ = tf.nn.top_k(residual_flat, k)
+            residual_p99 = top_values[-1] + 1e-10
+            total_residual_norm = total_residual / residual_p99
+            
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
             pinn_fraction = tf.reduce_sum(pinn_weight) / num_fluid  # in [0, 1]
             
-            # Weighted mean residual in PINN region → in [0, ~1] typically
-            # (can exceed 1 for outliers, but mostly bounded)
-            residual_loss = tf.reduce_sum(pinn_weight * total_residual) / (tf.reduce_sum(pinn_weight) + 1e-10)
+            # Weighted mean residual in PINN region → now in [0, ~1]
+            residual_loss = tf.reduce_sum(pinn_weight * total_residual_norm) / (tf.reduce_sum(pinn_weight) + 1e-10)
             
             # 3. Total variation regularization (spatial smoothness)
             r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
