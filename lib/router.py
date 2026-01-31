@@ -443,8 +443,8 @@ class PINNResidualComputer:
         """
         Compute total residual including BC error propagation.
         
-        Residuals are normalized by the max value to produce values
-        in [0, 1] range.
+        Residuals are clipped at 95th percentile then normalized,
+        producing values in [0, 1] range with outliers capped at 1.
         
         Parameters:
         -----------
@@ -470,14 +470,24 @@ class PINNResidualComputer:
                 'bc_propagated': 1.5   # Propagated error from upstream
             }
         
+        # Helper function: clip at percentile then normalize
+        def clip_and_normalize(x, percentile=0.95):
+            """Clip values at percentile, then normalize by that value."""
+            x_flat = tf.reshape(x, [-1])
+            k = tf.cast(tf.cast(tf.size(x_flat), tf.float32) * percentile, tf.int32)
+            k = tf.maximum(k, 1)
+            top_values, _ = tf.nn.top_k(x_flat, k)
+            p_val = top_values[-1] + 1e-10
+            # Clip values above percentile, then normalize
+            x_clipped = tf.minimum(x, p_val)
+            return x_clipped / p_val
+        
         # Standard PDE residuals
         continuity, momentum = self.compute_residuals(X, Y)
         
-        # Normalize by max value
-        cont_max = tf.reduce_max(continuity) + 1e-10
-        mom_max = tf.reduce_max(momentum) + 1e-10
-        continuity_norm = continuity / cont_max
-        momentum_norm = momentum / mom_max
+        # Clip and normalize each component to [0, 1]
+        continuity_norm = clip_and_normalize(continuity)
+        momentum_norm = clip_and_normalize(momentum)
         
         pde_residual = (weights.get('continuity', 1.0) * continuity_norm + 
                         weights.get('momentum', 1.0) * momentum_norm)
@@ -485,12 +495,10 @@ class PINNResidualComputer:
         # BC error with propagation
         if weights.get('bc_local', 0) > 0 or weights.get('bc_propagated', 0) > 0:
             bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
-            bc_max = tf.reduce_max(bc_error) + 1e-10
-            bc_error_norm = bc_error / bc_max
+            bc_error_norm = clip_and_normalize(bc_error)
             
             propagated = self.compute_upstream_propagated_error(X, Y, bc_mask, bc_u, bc_v)
-            prop_max = tf.reduce_max(propagated) + 1e-10
-            propagated_norm = propagated / prop_max
+            propagated_norm = clip_and_normalize(propagated)
             
             pde_residual = (pde_residual + 
                            weights.get('bc_local', 0) * bc_error_norm +
@@ -740,9 +748,15 @@ class RouterTrainer:
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
             
-            # Normalize total_residual by its max to ensure [0, 1]
-            residual_max = tf.reduce_max(total_residual) + 1e-10
-            total_residual_norm = total_residual / residual_max
+            # Clip and normalize total_residual by 95th percentile to ensure [0, 1]
+            residual_flat = tf.reshape(total_residual, [-1])
+            k = tf.cast(tf.cast(tf.size(residual_flat), tf.float32) * 0.95, tf.int32)
+            k = tf.maximum(k, 1)
+            top_values, _ = tf.nn.top_k(residual_flat, k)
+            residual_p95 = top_values[-1] + 1e-10
+            # Clip at p95, then normalize
+            total_residual_clipped = tf.minimum(total_residual, residual_p95)
+            total_residual_norm = total_residual_clipped / residual_p95
             
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
