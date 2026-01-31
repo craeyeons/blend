@@ -743,7 +743,7 @@ class RouterTrainer:
             
             # 2. PINN residual weighted by (1 - r)
             # Compute PINN residuals including BC error propagation
-            # Residuals are normalized to [0, 1] by max value
+            # Residuals are normalized to [0, 1] by clipping at 95th percentile
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
@@ -762,8 +762,10 @@ class RouterTrainer:
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
             pinn_fraction = tf.reduce_sum(pinn_weight) / num_fluid  # in [0, 1]
             
-            # Weighted mean residual in PINN region → now in [0, 1]
-            residual_loss = tf.reduce_sum(pinn_weight * total_residual_norm) / (tf.reduce_sum(pinn_weight) + 1e-10)
+            # FIXED: Use mean over all fluid points, not weighted mean
+            # This gives proper gradients even when r→0 or r→1
+            # residual_loss = mean((1-r) * residual) → in [0, 1]
+            residual_loss = tf.reduce_sum(pinn_weight * total_residual_norm) / num_fluid
             
             # 3. Total variation regularization (spatial smoothness)
             r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
