@@ -738,20 +738,24 @@ class RouterTrainer:
             r_masked = r * tf.cast(layout_mask, tf.float32)
             num_fluid = tf.reduce_sum(tf.cast(layout_mask, tf.float32)) + 1e-10
             
-            # 1. CFD cost: β · mean(r) → normalized to [0, β] 
+            # 1. CFD cost: β · mean(r) → in [0, β]
             # This is the fraction of domain assigned to CFD, scaled by β
-            cfd_cost = self.beta * tf.reduce_sum(r_masked) / num_fluid
+            cfd_fraction = tf.reduce_sum(r_masked) / num_fluid  # in [0, 1]
+            cfd_cost = self.beta * cfd_fraction
             
             # 2. PINN residual weighted by (1 - r)
             # Compute PINN residuals including BC error propagation
-            # Residuals are normalized to ~[0, 1] by 95th percentile
+            # Residuals are normalized to ~[0, 1] by 99th percentile
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
-            # Use mean instead of sum for consistent scale
-            residual_loss = tf.reduce_sum(pinn_weight * total_residual) / num_fluid
+            pinn_fraction = tf.reduce_sum(pinn_weight) / num_fluid  # in [0, 1]
+            
+            # Weighted mean residual in PINN region → in [0, ~1] typically
+            # (can exceed 1 for outliers, but mostly bounded)
+            residual_loss = tf.reduce_sum(pinn_weight * total_residual) / (tf.reduce_sum(pinn_weight) + 1e-10)
             
             # 3. Total variation regularization (spatial smoothness)
             r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
@@ -787,7 +791,8 @@ class RouterTrainer:
             'tv_loss': tv_loss,
             'entropy': entropy,
             'variance': variance,
-            'cfd_fraction': tf.reduce_mean(r_masked)
+            'cfd_fraction': cfd_fraction,
+            'pinn_fraction': pinn_fraction
         }
         
         return total_loss, metrics
