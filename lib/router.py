@@ -443,6 +443,9 @@ class PINNResidualComputer:
         """
         Compute total residual including BC error propagation.
         
+        Residuals are normalized by the 95th percentile to produce values
+        roughly in [0, 1] range for most points.
+        
         Parameters:
         -----------
         X, Y : tf.Tensor
@@ -457,7 +460,7 @@ class PINNResidualComputer:
         Returns:
         --------
         total_residual : tf.Tensor
-            Comprehensive residual at each point
+            Comprehensive residual at each point, normalized to ~[0, 1]
         """
         if weights is None:
             weights = {
@@ -467,10 +470,24 @@ class PINNResidualComputer:
                 'bc_propagated': 1.5   # Propagated error from upstream
             }
         
+        # Helper function to compute 95th percentile
+        def percentile_95(x):
+            """Compute 95th percentile of a tensor."""
+            x_flat = tf.reshape(x, [-1])
+            k = tf.cast(tf.cast(tf.size(x_flat), tf.float32) * 0.95, tf.int32)
+            k = tf.maximum(k, 1)  # At least 1
+            # Use top_k to find the value at 95th percentile
+            top_values, _ = tf.nn.top_k(x_flat, k)
+            return top_values[-1]  # The k-th largest value
+        
         # Standard PDE residuals
         continuity, momentum = self.compute_residuals(X, Y)
-        continuity_norm = continuity / (tf.reduce_mean(continuity) + 1e-10)
-        momentum_norm = momentum / (tf.reduce_mean(momentum) + 1e-10)
+        
+        # Normalize by 95th percentile (more robust than mean)
+        cont_p95 = percentile_95(continuity) + 1e-10
+        mom_p95 = percentile_95(momentum) + 1e-10
+        continuity_norm = continuity / cont_p95
+        momentum_norm = momentum / mom_p95
         
         pde_residual = (weights.get('continuity', 1.0) * continuity_norm + 
                         weights.get('momentum', 1.0) * momentum_norm)
@@ -478,14 +495,22 @@ class PINNResidualComputer:
         # BC error with propagation
         if weights.get('bc_local', 0) > 0 or weights.get('bc_propagated', 0) > 0:
             bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
-            bc_error_norm = bc_error / (tf.reduce_mean(bc_error) + 1e-10)
+            bc_p95 = percentile_95(bc_error + 1e-10) + 1e-10
+            bc_error_norm = bc_error / bc_p95
             
             propagated = self.compute_upstream_propagated_error(X, Y, bc_mask, bc_u, bc_v)
-            propagated_norm = propagated / (tf.reduce_mean(propagated) + 1e-10)
+            prop_p95 = percentile_95(propagated + 1e-10) + 1e-10
+            propagated_norm = propagated / prop_p95
             
             pde_residual = (pde_residual + 
                            weights.get('bc_local', 0) * bc_error_norm +
                            weights.get('bc_propagated', 0) * propagated_norm)
+        
+        # Final normalization: divide by total weight sum and clamp
+        # This makes the weighted average roughly in [0, 1] for typical points
+        total_weight = (weights.get('continuity', 1.0) + weights.get('momentum', 1.0) +
+                       weights.get('bc_local', 0) + weights.get('bc_propagated', 0))
+        pde_residual = pde_residual / (total_weight + 1e-10)
         
         return pde_residual
 
@@ -711,18 +736,22 @@ class RouterTrainer:
             
             # Apply layout mask
             r_masked = r * tf.cast(layout_mask, tf.float32)
+            num_fluid = tf.reduce_sum(tf.cast(layout_mask, tf.float32)) + 1e-10
             
-            # 1. CFD cost: β · Σ r(x_i)
-            cfd_cost = self.beta * tf.reduce_sum(r_masked)
+            # 1. CFD cost: β · mean(r) → normalized to [0, β] 
+            # This is the fraction of domain assigned to CFD, scaled by β
+            cfd_cost = self.beta * tf.reduce_sum(r_masked) / num_fluid
             
             # 2. PINN residual weighted by (1 - r)
             # Compute PINN residuals including BC error propagation
+            # Residuals are normalized to ~[0, 1] by 95th percentile
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
-            residual_loss = tf.reduce_sum(pinn_weight * total_residual)
+            # Use mean instead of sum for consistent scale
+            residual_loss = tf.reduce_sum(pinn_weight * total_residual) / num_fluid
             
             # 3. Total variation regularization (spatial smoothness)
             r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
