@@ -470,17 +470,17 @@ class PINNResidualComputer:
                 'bc_propagated': 1.5   # Propagated error from upstream
             }
         
-        # Helper function: clip at percentile then normalize
-        def clip_and_normalize(x, percentile=0.95):
-            """Clip values at percentile, then normalize by that value."""
+        # Helper function: normalize by percentile then clip at max_scale
+        def clip_and_normalize(x, percentile=0.95, max_scale=1.5):
+            """Normalize by percentile value, then clip at max_scale."""
             x_flat = tf.reshape(x, [-1])
             k = tf.cast(tf.cast(tf.size(x_flat), tf.float32) * percentile, tf.int32)
             k = tf.maximum(k, 1)
             top_values, _ = tf.nn.top_k(x_flat, k)
             p_val = top_values[-1] + 1e-10
-            # Clip values above percentile, then normalize
-            x_clipped = tf.minimum(x, p_val)
-            return x_clipped / p_val
+            # Normalize by percentile, then clip at max_scale
+            x_norm = x / p_val
+            return tf.minimum(x_norm, max_scale)
         
         # Standard PDE residuals
         continuity, momentum = self.compute_residuals(X, Y)
@@ -748,15 +748,15 @@ class RouterTrainer:
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
             
-            # Clip and normalize total_residual by 95th percentile to ensure [0, 1]
+            # Normalize total_residual by 95th percentile, then clip at 1.5
             residual_flat = tf.reshape(total_residual, [-1])
             k = tf.cast(tf.cast(tf.size(residual_flat), tf.float32) * 0.95, tf.int32)
             k = tf.maximum(k, 1)
             top_values, _ = tf.nn.top_k(residual_flat, k)
             residual_p95 = top_values[-1] + 1e-10
-            # Clip at p95, then normalize
-            total_residual_clipped = tf.minimum(total_residual, residual_p95)
-            total_residual_norm = total_residual_clipped / residual_p95
+            # Normalize by p95, then clip at 1.5x
+            total_residual_norm = total_residual / residual_p95
+            total_residual_norm = tf.minimum(total_residual_norm, 1.5)
             
             # Weight by (1 - r): points assigned to PINN should have low residual
             pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)

@@ -38,15 +38,19 @@ Where $\tilde{R}_i$ is the **normalized residual** at point $i$.
 - **Meaning:** Mean residual weighted by PINN assignment
 - **Effect:** Penalizes assigning high-residual regions to PINN
 
-#### Residual Normalization (Clip-then-Normalize)
+#### Residual Normalization (Normalize-then-Clip)
 
-Each residual component is normalized by **clipping at 95th percentile**:
+Each residual component is normalized by the **95th percentile**, then clipped:
+
+```
+R_norm = clip(R / p95, 0, 1.5)
+```
 
 This ensures:
-- All values normalized to $[0, 1]$
-- 95% of points retain their relative ordering (linear scaling)
-- Outliers (top 5%) are capped at 1.0
-- Robust to extreme values
+- Values normalized relative to the 95th percentile
+- Outliers can contribute up to 1.5× (penalized more than typical points)
+- Extreme outliers (>1.5× p95) are capped at 1.5
+- Robust to extreme values while preserving outlier signal
 
 #### Residual Components
 
@@ -172,7 +176,7 @@ python train_router.py \
 | Component | Range | Notes |
 |-----------|-------|-------|
 | CFD cost | $[0, \beta]$ | β scales this term |
-| Residual | $[0, 1]$ | Clip-normalized |
+| Residual | $[0, 1.5]$ | Normalized by p95, clipped at 1.5 |
 | TV | $[0, \lambda_{TV}]$ | Usually small |
 | Entropy | $[0, 0.693]$ | Maximized (subtracted) |
 | Variance | $[0, 0.25]$ | Maximized (subtracted) |
