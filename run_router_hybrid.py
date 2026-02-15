@@ -55,14 +55,19 @@ def main():
     )
     
     # Model paths
-    parser.add_argument('--router-path', type=str,
-                        default='./router_output/router.weights.h5',
-                        help='Path to trained router weights')
+    parser.add_argument('--router-path', type=str, default=None,
+                        help='Path to trained router weights (default: auto-detect from beta)')
     parser.add_argument('--pinn-path', type=str,
                         default='./models/pinn_cylinder_100.0.h5',
                         help='Path to pre-trained PINN model')
-    parser.add_argument('--output-dir', type=str, default='./router_hybrid_output',
-                        help='Directory to save outputs')
+    parser.add_argument('--output-dir', type=str, default=None,
+                        help='Directory to save outputs (default: auto-generated from beta)')
+    parser.add_argument('--output-base-dir', type=str, default='./router_hybrid_output',
+                        help='Base directory for outputs')
+    parser.add_argument('--router-base-dir', type=str, default='./router_output',
+                        help='Base directory where router weights are stored')
+    parser.add_argument('--beta', type=float, default=0.1,
+                        help='Beta value (used for auto-detecting router path and output dir)')
     
     # Domain parameters
     parser.add_argument('--nx', type=int, default=200,
@@ -97,6 +102,15 @@ def main():
                         help='Sigmoid temperature for router (should match training)')
     
     args = parser.parse_args()
+    
+    # Auto-detect paths from beta if not explicitly specified
+    beta_str = f"beta_{args.beta:.4f}".rstrip('0').rstrip('.')
+    
+    if args.router_path is None:
+        args.router_path = os.path.join(args.router_base_dir, beta_str, 'router.weights.h5')
+    
+    if args.output_dir is None:
+        args.output_dir = os.path.join(args.output_base_dir, beta_str)
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)

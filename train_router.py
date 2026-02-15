@@ -46,8 +46,10 @@ def main():
     parser.add_argument('--model-path', type=str, 
                         default='./models/pinn_cylinder_100.0.h5',
                         help='Path to pre-trained PINN model')
-    parser.add_argument('--output-dir', type=str, default='./router_output',
-                        help='Directory to save outputs')
+    parser.add_argument('--output-dir', type=str, default=None,
+                        help='Directory to save outputs (default: ./router_output/beta_<value>)')
+    parser.add_argument('--output-base-dir', type=str, default='./router_output',
+                        help='Base directory for outputs (used when --output-dir is not specified)')
     
     # Training parameters
     parser.add_argument('--epochs', type=int, default=200,
@@ -115,7 +117,11 @@ def main():
     
     args = parser.parse_args()
     
-    # Create output directory
+    # Create output directory with beta value if not explicitly specified
+    if args.output_dir is None:
+        beta_str = f"beta_{args.beta:.4f}".rstrip('0').rstrip('.')
+        args.output_dir = os.path.join(args.output_base_dir, beta_str)
+    
     os.makedirs(args.output_dir, exist_ok=True)
     
     print("=" * 60)
