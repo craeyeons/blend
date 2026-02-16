@@ -146,8 +146,17 @@ def main():
         inlet_velocity=args.inlet_velocity
     )
     
-    # Create router input
-    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p)
+    # Compute PINN predictions for router input (8 channels)
+    print("  Computing PINN predictions for router input...")
+    xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
+    pinn_uvp = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
+    pinn_u = pinn_uvp[:, 0].reshape(X.shape).astype(np.float32) * layout
+    pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
+    pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
+    
+    # Create router input (8 channels including PINN predictions)
+    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
+                                  pinn_u, pinn_v, pinn_p)
     
     # Load router
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)

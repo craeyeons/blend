@@ -6,15 +6,21 @@ flow domain should use PINN vs CFD solutions. The router is trained to minimize
 computational cost while maintaining solution accuracy.
 
 Architecture:
-    Input: 200×100×5 tensor
-        - Channel 1: Layout mask (0=obstacle, 1=fluid)
-        - Channel 2: Boundary condition mask
-        - Channels 3-5: Boundary condition values [u, v, p]
+    Input: 200×100×8 tensor
+        - Channel 0: Layout mask (0=obstacle, 1=fluid)
+        - Channel 1: Boundary condition mask
+        - Channels 2-4: Boundary condition values [u, v, p]
+        - Channels 5-7: PINN predictions [u, v, p] (allows CNN to learn error patterns)
     
     Output: 200×100 tensor with values in [0, 1]
         - 0: Use PINN solution
         - 1: Use CFD solution
         - Masked to 0 at obstacle locations
+
+Design Philosophy:
+    By providing PINN predictions as input, the CNN can learn where PINN is
+    reliable vs unreliable WITHOUT hardcoded decay assumptions. The network
+    learns spatial error patterns from the data itself.
 
 Loss Function:
     L = β · Σ r(x_i) + Σ (1 - r(x_i)) · L_residual(PINN, x_i) + λ · TV(r)
@@ -379,11 +385,14 @@ class PINNResidualComputer:
     
     def compute_upstream_propagated_error(self, X, Y, bc_mask, bc_u, bc_v):
         """
-        Compute error that propagates from upstream BC violations.
+        Compute BC error without hardcoded decay propagation.
         
-        Key insight: If the PINN gets the inlet wrong, EVERYTHING downstream
-        is wrong, even if it locally satisfies PDEs. This function assigns
-        high error to all points downstream of BC violations.
+        NOTE: This function now returns just the local BC error. The CNN router
+        receives PINN predictions as input channels, allowing it to learn 
+        spatial error patterns WITHOUT hardcoded decay assumptions.
+        
+        Previously, this function manually propagated errors downstream with
+        exp(-1.5 * x) decay. Now the CNN learns these patterns from data.
         
         Parameters:
         -----------
@@ -396,47 +405,12 @@ class PINNResidualComputer:
             
         Returns:
         --------
-        propagated_error : tf.Tensor
-            Error field that includes downstream propagation
+        bc_error : tf.Tensor
+            Local BC error at each point (no artificial propagation)
         """
-        x_min = self.x_domain[0]
-        Cx = self.cylinder_center[0]
-        
-        # Get BC error at boundary locations
+        # Just return local BC error - let CNN learn spatial patterns
         bc_error = self.compute_bc_error(X, Y, bc_mask, bc_u, bc_v)
-        
-        # For inlet specifically: compute mean inlet error
-        # Inlet is first column (x = x_min)
-        inlet_error = tf.reduce_mean(bc_error[:, 0])
-        
-        # Propagate inlet error downstream with decay
-        # Points further from inlet still affected but less
-        x_dist_from_inlet = X - x_min
-        x_max_dist = self.x_domain[1] - x_min
-        
-        # Decay factor: 1 at inlet, moderate decay
-        # At outlet: exp(-0.5) ≈ 0.61, so ~61% of inlet error reaches outlet
-        decay = tf.exp(-1.5 * x_dist_from_inlet / x_max_dist)
-        
-        # Inlet error propagates to all downstream points
-        inlet_propagated = inlet_error * decay
-        
-        # Also propagate from cylinder surface errors
-        # Points in wake region are affected by cylinder BC errors
-        dist_from_cyl = tf.sqrt((X - Cx)**2 + (Y - self.cylinder_center[1])**2)
-        cyl_mask = tf.cast(dist_from_cyl <= self.cylinder_radius * 1.5, tf.float32)
-        cyl_bc_error = tf.reduce_sum(bc_error * cyl_mask) / (tf.reduce_sum(cyl_mask) + 1e-10)
-        
-        # Wake region: downstream of cylinder
-        in_wake = tf.cast(X > Cx, tf.float32)
-        # Moderate decay in wake: exp(-0.5) ≈ 0.61 at outlet
-        wake_decay = tf.exp(-1.5 * (X - Cx) / (self.x_domain[1] - Cx + 1e-10))
-        cyl_propagated = cyl_bc_error * in_wake * wake_decay
-        
-        # Combine: local BC error + propagated errors
-        propagated_error = bc_error + inlet_propagated + cyl_propagated
-        
-        return propagated_error
+        return bc_error
     
     def compute_total_residual_with_bc(self, X, Y, bc_mask, bc_u, bc_v,
                                        weights=None):
@@ -893,9 +867,14 @@ class RouterTrainer:
         return r, mask
 
 
-def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p):
+def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
+                        pinn_u=None, pinn_v=None, pinn_p=None):
     """
-    Create the 5-channel input tensor for the router.
+    Create the 8-channel input tensor for the router.
+    
+    By including PINN predictions, the CNN can learn spatial error patterns
+    without hardcoded decay assumptions. The network sees both what boundary
+    conditions are prescribed AND what PINN actually predicts.
     
     Parameters:
     -----------
@@ -905,18 +884,34 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p):
         Boundary condition mask of shape (H, W)
     bc_values_u, bc_values_v, bc_values_p : np.ndarray
         Boundary condition values of shape (H, W)
+    pinn_u, pinn_v, pinn_p : np.ndarray, optional
+        PINN predictions of shape (H, W). If None, zeros are used.
         
     Returns:
     --------
     inputs : np.ndarray
-        Stacked input of shape (1, H, W, 5)
+        Stacked input of shape (1, H, W, 8)
+        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p]
     """
+    H, W = layout.shape
+    
+    # Default to zeros if PINN predictions not provided
+    if pinn_u is None:
+        pinn_u = np.zeros((H, W), dtype=np.float32)
+    if pinn_v is None:
+        pinn_v = np.zeros((H, W), dtype=np.float32)
+    if pinn_p is None:
+        pinn_p = np.zeros((H, W), dtype=np.float32)
+    
     inputs = np.stack([
-        layout,
-        bc_mask,
-        bc_values_u,
-        bc_values_v,
-        bc_values_p
+        layout,           # Ch 0: Layout mask
+        bc_mask,          # Ch 1: BC mask
+        bc_values_u,      # Ch 2: BC u
+        bc_values_v,      # Ch 3: BC v
+        bc_values_p,      # Ch 4: BC p
+        pinn_u,           # Ch 5: PINN u prediction
+        pinn_v,           # Ch 6: PINN v prediction
+        pinn_p,           # Ch 7: PINN p prediction
     ], axis=-1)
     
     return inputs[np.newaxis, ...]  # Add batch dimension

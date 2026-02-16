@@ -1,4 +1,6 @@
 #!/bin/bash
-scp simpsone@xlogin2:~/blend2/router_output/*.png ./images/temp/
-scp simpsone@xlogin2:~/blend2/router_hybrid_output/*.png ./images/temp/
-scp simpsone@xlogin2:~/blend2/threshold_plots/*.png ./images/temp/
+rsync -av --include='*/' --include='*.png' --exclude='*' \
+  simpsone@xlogin2:~/blend2/router_output/ ./images/temp/
+rsync -av --include='*/' --include='*.png' --exclude='*' \
+  simpsone@xlogin2:~/blend2/router_hybrid_output/ ./images/temp/
+#scp -r ssimpsone@xlogin2:~/blend2/router_hybrid_output/* ./images/temp/

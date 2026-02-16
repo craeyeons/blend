@@ -177,9 +177,35 @@ def main():
     print(f"  Fluid points: {np.sum(layout):.0f} / {layout.size} ({100*np.mean(layout):.1f}%)")
     print(f"  BC points: {np.sum(bc_mask):.0f}")
     
-    # Create router input tensor
-    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p)
-    print(f"  Router input shape: {inputs.shape}")
+    # =========================================================================
+    # Step 2b: Compute PINN predictions for router input
+    # =========================================================================
+    print("\n[Step 2b] Computing PINN predictions for router input...")
+    
+    # Flatten coordinates for PINN
+    xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
+    
+    # Get PINN predictions
+    pinn_uvp = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
+    
+    # Reshape to grid
+    pinn_u = pinn_uvp[:, 0].reshape(X.shape).astype(np.float32)
+    pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32)
+    pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32)
+    
+    # Mask out obstacle regions (set to 0)
+    pinn_u = pinn_u * layout
+    pinn_v = pinn_v * layout
+    pinn_p = pinn_p * layout
+    
+    print(f"  PINN u range: [{pinn_u.min():.4f}, {pinn_u.max():.4f}]")
+    print(f"  PINN v range: [{pinn_v.min():.4f}, {pinn_v.max():.4f}]")
+    print(f"  PINN p range: [{pinn_p.min():.4f}, {pinn_p.max():.4f}]")
+    
+    # Create router input tensor (now 8 channels with PINN predictions)
+    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
+                                  pinn_u, pinn_v, pinn_p)
+    print(f"  Router input shape: {inputs.shape} (8 channels incl. PINN predictions)")
     
     # =========================================================================
     # Step 3: Initialize router

@@ -30,6 +30,7 @@ from lib.router import (
     create_router_input,
     create_cylinder_setup,
 )
+from cylinder_network import Network as CylinderNetwork
 
 
 def plot_separation_at_threshold(r, X, Y, layout, threshold, 
@@ -124,6 +125,9 @@ def main():
     parser.add_argument('--router-path', type=str,
                         default='./router_output/router.weights.h5',
                         help='Path to trained router weights')
+    parser.add_argument('--pinn-path', type=str,
+                        default='./models/pinn_cylinder_100.0.h5',
+                        help='Path to pre-trained PINN model')
     parser.add_argument('--output-dir', type=str, default='./threshold_plots',
                         help='Directory to save output images')
     
@@ -166,16 +170,34 @@ def main():
         inlet_velocity=args.inlet_velocity
     )
     
-    # Create router input
-    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p)
+    # Load PINN model for predictions
+    print(f"Loading PINN model from {args.pinn_path}...")
+    network = CylinderNetwork()
+    pinn_model = network.build(
+        num_inputs=2,
+        layers=[48, 48, 48, 48],
+        activation='tanh',
+        num_outputs=3
+    )
+    pinn_model.load_weights(args.pinn_path)
+    
+    # Compute PINN predictions for router input
+    xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
+    pinn_uvp = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
+    pinn_u = pinn_uvp[:, 0].reshape(X.shape).astype(np.float32) * layout
+    pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
+    pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
+    
+    # Create router input (8 channels including PINN predictions)
+    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
+                                  pinn_u, pinn_v, pinn_p)
     
     # Load router
     print(f"Loading router from {args.router_path}...")
     router = RouterCNN(base_filters=32)
     
-    # Build the model with correct input shape
-    dummy_input = tf.zeros((1, args.ny, args.nx, 5))
-    _ = router(dummy_input)
+    # Build the model with correct input shape (8 channels)
+    _ = router(inputs)
     
     # Load weights
     router.load_weights(args.router_path)
