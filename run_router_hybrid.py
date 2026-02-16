@@ -181,6 +181,7 @@ def main():
     mask = mask * layout.astype(np.int32)
     
     cfd_fraction = np.sum(mask) / np.sum(layout) * 100
+    print(f"  Threshold: {args.threshold:.4f}")
     print(f"  Router output range: [{r.min():.4f}, {r.max():.4f}]")
     print(f"  CFD region: {cfd_fraction:.1f}%")
     print(f"  PINN region: {100 - cfd_fraction:.1f}%")
