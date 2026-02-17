@@ -151,6 +151,12 @@ def main():
     parser.add_argument('--cylinder-radius', type=float, default=0.1)
     parser.add_argument('--inlet-velocity', type=float, default=1.0)
     
+    # Router parameters
+    parser.add_argument('--temperature', type=float, default=0.5,
+                        help='Sigmoid temperature for router (should match training)')
+    parser.add_argument('--base-filters', type=int, default=32,
+                        help='Base filters in router CNN')
+    
     args = parser.parse_args()
     
     # Create output directory
@@ -194,19 +200,25 @@ def main():
     
     # Load router
     print(f"Loading router from {args.router_path}...")
-    router = RouterCNN(base_filters=32)
+    router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     
     # Build the model with correct input shape (8 channels)
     _ = router(inputs)
     
     # Load weights
     router.load_weights(args.router_path)
-    print("Router loaded successfully!")
+    print(f"Router loaded successfully! (temperature={args.temperature})")
     
     # Get router output (continuous values)
     inputs_tensor = tf.constant(inputs, dtype=tf.float32)
     r = router(inputs_tensor, training=False)
     r = r[0, :, :, 0].numpy()  # Remove batch and channel dims
+    
+    # Print router output statistics for debugging
+    print(f"\nRouter output statistics:")
+    print(f"  min: {r.min():.6f}, max: {r.max():.6f}")
+    print(f"  mean: {r.mean():.6f}, std: {r.std():.6f}")
+    print(f"  median: {np.median(r):.6f}")
     
     # Generate thresholds
     thresholds = np.linspace(args.threshold_start, args.threshold_end, 
