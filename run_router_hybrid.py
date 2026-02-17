@@ -172,16 +172,25 @@ def main():
     
     r = router(tf.constant(inputs, dtype=tf.float32), training=False)
     r = r[0, :, :, 0].numpy()
-    print(r)
+    for i in range(200):
+        for j in range(100):
+            print(f"{r[i,j]:.4f}", end=' ')
+        print()
     
     # Apply threshold to get binary mask
     # mask = 1 means CFD, mask = 0 means PINN
     mask = (r >= args.threshold).astype(np.int32)
-    print(mask)
+    for i in range(200):
+        for j in range(100):
+            print(f"{mask[i,j]:.4f}", end=' ')
+        print()
     
     # Apply layout mask (obstacle = 0)
     mask = mask * layout.astype(np.int32)
-    print(mask)
+    for i in range(200):
+        for j in range(100):
+            print(f"{mask[i,j]:.4f}", end=' ')
+        print()
     
     cfd_fraction = np.sum(mask) / np.sum(layout) * 100
     print(f"  Threshold: {args.threshold:.4f}")
