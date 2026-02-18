@@ -146,22 +146,23 @@ def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layou
 
 def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
     """
-    Compute R² of PINN points as a function of CFD coverage.
+    Compute MSE and R² of PINN points as a function of CFD coverage.
     
-    R² = 1 - SS_res / SS_tot = 1 - Σ(y - ŷ)² / Σ(y - ȳ)²
+    MSE is guaranteed to be monotonically decreasing (if router is good).
+    R² uses global normalization for comparability.
     
     Logic:
     - X-axis: coverage = fraction of points solved by CFD (0 to 1)
     - Sort points by router confidence (DESCENDING: highest first)
     - At coverage X%: the top X% points (highest confidence) go to CFD
-    - Y-axis: R² of the remaining (1-X)% PINN points
+    - Y-axis: Metric of the remaining (1-X)% PINN points
     
     Parameters:
     -----------
     pinn_pred : ndarray
-        PINN predictions (flattened to 1D for fluid points)
+        PINN predictions
     cfd_truth : ndarray  
-        CFD ground truth (flattened to 1D for fluid points)
+        CFD ground truth
     router_output : ndarray
         Router confidence (higher = more likely to use CFD)
     layout : ndarray
@@ -173,8 +174,10 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     --------
     coverage : ndarray
         Fraction solved by CFD (0 to 1)
+    mse_scores : ndarray
+        Mean Squared Error of remaining PINN points (should decrease)
     r2_scores : ndarray
-        R² of remaining PINN points at each coverage level
+        R² using global normalization
     """
     # Get fluid points only
     fluid_mask = layout > 0
@@ -184,12 +187,20 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     
     n_fluid = len(pinn_vals)
     
+    # Compute GLOBAL statistics (used as fixed reference for R²)
+    global_mean = np.mean(cfd_vals)
+    global_var = np.var(cfd_vals)
+    
     # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
     sorted_idx = np.argsort(confidences)[::-1]  # Descending order
     sorted_pinn = pinn_vals[sorted_idx]
     sorted_cfd = cfd_vals[sorted_idx]
     
+    # Pre-compute squared errors for efficiency
+    sorted_sq_errors = (sorted_cfd - sorted_pinn) ** 2
+    
     coverage = np.linspace(0, 1, n_points)
+    mse_scores = np.zeros(n_points)
     r2_scores = np.zeros(n_points)
     
     for i, cov in enumerate(coverage):
@@ -198,25 +209,21 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
         # Number of points kept as PINN (the remaining ones with lower confidence)
         n_pinn = n_fluid - n_cfd
         
-        if n_pinn > 1:  # Need at least 2 points for meaningful R²
-            # Get PINN points (the tail of sorted array)
-            y_true = sorted_cfd[n_cfd:]   # CFD ground truth
-            y_pred = sorted_pinn[n_cfd:]  # PINN prediction
+        if n_pinn > 0:
+            # MSE of remaining PINN points
+            mse_scores[i] = np.mean(sorted_sq_errors[n_cfd:])
             
-            # R² = 1 - SS_res / SS_tot
-            ss_res = np.sum((y_true - y_pred) ** 2)  # Residual sum of squares
-            ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)  # Total sum of squares
-            
-            if ss_tot > 1e-10:
-                r2_scores[i] = 1 - ss_res / ss_tot
+            # R² = 1 - MSE / global_variance (normalized by global variance)
+            if global_var > 1e-10:
+                r2_scores[i] = 1 - mse_scores[i] / global_var
             else:
-                r2_scores[i] = 1.0  # Perfect prediction if no variance
+                r2_scores[i] = 1.0
         else:
-            # All/most points sent to CFD
-            r2_scores[i] = 1.0  # Convention: perfect score when using CFD
+            # All points sent to CFD - perfect score
+            mse_scores[i] = 0.0
+            r2_scores[i] = 1.0
     
-    return coverage, r2_scores
-
+    return coverage, mse_scores, r2_scores
 
 def compute_expected_losses(error_field, router_output, layout, beta):
     """
@@ -711,21 +718,29 @@ def main():
     # =========================================================================
     # Step 6: Compute coverage curve (R² as function of CFD coverage)
     # =========================================================================
-    print("\n[Step 6] Computing coverage curve (R²)...")
+    print("\n[Step 6] Computing coverage curve...")
     
-    # Combine velocity components for R² calculation
+    # Combine velocity components for calculation
     # Use velocity magnitude: sqrt(u² + v²)
     pinn_vel_mag = np.sqrt(u_pinn**2 + v_pinn**2)
     cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
     
-    coverage, r2_scores = compute_coverage_curve(pinn_vel_mag, cfd_vel_mag, router_output, layout)
+    coverage, mse_scores, r2_scores = compute_coverage_curve(pinn_vel_mag, cfd_vel_mag, router_output, layout)
     accuracy = r2_scores  # Keep variable name for compatibility with plotting
     
     print(f"  Coverage range: [{coverage[0]:.4f}, {coverage[-1]:.4f}]")
-    print(f"  R² at 0% coverage (all PINN): {accuracy[0]:.6f}")
-    print(f"  R² at 100% coverage (all CFD): {accuracy[-1]:.6f}")
-    print(f"  Min R²: {accuracy.min():.6f}")
-    print(f"  Max R²: {accuracy.max():.6f}")
+    print(f"  MSE at 0% coverage (all PINN): {mse_scores[0]:.6f}")
+    print(f"  MSE at 100% coverage (all CFD): {mse_scores[-1]:.6f}")
+    print(f"  R² at 0% coverage (all PINN): {r2_scores[0]:.6f}")
+    print(f"  R² at 100% coverage (all CFD): {r2_scores[-1]:.6f}")
+    
+    # Check monotonicity
+    mse_diff = np.diff(mse_scores)
+    if np.all(mse_diff <= 1e-10):
+        print(f"  ✓ MSE is monotonically decreasing (router is working)")
+    else:
+        n_violations = np.sum(mse_diff > 1e-10)
+        print(f"  ⚠ MSE has {n_violations} monotonicity violations")
     
     # =========================================================================
     # Step 7: Compute expected losses
