@@ -146,56 +146,60 @@ def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layou
 
 def compute_coverage_curve(error_field, router_output, layout, n_points=100):
     """
-    Compute accuracy vs coverage curve.
+    Compute L2 error of PINN points as a function of CFD coverage.
     
-    At each coverage level (fraction rejected to CFD), compute the 
-    average L2 error of the remaining PINN points.
+    Logic:
+    - X-axis: coverage = fraction of points solved by CFD (0 to 1)
+    - Sort points by router confidence (DESCENDING: highest first)
+    - At coverage X%: the top X% points (highest confidence) go to CFD
+    - Y-axis: Mean L2 error of the remaining (1-X)% PINN points
     
     Parameters:
     -----------
     error_field : ndarray
-        Per-point L2 error of PINN vs CFD
+        Per-point L2 error of PINN vs CFD ground truth
     router_output : ndarray
-        Router confidence (0=PINN, 1=CFD)
+        Router confidence (higher = more likely to use CFD)
     layout : ndarray
-        Fluid domain mask
+        Fluid domain mask (1=fluid, 0=obstacle)
     n_points : int
         Number of points on the curve
         
     Returns:
     --------
     coverage : ndarray
-        Fraction sent to CFD (0 to 1)
-    accuracy : ndarray
-        Mean L2 error at each coverage level (lower is better)
+        Fraction solved by CFD (0 to 1)
+    pinn_error : ndarray
+        Mean L2 error of remaining PINN points at each coverage level
     """
     # Get fluid points only
     fluid_mask = layout > 0
     errors = error_field[fluid_mask]
-    confidences = router_output[fluid_mask]  # Higher = more likely CFD
+    confidences = router_output[fluid_mask]
     
     n_fluid = len(errors)
     
-    # Sort by router confidence (ascending: low confidence = keep as PINN)
-    sorted_idx = np.argsort(confidences)
+    # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
+    sorted_idx = np.argsort(confidences)[::-1]  # Descending order
     sorted_errors = errors[sorted_idx]
     
     coverage = np.linspace(0, 1, n_points)
-    accuracy = np.zeros(n_points)
+    pinn_error = np.zeros(n_points)
     
     for i, cov in enumerate(coverage):
-        # Coverage = fraction sent to CFD (rejected from PINN)
-        # We keep (1 - cov) fraction as PINN (the ones with lowest confidence)
-        n_keep = int((1 - cov) * n_fluid)
+        # Number of points sent to CFD (the top cov% with highest confidence)
+        n_cfd = int(cov * n_fluid)
+        # Number of points kept as PINN (the remaining ones with lower confidence)
+        n_pinn = n_fluid - n_cfd
         
-        if n_keep > 0:
-            # Average error of points kept as PINN
-            accuracy[i] = np.mean(sorted_errors[:n_keep])
+        if n_pinn > 0:
+            # Average L2 error of points kept as PINN (the tail of sorted array)
+            pinn_error[i] = np.mean(sorted_errors[n_cfd:])
         else:
-            # All points sent to CFD, error is 0
-            accuracy[i] = 0.0
+            # All points sent to CFD, no PINN error
+            pinn_error[i] = 0.0
     
-    return coverage, accuracy
+    return coverage, pinn_error
 
 
 def compute_expected_losses(error_field, router_output, layout, beta):
