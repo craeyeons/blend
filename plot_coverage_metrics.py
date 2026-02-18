@@ -373,22 +373,23 @@ def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
     
     # Set axis limits
     ax.set_xlim(-5, 110)
-    y_max = max(loss_pinn, accuracy[0]) * 1.2
-    ax.set_ylim(0, y_max)
+    y_max = max(loss_pinn, loss_cfd, np.max(accuracy)) * 1.2
+    y_min = 0
+    ax.set_ylim(y_min, y_max)
     
     # Remove top and right spines for cleaner look
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    ax.set_title(f'Coverage vs True Loss (β = {beta})', fontsize=14)
+    ax.set_title(f'Coverage vs PINN Error (β = {beta})', fontsize=14)
     
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
     
-    plt.show()
+    plt.close(fig)  # Close to free memory, don't show
     
     return fig
 
@@ -442,10 +443,10 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved loss comparison to {save_path}")
     
-    plt.show()
+    plt.close(fig)  # Close to free memory
     
     return fig
 
@@ -507,8 +508,8 @@ def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
                 fontsize=11, color='teal', ha='center', va='top')
     
     ax1.set_xlim(-20, 115)
-    y_max = max(loss_pinn, accuracy[0]) * 1.3
-    ax1.set_ylim(-0.02, y_max)
+    y_max = max(loss_pinn, loss_cfd, np.max(accuracy)) * 1.2
+    ax1.set_ylim(0, y_max)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
     
@@ -544,10 +545,10 @@ def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved combined metrics to {save_path}")
     
-    plt.show()
+    plt.close(fig)  # Close to free memory
     
     return fig
 
@@ -733,8 +734,11 @@ def main():
     print("\n[Step 6] Computing coverage curve...")
     
     coverage, accuracy = compute_coverage_curve(error_field, router_output, layout)
-    print(f"  Coverage range: [{coverage[0]:.2f}, {coverage[-1]:.2f}]")
-    print(f"  Accuracy range: [{accuracy.min():.6f}, {accuracy.max():.6f}]")
+    print(f"  Coverage range: [{coverage[0]:.4f}, {coverage[-1]:.4f}]")
+    print(f"  PINN Error at 0% coverage: {accuracy[0]:.6f}")
+    print(f"  PINN Error at 100% coverage: {accuracy[-1]:.6f}")
+    print(f"  Min PINN Error: {accuracy.min():.6f}")
+    print(f"  Max PINN Error: {accuracy.max():.6f}")
     
     # =========================================================================
     # Step 7: Compute expected losses
