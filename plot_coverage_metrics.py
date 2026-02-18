@@ -144,20 +144,24 @@ def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layou
     return error_field
 
 
-def compute_coverage_curve(error_field, router_output, layout, n_points=100):
+def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
     """
-    Compute L2 error of PINN points as a function of CFD coverage.
+    Compute R² of PINN points as a function of CFD coverage.
+    
+    R² = 1 - SS_res / SS_tot = 1 - Σ(y - ŷ)² / Σ(y - ȳ)²
     
     Logic:
     - X-axis: coverage = fraction of points solved by CFD (0 to 1)
     - Sort points by router confidence (DESCENDING: highest first)
     - At coverage X%: the top X% points (highest confidence) go to CFD
-    - Y-axis: Mean L2 error of the remaining (1-X)% PINN points
+    - Y-axis: R² of the remaining (1-X)% PINN points
     
     Parameters:
     -----------
-    error_field : ndarray
-        Per-point L2 error of PINN vs CFD ground truth
+    pinn_pred : ndarray
+        PINN predictions (flattened to 1D for fluid points)
+    cfd_truth : ndarray  
+        CFD ground truth (flattened to 1D for fluid points)
     router_output : ndarray
         Router confidence (higher = more likely to use CFD)
     layout : ndarray
@@ -169,22 +173,24 @@ def compute_coverage_curve(error_field, router_output, layout, n_points=100):
     --------
     coverage : ndarray
         Fraction solved by CFD (0 to 1)
-    pinn_error : ndarray
-        Mean L2 error of remaining PINN points at each coverage level
+    r2_scores : ndarray
+        R² of remaining PINN points at each coverage level
     """
     # Get fluid points only
     fluid_mask = layout > 0
-    errors = error_field[fluid_mask]
+    pinn_vals = pinn_pred[fluid_mask]
+    cfd_vals = cfd_truth[fluid_mask]
     confidences = router_output[fluid_mask]
     
-    n_fluid = len(errors)
+    n_fluid = len(pinn_vals)
     
     # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
     sorted_idx = np.argsort(confidences)[::-1]  # Descending order
-    sorted_errors = errors[sorted_idx]
+    sorted_pinn = pinn_vals[sorted_idx]
+    sorted_cfd = cfd_vals[sorted_idx]
     
     coverage = np.linspace(0, 1, n_points)
-    pinn_error = np.zeros(n_points)
+    r2_scores = np.zeros(n_points)
     
     for i, cov in enumerate(coverage):
         # Number of points sent to CFD (the top cov% with highest confidence)
@@ -192,14 +198,24 @@ def compute_coverage_curve(error_field, router_output, layout, n_points=100):
         # Number of points kept as PINN (the remaining ones with lower confidence)
         n_pinn = n_fluid - n_cfd
         
-        if n_pinn > 0:
-            # Average L2 error of points kept as PINN (the tail of sorted array)
-            pinn_error[i] = np.mean(sorted_errors[n_cfd:])
+        if n_pinn > 1:  # Need at least 2 points for meaningful R²
+            # Get PINN points (the tail of sorted array)
+            y_true = sorted_cfd[n_cfd:]   # CFD ground truth
+            y_pred = sorted_pinn[n_cfd:]  # PINN prediction
+            
+            # R² = 1 - SS_res / SS_tot
+            ss_res = np.sum((y_true - y_pred) ** 2)  # Residual sum of squares
+            ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)  # Total sum of squares
+            
+            if ss_tot > 1e-10:
+                r2_scores[i] = 1 - ss_res / ss_tot
+            else:
+                r2_scores[i] = 1.0  # Perfect prediction if no variance
         else:
-            # All points sent to CFD, no PINN error
-            pinn_error[i] = 0.0
+            # All/most points sent to CFD
+            r2_scores[i] = 1.0  # Convention: perfect score when using CFD
     
-    return coverage, pinn_error
+    return coverage, r2_scores
 
 
 def compute_expected_losses(error_field, router_output, layout, beta):
@@ -315,14 +331,14 @@ def compute_expected_losses(error_field, router_output, layout, beta):
 
 def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
     """
-    Plot accuracy vs coverage curve (matching the reference diagram).
+    Plot R² vs coverage curve.
     
     Parameters:
     -----------
     coverage : ndarray
         Fraction sent to CFD (x-axis)
     accuracy : ndarray
-        Mean L2 error at each coverage level (y-axis)
+        R² at each coverage level (y-axis)
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -332,56 +348,33 @@ def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
     """
     fig, ax = plt.subplots(figsize=(10, 7))
     
-    # Main coverage curve (True Loss vs Coverage)
-    ax.plot(coverage * 100, accuracy, 'k-', linewidth=2, label='Hybrid System Loss')
+    # Main coverage curve (R² vs Coverage)
+    ax.plot(coverage * 100, accuracy, 'k-', linewidth=2.5, label='R² (PINN prediction quality)')
     
-    # Horizontal lines for reference points
-    loss_pinn = results['loss_pinn_only']
-    loss_cfd = results['loss_cfd_only']
+    # Mark key points
+    ax.plot(0, accuracy[0], 'o', color='purple', markersize=12, zorder=5, label=f'All PINN: R²={accuracy[0]:.4f}')
+    ax.plot(100, accuracy[-1], 'o', color='teal', markersize=12, zorder=5, label=f'All CFD: R²={accuracy[-1]:.4f}')
     
-    # PINN-only loss (at coverage=0)
-    ax.axhline(y=loss_pinn, color='purple', linestyle='--', linewidth=1.5, alpha=0.7)
-    ax.plot(0, loss_pinn, 'o', color='purple', markersize=10, zorder=5)
-    
-    # CFD-only loss = β (at coverage=100%)
-    ax.axhline(y=loss_cfd, color='teal', linestyle='-', linewidth=1.5, alpha=0.7)
-    ax.axvline(x=100, color='teal', linestyle='-', linewidth=1.5, alpha=0.7)
-    ax.text(102, loss_cfd, 'Solution', fontsize=11, color='teal', va='center')
-    
-    # Optimal hybrid point
-    opt_cov = results['optimal_coverage'] * 100
-    opt_loss = results['optimal_loss']
-    ax.plot(opt_cov, opt_loss, 's', color='teal', markersize=12, zorder=5, 
-            markeredgecolor='black', markeredgewidth=1.5)
-    ax.axvline(x=opt_cov, color='teal', linestyle='--', linewidth=1, alpha=0.5)
+    # Horizontal reference line at R²=1 (perfect)
+    ax.axhline(y=1.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5, label='Perfect (R²=1)')
     
     # Labels
-    ax.set_xlabel('Coverage (%)', fontsize=14)
-    ax.set_ylabel('True Loss', fontsize=14)
-    
-    # Y-axis annotations
-    ax.text(-8, loss_pinn, 'True\nLoss\nPINN', fontsize=10, color='purple', 
-            va='center', ha='right', fontweight='bold')
-    ax.text(-8, loss_cfd, r'True loss' + '\nsolution\n' + r'($\beta$)', 
-            fontsize=10, color='teal', va='center', ha='right')
-    
-    # X-axis annotation for optimal point
-    ax.text(opt_cov, -0.02 * ax.get_ylim()[1], 'Optimal\nhybrid\nSys', 
-            fontsize=10, color='teal', ha='center', va='top')
-    ax.text(100, -0.02 * ax.get_ylim()[1], '100%', 
-            fontsize=10, color='teal', ha='center', va='top')
+    ax.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
+    ax.set_ylabel('R² (coefficient of determination)', fontsize=14)
     
     # Set axis limits
-    ax.set_xlim(-5, 110)
-    y_max = max(loss_pinn, loss_cfd, np.max(accuracy)) * 1.2
-    y_min = 0
+    ax.set_xlim(-5, 105)
+    y_min = min(0, np.min(accuracy) - 0.1)
+    y_max = 1.1
     ax.set_ylim(y_min, y_max)
     
     # Remove top and right spines for cleaner look
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    ax.set_title(f'Coverage vs PINN Error (β = {beta})', fontsize=14)
+    ax.set_title('Coverage vs R² (PINN Prediction Quality)', fontsize=14)
+    ax.legend(loc='lower right', fontsize=10)
+    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -389,7 +382,7 @@ def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
     
-    plt.close(fig)  # Close to free memory, don't show
+    plt.close(fig)
     
     return fig
 
@@ -453,14 +446,14 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
 
 def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
     """
-    Create a combined figure matching the reference diagram style.
+    Create a combined figure: R² coverage curve + Expected Loss comparison.
     
     Parameters:
     -----------
     coverage : ndarray
         Fraction sent to CFD
     accuracy : ndarray  
-        Mean L2 error at each coverage level
+        R² at each coverage level
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -470,50 +463,37 @@ def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    # ===== Left plot: Coverage curve (like the reference diagram) =====
+    # ===== Left plot: R² Coverage curve =====
     ax1.plot(coverage * 100, accuracy, 'k-', linewidth=2.5)
     
-    loss_pinn = results['loss_pinn_only']
-    loss_cfd = results['loss_cfd_only']
-    opt_cov = results['optimal_coverage'] * 100
-    opt_loss = results['optimal_loss']
+    # Mark key points
+    ax1.plot(0, accuracy[0], 'o', color='purple', markersize=12, zorder=5)
+    ax1.plot(100, accuracy[-1], 'o', color='teal', markersize=12, zorder=5)
     
-    # Reference lines
-    ax1.axhline(y=loss_pinn, color='purple', linestyle='--', linewidth=1.5, alpha=0.8)
-    ax1.plot(0, loss_pinn, 'o', color='purple', markersize=12, zorder=5)
-    
-    ax1.axhline(y=loss_cfd, color='teal', linestyle='-', linewidth=1.5, alpha=0.8)
-    ax1.axvline(x=100, color='teal', linestyle='-', linewidth=1.5, alpha=0.8)
-    
-    # Optimal point
-    ax1.plot(opt_cov, opt_loss, 's', color='teal', markersize=14, zorder=5,
-             markeredgecolor='black', markeredgewidth=2)
-    ax1.axvline(x=opt_cov, color='teal', linestyle='--', linewidth=1.5, alpha=0.6)
+    # Reference line at R²=1
+    ax1.axhline(y=1.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5)
     
     # Labels
-    ax1.set_xlabel('Coverage (%)', fontsize=14)
-    ax1.set_ylabel('True Loss', fontsize=14)
-    ax1.set_title('Coverage vs True Loss', fontsize=16, fontweight='bold')
+    ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
+    ax1.set_ylabel('R²', fontsize=14)
+    ax1.set_title('Coverage vs R² (PINN Quality)', fontsize=16, fontweight='bold')
     
     # Annotations
-    ax1.annotate('True Loss\nPINN', xy=(0, loss_pinn), xytext=(-15, loss_pinn),
-                fontsize=11, color='purple', ha='right', va='center',
-                fontweight='bold')
-    ax1.annotate(r'True loss solution ($\beta$)', xy=(50, loss_cfd), 
-                xytext=(50, loss_cfd + 0.01),
-                fontsize=11, color='teal', ha='center', va='bottom')
-    ax1.annotate('Solution', xy=(100, loss_cfd), xytext=(105, loss_cfd),
-                fontsize=11, color='teal', ha='left', va='center')
-    ax1.annotate('Optimal\nhybrid Sys', xy=(opt_cov, 0), xytext=(opt_cov, -0.015),
-                fontsize=11, color='teal', ha='center', va='top')
+    ax1.annotate(f'All PINN\nR²={accuracy[0]:.4f}', xy=(0, accuracy[0]), xytext=(10, accuracy[0]-0.1),
+                fontsize=10, color='purple', ha='left', va='top', fontweight='bold')
+    ax1.annotate(f'All CFD\nR²={accuracy[-1]:.4f}', xy=(100, accuracy[-1]), xytext=(90, accuracy[-1]-0.1),
+                fontsize=10, color='teal', ha='right', va='top', fontweight='bold')
     
-    ax1.set_xlim(-20, 115)
-    y_max = max(loss_pinn, loss_cfd, np.max(accuracy)) * 1.2
-    ax1.set_ylim(0, y_max)
+    ax1.set_xlim(-5, 105)
+    y_min = min(0, np.min(accuracy) - 0.1)
+    ax1.set_ylim(y_min, 1.1)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
+    ax1.grid(True, alpha=0.3)
     
     # ===== Right plot: Loss comparison bar chart =====
+    loss_pinn = results['loss_pinn_only']
+    loss_cfd = results['loss_cfd_only']
     methods = ['PINN\nOnly', f'CFD Only\n(β={beta})', 'Hybrid\n(Router)', 'Optimal']
     losses = [
         results['loss_pinn_only'],
@@ -729,16 +709,23 @@ def main():
     print(f"  Max L2 error: {np.max(error_field):.6f}")
     
     # =========================================================================
-    # Step 6: Compute coverage curve
+    # Step 6: Compute coverage curve (R² as function of CFD coverage)
     # =========================================================================
-    print("\n[Step 6] Computing coverage curve...")
+    print("\n[Step 6] Computing coverage curve (R²)...")
     
-    coverage, accuracy = compute_coverage_curve(error_field, router_output, layout)
+    # Combine velocity components for R² calculation
+    # Use velocity magnitude: sqrt(u² + v²)
+    pinn_vel_mag = np.sqrt(u_pinn**2 + v_pinn**2)
+    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
+    
+    coverage, r2_scores = compute_coverage_curve(pinn_vel_mag, cfd_vel_mag, router_output, layout)
+    accuracy = r2_scores  # Keep variable name for compatibility with plotting
+    
     print(f"  Coverage range: [{coverage[0]:.4f}, {coverage[-1]:.4f}]")
-    print(f"  PINN Error at 0% coverage: {accuracy[0]:.6f}")
-    print(f"  PINN Error at 100% coverage: {accuracy[-1]:.6f}")
-    print(f"  Min PINN Error: {accuracy.min():.6f}")
-    print(f"  Max PINN Error: {accuracy.max():.6f}")
+    print(f"  R² at 0% coverage (all PINN): {accuracy[0]:.6f}")
+    print(f"  R² at 100% coverage (all CFD): {accuracy[-1]:.6f}")
+    print(f"  Min R²: {accuracy.min():.6f}")
+    print(f"  Max R²: {accuracy.max():.6f}")
     
     # =========================================================================
     # Step 7: Compute expected losses
