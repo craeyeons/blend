@@ -144,18 +144,20 @@ def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layou
     return error_field
 
 
-def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
+def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, beta, n_points=100):
     """
-    Compute MSE and R² of PINN points as a function of CFD coverage.
+    Compute the router training loss as a function of CFD coverage.
     
-    MSE is guaranteed to be monotonically decreasing (if router is good).
-    R² uses global normalization for comparability.
+    Loss = β × coverage + (1 - coverage) × mean_PINN_error
+    
+    This matches the loss function used to train the router:
+    L = β · Σ r(x_i) + Σ (1 - r(x_i)) · L_residual(PINN, x_i)
     
     Logic:
     - X-axis: coverage = fraction of points solved by CFD (0 to 1)
     - Sort points by router confidence (DESCENDING: highest first)
     - At coverage X%: the top X% points (highest confidence) go to CFD
-    - Y-axis: Metric of the remaining (1-X)% PINN points
+    - Y-axis: Total loss = β × coverage + (1 - coverage) × PINN_error
     
     Parameters:
     -----------
@@ -167,6 +169,8 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
         Router confidence (higher = more likely to use CFD)
     layout : ndarray
         Fluid domain mask (1=fluid, 0=obstacle)
+    beta : float
+        Cost coefficient for CFD (same as training)
     n_points : int
         Number of points on the curve
         
@@ -174,10 +178,10 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     --------
     coverage : ndarray
         Fraction solved by CFD (0 to 1)
-    mse_scores : ndarray
-        Mean Squared Error of remaining PINN points (should decrease)
-    r2_scores : ndarray
-        R² using global normalization
+    total_loss : ndarray
+        Router training loss at each coverage level
+    pinn_error : ndarray
+        Mean L2 error of remaining PINN points
     """
     # Get fluid points only
     fluid_mask = layout > 0
@@ -187,21 +191,17 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     
     n_fluid = len(pinn_vals)
     
-    # Compute GLOBAL statistics (used as fixed reference for R²)
-    global_mean = np.mean(cfd_vals)
-    global_var = np.var(cfd_vals)
-    
     # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
     sorted_idx = np.argsort(confidences)[::-1]  # Descending order
     sorted_pinn = pinn_vals[sorted_idx]
     sorted_cfd = cfd_vals[sorted_idx]
     
-    # Pre-compute squared errors for efficiency
-    sorted_sq_errors = (sorted_cfd - sorted_pinn) ** 2
+    # Pre-compute L2 errors (not squared, to match typical loss)
+    sorted_l2_errors = np.abs(sorted_cfd - sorted_pinn)
     
     coverage = np.linspace(0, 1, n_points)
-    mse_scores = np.zeros(n_points)
-    r2_scores = np.zeros(n_points)
+    pinn_error = np.zeros(n_points)
+    total_loss = np.zeros(n_points)
     
     for i, cov in enumerate(coverage):
         # Number of points sent to CFD (the top cov% with highest confidence)
@@ -210,20 +210,16 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
         n_pinn = n_fluid - n_cfd
         
         if n_pinn > 0:
-            # MSE of remaining PINN points
-            mse_scores[i] = np.mean(sorted_sq_errors[n_cfd:])
-            
-            # R² = 1 - MSE / global_variance (normalized by global variance)
-            if global_var > 1e-10:
-                r2_scores[i] = 1 - mse_scores[i] / global_var
-            else:
-                r2_scores[i] = 1.0
+            # Mean L2 error of remaining PINN points
+            pinn_error[i] = np.mean(sorted_l2_errors[n_cfd:])
         else:
-            # All points sent to CFD - perfect score
-            mse_scores[i] = 0.0
-            r2_scores[i] = 1.0
+            # All points sent to CFD
+            pinn_error[i] = 0.0
+        
+        # Total loss = β × coverage + (1 - coverage) × PINN_error
+        total_loss[i] = beta * cov + (1 - cov) * pinn_error[i]
     
-    return coverage, mse_scores, r2_scores
+    return coverage, total_loss, pinn_error
 
 def compute_expected_losses(error_field, router_output, layout, beta):
     """
@@ -336,16 +332,20 @@ def compute_expected_losses(error_field, router_output, layout, beta):
     }
 
 
-def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
+def plot_coverage_curve(coverage, total_loss, pinn_error, results, beta, save_path=None):
     """
-    Plot R² vs coverage curve.
+    Plot router training loss vs coverage curve.
+    
+    Loss = β × coverage + (1 - coverage) × PINN_error
     
     Parameters:
     -----------
     coverage : ndarray
         Fraction sent to CFD (x-axis)
-    accuracy : ndarray
-        R² at each coverage level (y-axis)
+    total_loss : ndarray
+        Router training loss at each coverage level (y-axis)
+    pinn_error : ndarray
+        Mean PINN error at each coverage level
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -355,33 +355,41 @@ def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
     """
     fig, ax = plt.subplots(figsize=(10, 7))
     
-    # Main coverage curve (R² vs Coverage)
-    ax.plot(coverage * 100, accuracy, 'k-', linewidth=2.5, label='R² (PINN prediction quality)')
+    # Main loss curve
+    ax.plot(coverage * 100, total_loss, 'b-', linewidth=2.5, label='Total Loss: β×cov + (1-cov)×PINN_err')
+    
+    # Show components
+    ax.plot(coverage * 100, beta * coverage, 'r--', linewidth=1.5, alpha=0.7, label=f'CFD cost term: β×coverage (β={beta})')
+    ax.plot(coverage * 100, (1 - coverage) * pinn_error, 'g--', linewidth=1.5, alpha=0.7, label='PINN error term: (1-cov)×err')
     
     # Mark key points
-    ax.plot(0, accuracy[0], 'o', color='purple', markersize=12, zorder=5, label=f'All PINN: R²={accuracy[0]:.4f}')
-    ax.plot(100, accuracy[-1], 'o', color='teal', markersize=12, zorder=5, label=f'All CFD: R²={accuracy[-1]:.4f}')
+    ax.plot(0, total_loss[0], 'o', color='purple', markersize=12, zorder=5, label=f'All PINN: L={total_loss[0]:.4f}')
+    ax.plot(100, total_loss[-1], 'o', color='teal', markersize=12, zorder=5, label=f'All CFD: L={beta:.4f}')
     
-    # Horizontal reference line at R²=1 (perfect)
-    ax.axhline(y=1.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5, label='Perfect (R²=1)')
+    # Mark optimal point
+    opt_cov = results['optimal_coverage'] * 100
+    opt_loss = results['optimal_loss']
+    ax.plot(opt_cov, opt_loss, '*', color='gold', markersize=20, markeredgecolor='black', 
+            markeredgewidth=1.5, zorder=6, label=f'Optimal: cov={opt_cov:.1f}%, L={opt_loss:.4f}')
+    ax.axvline(x=opt_cov, color='gold', linestyle=':', linewidth=1.5, alpha=0.5)
     
     # Labels
     ax.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
-    ax.set_ylabel('R² (coefficient of determination)', fontsize=14)
+    ax.set_ylabel('Router Training Loss', fontsize=14)
     
     # Set axis limits
     ax.set_xlim(-5, 105)
-    y_min = min(0, np.min(accuracy) - 0.1)
-    y_max = 1.1
-    ax.set_ylim(y_min, y_max)
+    y_max = max(total_loss[0], beta) * 1.2
+    ax.set_ylim(0, y_max)
     
     # Remove top and right spines for cleaner look
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    ax.set_title('Coverage vs R² (PINN Prediction Quality)', fontsize=14)
-    ax.legend(loc='lower right', fontsize=10)
+    ax.set_title(f'Router Loss vs Coverage (β={beta})', fontsize=14)
+    ax.legend(loc='upper center', fontsize=9, ncol=2)
     ax.grid(True, alpha=0.3)
+
     
     plt.tight_layout()
     
@@ -451,16 +459,18 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
     return fig
 
 
-def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
+def plot_combined_metrics(coverage, total_loss, pinn_error, results, beta, save_path=None):
     """
-    Create a combined figure: R² coverage curve + Expected Loss comparison.
+    Create a combined figure: Router Loss curve + Expected Loss comparison.
     
     Parameters:
     -----------
     coverage : ndarray
         Fraction sent to CFD
-    accuracy : ndarray  
-        R² at each coverage level
+    total_loss : ndarray  
+        Router training loss at each coverage level
+    pinn_error : ndarray
+        Mean PINN error at each coverage level
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -470,33 +480,45 @@ def plot_combined_metrics(coverage, accuracy, results, beta, save_path=None):
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
-    # ===== Left plot: R² Coverage curve =====
-    ax1.plot(coverage * 100, accuracy, 'k-', linewidth=2.5)
+    # ===== Left plot: Router Loss vs Coverage curve =====
+    ax1.plot(coverage * 100, total_loss, 'b-', linewidth=2.5, label='Total Loss')
+    
+    # Show components
+    ax1.plot(coverage * 100, beta * coverage, 'r--', linewidth=1.5, alpha=0.7, label=f'CFD cost: β×cov')
+    ax1.plot(coverage * 100, (1 - coverage) * pinn_error, 'g--', linewidth=1.5, alpha=0.7, label='PINN error: (1-cov)×err')
     
     # Mark key points
-    ax1.plot(0, accuracy[0], 'o', color='purple', markersize=12, zorder=5)
-    ax1.plot(100, accuracy[-1], 'o', color='teal', markersize=12, zorder=5)
+    ax1.plot(0, total_loss[0], 'o', color='purple', markersize=12, zorder=5)
+    ax1.plot(100, total_loss[-1], 'o', color='teal', markersize=12, zorder=5)
     
-    # Reference line at R²=1
-    ax1.axhline(y=1.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5)
+    # Mark optimal point
+    opt_cov = results['optimal_coverage'] * 100
+    opt_loss = results['optimal_loss']
+    ax1.plot(opt_cov, opt_loss, '*', color='gold', markersize=18, markeredgecolor='black', 
+             markeredgewidth=1.5, zorder=6)
+    ax1.axvline(x=opt_cov, color='gold', linestyle=':', linewidth=1.5, alpha=0.5)
     
     # Labels
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
-    ax1.set_ylabel('R²', fontsize=14)
-    ax1.set_title('Coverage vs R² (PINN Quality)', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('Router Training Loss', fontsize=14)
+    ax1.set_title(f'Coverage vs Router Loss (β={beta})', fontsize=16, fontweight='bold')
     
     # Annotations
-    ax1.annotate(f'All PINN\nR²={accuracy[0]:.4f}', xy=(0, accuracy[0]), xytext=(10, accuracy[0]-0.1),
-                fontsize=10, color='purple', ha='left', va='top', fontweight='bold')
-    ax1.annotate(f'All CFD\nR²={accuracy[-1]:.4f}', xy=(100, accuracy[-1]), xytext=(90, accuracy[-1]-0.1),
-                fontsize=10, color='teal', ha='right', va='top', fontweight='bold')
+    ax1.annotate(f'All PINN\nL={total_loss[0]:.4f}', xy=(0, total_loss[0]), xytext=(10, total_loss[0]),
+                fontsize=10, color='purple', ha='left', va='bottom', fontweight='bold')
+    ax1.annotate(f'All CFD\nL={beta:.4f}', xy=(100, total_loss[-1]), xytext=(90, total_loss[-1]),
+                fontsize=10, color='teal', ha='right', va='bottom', fontweight='bold')
+    ax1.annotate(f'Optimal\ncov={opt_cov:.1f}%\nL={opt_loss:.4f}', 
+                xy=(opt_cov, opt_loss), xytext=(opt_cov+5, opt_loss-0.02),
+                fontsize=10, color='goldenrod', ha='left', va='top', fontweight='bold')
     
     ax1.set_xlim(-5, 105)
-    y_min = min(0, np.min(accuracy) - 0.1)
-    ax1.set_ylim(y_min, 1.1)
+    y_max = max(total_loss[0], beta) * 1.2
+    ax1.set_ylim(0, y_max)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
     ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper center', fontsize=9)
     
     # ===== Right plot: Loss comparison bar chart =====
     loss_pinn = results['loss_pinn_only']
@@ -716,7 +738,7 @@ def main():
     print(f"  Max L2 error: {np.max(error_field):.6f}")
     
     # =========================================================================
-    # Step 6: Compute coverage curve (R² as function of CFD coverage)
+    # Step 6: Compute coverage curve (Router loss as function of CFD coverage)
     # =========================================================================
     print("\n[Step 6] Computing coverage curve...")
     
@@ -725,22 +747,20 @@ def main():
     pinn_vel_mag = np.sqrt(u_pinn**2 + v_pinn**2)
     cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
     
-    coverage, mse_scores, r2_scores = compute_coverage_curve(pinn_vel_mag, cfd_vel_mag, router_output, layout)
-    accuracy = r2_scores  # Keep variable name for compatibility with plotting
+    coverage, total_loss, pinn_error = compute_coverage_curve(
+        pinn_vel_mag, cfd_vel_mag, router_output, layout, args.beta
+    )
     
     print(f"  Coverage range: [{coverage[0]:.4f}, {coverage[-1]:.4f}]")
-    print(f"  MSE at 0% coverage (all PINN): {mse_scores[0]:.6f}")
-    print(f"  MSE at 100% coverage (all CFD): {mse_scores[-1]:.6f}")
-    print(f"  R² at 0% coverage (all PINN): {r2_scores[0]:.6f}")
-    print(f"  R² at 100% coverage (all CFD): {r2_scores[-1]:.6f}")
+    print(f"  Loss at 0% coverage (all PINN): {total_loss[0]:.6f}")
+    print(f"  Loss at 100% coverage (all CFD): {total_loss[-1]:.6f} (= β = {args.beta})")
+    print(f"  PINN error at 0% cov: {pinn_error[0]:.6f}")
     
-    # Check monotonicity
-    mse_diff = np.diff(mse_scores)
-    if np.all(mse_diff <= 1e-10):
-        print(f"  ✓ MSE is monotonically decreasing (router is working)")
-    else:
-        n_violations = np.sum(mse_diff > 1e-10)
-        print(f"  ⚠ MSE has {n_violations} monotonicity violations")
+    # Find minimum loss point
+    min_idx = np.argmin(total_loss)
+    min_cov = coverage[min_idx]
+    min_loss = total_loss[min_idx]
+    print(f"  Minimum loss: {min_loss:.6f} at coverage {min_cov*100:.1f}%")
     
     # =========================================================================
     # Step 7: Compute expected losses
@@ -767,13 +787,13 @@ def main():
     
     # Combined metrics plot
     plot_combined_metrics(
-        coverage, accuracy, results, args.beta,
+        coverage, total_loss, pinn_error, results, args.beta,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
     
     # Individual plots
     plot_coverage_curve(
-        coverage, accuracy, results, args.beta,
+        coverage, total_loss, pinn_error, results, args.beta,
         save_path=os.path.join(args.output_dir, 'coverage_curve.png')
     )
     
@@ -786,9 +806,11 @@ def main():
     results_path = os.path.join(args.output_dir, 'metrics_results.npz')
     np.savez(results_path,
              coverage=coverage,
-             accuracy=accuracy,
+             total_loss=total_loss,
+             pinn_error=pinn_error,
              router_output=router_output,
              error_field=error_field,
+             beta=args.beta,
              **results)
     print(f"  ✓ Saved numerical results to {results_path}")
     
