@@ -457,14 +457,16 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
     return fig
 
 
-def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_points=200):
+def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_points=200,
+                             lambda_tv=0.01, lambda_entropy=0.1, lambda_variance=0.05):
     """
     Compute the router training loss as a function of coverage.
     
-    Loss = β * coverage + (1 - coverage) * mean_PINN_residual
+    The ACTUAL router training loss is:
+    L = β*mean(r) + mean((1-r)*R) + λ_TV*TV(r) - λ_H*H(r) - λ_V*Var(r)
     
-    where mean_PINN_residual is the average physics residual at points assigned to PINN
-    (the points NOT sent to CFD, i.e., those with lower router confidence).
+    For a given coverage level, we simulate binary assignment (threshold-based)
+    to compute what the core loss (CFD + residual) would be.
     
     Parameters:
     -----------
@@ -478,13 +480,17 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         Cost coefficient for CFD
     n_points : int
         Number of coverage points to compute
+    lambda_tv, lambda_entropy, lambda_variance : float
+        Regularization weights (for computing actual router loss)
         
     Returns:
     --------
     coverage : ndarray
         Fraction sent to CFD (0 to 1)
     loss : ndarray
-        Router training loss at each coverage level
+        Core loss (CFD + residual) at each coverage level
+    actual_router_loss : float
+        The actual loss with current router output (including all regularization)
     """
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
@@ -505,22 +511,65 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         # Number of points kept as PINN (the remaining ones with lower confidence)
         n_pinn = n_fluid - n_cfd
         
-        # CFD cost component
+        # CFD cost component: β * coverage
         cfd_cost = beta * cov
         
-        # PINN residual component (mean residual on PINN points)
+        # PINN residual component: (1 - coverage) * mean_residual_on_PINN_points
+        # This is equivalent to mean((1-r)*R) for binary r
         if n_pinn > 0:
             mean_pinn_residual = np.mean(sorted_residuals[n_cfd:])
         else:
             mean_pinn_residual = 0.0
         
-        # Total loss: β * coverage + (1 - coverage) * mean_pinn_residual
+        # Core loss (what the coverage curve shows)
         loss[i] = cfd_cost + (1 - cov) * mean_pinn_residual
     
-    return coverage, loss
+    # ===== Compute ACTUAL router loss with current soft router output =====
+    r = router_output[fluid_mask]
+    R = residuals
+    
+    # CFD cost: β * mean(r)
+    actual_cfd_cost = beta * np.mean(r)
+    
+    # Residual loss: mean((1-r) * R)
+    actual_residual_loss = np.mean((1 - r) * R)
+    
+    # Total variation (approximate - need spatial structure)
+    r_2d = router_output * layout
+    tv_h = np.mean(np.abs(r_2d[:, 1:] - r_2d[:, :-1]))
+    tv_v = np.mean(np.abs(r_2d[1:, :] - r_2d[:-1, :]))
+    actual_tv_loss = lambda_tv * (tv_h + tv_v)
+    
+    # Entropy: -mean(r*log(r) + (1-r)*log(1-r))
+    r_clipped = np.clip(r, 1e-7, 1 - 1e-7)
+    entropy = -np.mean(r_clipped * np.log(r_clipped) + (1 - r_clipped) * np.log(1 - r_clipped))
+    actual_entropy_term = -lambda_entropy * entropy  # Negative because we maximize entropy
+    
+    # Variance: var(r)
+    variance = np.var(r)
+    actual_variance_term = -lambda_variance * variance  # Negative because we maximize variance
+    
+    # Total actual loss
+    actual_router_loss = actual_cfd_cost + actual_residual_loss + actual_tv_loss + actual_entropy_term + actual_variance_term
+    
+    # Also compute just core loss for comparison
+    core_loss = actual_cfd_cost + actual_residual_loss
+    
+    return coverage, loss, {
+        'actual_total_loss': actual_router_loss,
+        'core_loss': core_loss,
+        'cfd_cost': actual_cfd_cost,
+        'residual_loss': actual_residual_loss,
+        'tv_loss': actual_tv_loss,
+        'entropy': entropy,
+        'entropy_term': actual_entropy_term,
+        'variance': variance,
+        'variance_term': actual_variance_term,
+    }
 
 
-def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, router_output, layout, save_path=None):
+def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, router_output, layout,
+                          lambda_tv=0.01, lambda_entropy=0.1, lambda_variance=0.05, save_path=None):
     """
     Create a combined figure: Router Loss vs Coverage + Expected Loss comparison.
     
@@ -540,27 +589,46 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
         Router confidence output
     layout : ndarray
         Fluid domain mask
+    lambda_tv, lambda_entropy, lambda_variance : float
+        Regularization weights for actual loss computation
     save_path : str, optional
         Path to save figure
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     # ===== Left plot: Router Training Loss vs Coverage =====
-    # Compute loss curve
-    cov_for_loss, loss_curve = compute_loss_vs_coverage(residual_field, router_output, layout, beta)
+    # Compute loss curve AND actual router loss
+    cov_for_loss, loss_curve, actual_loss_info = compute_loss_vs_coverage(
+        residual_field, router_output, layout, beta,
+        lambda_tv=lambda_tv, lambda_entropy=lambda_entropy, lambda_variance=lambda_variance
+    )
     
-    ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5)
+    # Plot core loss curve (CFD cost + residual only)
+    ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5, label='Core Loss (β·cov + residual)')
     
     # Mark key points
     ax1.plot(0, loss_curve[0], 'o', color='purple', markersize=12, zorder=5)
     ax1.plot(100, loss_curve[-1], 'o', color='teal', markersize=12, zorder=5)
     
-    # Find and mark optimal point (minimum loss)
+    # Find and mark optimal point (minimum core loss)
     min_idx = np.argmin(loss_curve)
     opt_coverage = cov_for_loss[min_idx]
     opt_loss = loss_curve[min_idx]
     ax1.plot(opt_coverage * 100, opt_loss, '*', color='green', markersize=18, zorder=6,
              markeredgecolor='black', markeredgewidth=1)
+    
+    # Mark ACTUAL router operating point
+    actual_coverage = np.mean(router_output[layout > 0])
+    actual_total_loss = actual_loss_info['actual_total_loss']
+    actual_core_loss = actual_loss_info['core_loss']
+    
+    # Plot actual router point (core loss)
+    ax1.plot(actual_coverage * 100, actual_core_loss, 'D', color='red', markersize=14, zorder=7,
+             markeredgecolor='black', markeredgewidth=1.5, label=f'Router (core): {actual_core_loss:.4f}')
+    
+    # Also show total loss with regularization
+    ax1.axhline(y=actual_total_loss, color='red', linestyle=':', linewidth=2, alpha=0.7,
+                label=f'Router total: {actual_total_loss:.4f}')
     
     # Reference lines for PINN-only and CFD-only
     ax1.axhline(y=loss_curve[0], color='purple', linestyle='--', linewidth=1.5, alpha=0.5, label=f'PINN Only: {loss_curve[0]:.4f}')
@@ -568,58 +636,65 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
     
     # Labels
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
-    ax1.set_ylabel('Router Training Loss', fontsize=14)
+    ax1.set_ylabel('Loss', fontsize=14)
     ax1.set_title(f'Loss vs Coverage (β = {beta})', fontsize=16, fontweight='bold')
     
     # Annotations
-    ax1.annotate(f'All PINN\nLoss={loss_curve[0]:.4f}', xy=(0, loss_curve[0]), 
-                xytext=(15, loss_curve[0] + 0.02),
-                fontsize=10, color='purple', ha='left', va='bottom', fontweight='bold')
-    ax1.annotate(f'All CFD\nLoss={loss_curve[-1]:.4f}', xy=(100, loss_curve[-1]), 
-                xytext=(85, loss_curve[-1] + 0.02),
-                fontsize=10, color='teal', ha='right', va='bottom', fontweight='bold')
-    ax1.annotate(f'Optimal\n{opt_coverage*100:.1f}%, Loss={opt_loss:.4f}', 
+    ax1.annotate(f'All PINN\n{loss_curve[0]:.4f}', xy=(0, loss_curve[0]), 
+                xytext=(8, loss_curve[0] + 0.03),
+                fontsize=9, color='purple', ha='left', va='bottom', fontweight='bold')
+    ax1.annotate(f'All CFD\n{loss_curve[-1]:.4f}', xy=(100, loss_curve[-1]), 
+                xytext=(92, loss_curve[-1] + 0.03),
+                fontsize=9, color='teal', ha='right', va='bottom', fontweight='bold')
+    ax1.annotate(f'Opt: {opt_coverage*100:.0f}%\n{opt_loss:.4f}', 
                 xy=(opt_coverage * 100, opt_loss),
-                xytext=(opt_coverage * 100 + 10, opt_loss - 0.05),
-                fontsize=10, color='green', ha='left', va='top', fontweight='bold',
+                xytext=(opt_coverage * 100 + 8, opt_loss - 0.08),
+                fontsize=9, color='green', ha='left', va='top', fontweight='bold',
                 arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
     
+    # Set y-axis to include the actual total loss (which may be lower due to entropy/variance)
+    y_min = min(0, actual_total_loss - 0.1, np.min(loss_curve) - 0.05)
+    y_max = max(loss_curve[0], beta) + 0.15
     ax1.set_xlim(-5, 105)
-    y_min = min(0, np.min(loss_curve) - 0.05)
-    y_max = max(loss_curve[0], beta) + 0.1
     ax1.set_ylim(y_min, y_max)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
     ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='upper right', fontsize=9)
+    ax1.legend(loc='upper right', fontsize=8)
     
-    # ===== Right plot: Loss comparison bar chart =====
-    methods = ['PINN\nOnly', f'CFD Only\n(β={beta})', 'Hybrid\n(Router)', 'Optimal']
-    losses = [
-        results['loss_pinn_only'],
-        results['loss_cfd_only'],
-        results['loss_hybrid'],
-        results['optimal_loss']
+    # ===== Right plot: Loss breakdown =====
+    # Show all components of the actual router loss
+    components = ['CFD\nCost', 'Residual\nLoss', 'TV\nLoss', 'Entropy\n(neg)', 'Variance\n(neg)', 'TOTAL']
+    values = [
+        actual_loss_info['cfd_cost'],
+        actual_loss_info['residual_loss'],
+        actual_loss_info['tv_loss'],
+        actual_loss_info['entropy_term'],
+        actual_loss_info['variance_term'],
+        actual_loss_info['actual_total_loss']
     ]
-    colors = ['purple', 'gray', 'teal', 'green']
+    colors = ['steelblue', 'coral', 'gold', 'lightgreen', 'plum', 'red']
     
-    bars = ax2.bar(methods, losses, color=colors, edgecolor='black', linewidth=1.5)
+    bars = ax2.bar(components, values, color=colors, edgecolor='black', linewidth=1.5)
     
-    for bar, loss in zip(bars, losses):
+    for bar, val in zip(bars, values):
         height = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.002,
-                f'{loss:.4f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+        y_pos = height + 0.01 if height >= 0 else height - 0.03
+        va = 'bottom' if height >= 0 else 'top'
+        ax2.text(bar.get_x() + bar.get_width()/2., y_pos,
+                f'{val:.4f}', ha='center', va=va, fontsize=10, fontweight='bold')
     
-    ax2.set_ylabel('Expected True Loss', fontsize=14)
-    ax2.set_title('Expected Loss Comparison', fontsize=16, fontweight='bold')
+    ax2.axhline(y=0, color='black', linewidth=0.5)
+    ax2.set_ylabel('Loss Value', fontsize=14)
+    ax2.set_title('Router Loss Breakdown', fontsize=16, fontweight='bold')
     
     # Info box
-    info = f"Default Threshold: {results['default_threshold']:.2f}\n"
-    info += f"Router Coverage: {results['coverage_hybrid']*100:.1f}%\n"
+    info = f"Router Coverage: {actual_coverage*100:.1f}%\n"
+    info += f"Entropy: {actual_loss_info['entropy']:.4f}\n"
+    info += f"Variance: {actual_loss_info['variance']:.4f}\n"
     info += f"---\n"
-    info += f"Optimal Threshold: {results['optimal_threshold']:.4f}\n"
-    info += f"Optimal Coverage: {results['optimal_coverage']*100:.1f}%"
-    ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=10,
+    info += f"λ_TV={lambda_tv}, λ_H={lambda_entropy}, λ_V={lambda_variance}"
+    ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=9,
              va='top', ha='right', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
     
     plt.tight_layout()
@@ -661,6 +736,14 @@ def main():
     # Cost coefficient
     parser.add_argument('--beta', type=float, default=1,
                         help='Cost coefficient β for CFD computation per node')
+    
+    # Regularization weights (must match training)
+    parser.add_argument('--lambda-tv', type=float, default=0.01,
+                        help='Total variation regularization weight')
+    parser.add_argument('--lambda-entropy', type=float, default=0.1,
+                        help='Entropy regularization weight')
+    parser.add_argument('--lambda-variance', type=float, default=0.05,
+                        help='Variance regularization weight')
     
     # Domain parameters (must match PINN training)
     parser.add_argument('--nx', type=int, default=200)
@@ -881,10 +964,11 @@ def main():
     # =========================================================================
     print("\n[Step 8] Generating plots...")
     
-    # Combined metrics plot (left: loss vs coverage, right: bar chart)
+    # Combined metrics plot (left: loss vs coverage, right: loss breakdown)
     plot_combined_metrics(
         coverage, accuracy, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
+        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy, lambda_variance=args.lambda_variance,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
     
