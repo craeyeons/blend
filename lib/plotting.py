@@ -5,6 +5,8 @@ Plotting utilities for fluid dynamics simulations.
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'no-latex'])
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 

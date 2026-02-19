@@ -99,6 +99,8 @@ def generate_comparison_plot(betas, args):
     """Generate a comparison plot across all beta values."""
     import numpy as np
     import matplotlib.pyplot as plt
+    import scienceplots
+    plt.style.use(['science', 'no-latex'])
     
     output_path = os.path.join(args.output_base_dir, 'beta_comparison.png')
     

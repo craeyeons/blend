@@ -22,6 +22,8 @@ import os
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'no-latex'])
 from matplotlib.patches import FancyArrowPatch
 import matplotlib.patches as mpatches
 

@@ -23,6 +23,8 @@ if gpus:
         pass
 
 import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'no-latex'])
 from matplotlib.colors import Normalize
 
 from lib.router import (

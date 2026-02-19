@@ -27,6 +27,8 @@ if gpus:
         print(f"GPU memory growth setting failed: {e}")
 
 import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'no-latex'])
 from matplotlib.colors import Normalize
 
 # Import components
