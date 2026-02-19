@@ -36,6 +36,7 @@ if gpus:
 
 from lib.router import (
     RouterCNN,
+    PINNResidualComputer,
     create_router_input,
     create_cylinder_setup,
 )
@@ -225,22 +226,25 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     
     return coverage, mse_scores, r2_scores
 
-def compute_expected_losses(error_field, router_output, layout, beta):
+def compute_expected_losses(residual_field, router_output, layout, beta):
     """
     Compute expected losses for PINN-only, CFD-only, and hybrid systems.
     
-    The loss function is:
-    L = β · coverage + (1 - coverage) · E[L2_error | PINN]
+    Uses the ACTUAL router training loss:
+    L = β · coverage + (1 - coverage) · E[residual | PINN]
     
     Where:
     - β is the cost per node of computing CFD
-    - coverage is the fraction sent to CFD
-    - E[L2_error | PINN] is the expected error of PINN predictions
+    - coverage is the fraction sent to CFD (mean of r)
+    - E[residual | PINN] is the expected physics residual on PINN points
+    
+    The residual is the normalized physics residual used during training:
+    R = (continuity + momentum) / 2, normalized by p95 and clipped at 1.5
     
     Parameters:
     -----------
-    error_field : ndarray
-        Per-point L2 error of PINN vs CFD
+    residual_field : ndarray
+        Per-point normalized physics residual (continuity + momentum)
     router_output : ndarray
         Router confidence (0=PINN, 1=CFD)
     layout : ndarray
@@ -259,15 +263,17 @@ def compute_expected_losses(error_field, router_output, layout, beta):
         - optimal_threshold: Threshold that achieves optimal loss
     """
     fluid_mask = layout > 0
-    errors = error_field[fluid_mask]
+    residuals = residual_field[fluid_mask]
     confidences = router_output[fluid_mask]
     
-    n_fluid = len(errors)
+    n_fluid = len(residuals)
     
-    # PINN only: coverage = 0, all errors are PINN errors
-    loss_pinn_only = np.mean(errors)
+    # PINN only: coverage = 0, all residuals contribute
+    # Loss = mean((1-0) * residual) = mean(residual)
+    loss_pinn_only = np.mean(residuals)
     
     # CFD only: coverage = 1, cost is β per node
+    # Loss = β * 1 + (1-1) * residual = β
     loss_cfd_only = beta
     
     # Hybrid: use router threshold to determine coverage
@@ -276,19 +282,19 @@ def compute_expected_losses(error_field, router_output, layout, beta):
     cfd_mask = confidences > default_threshold
     coverage_hybrid = np.mean(cfd_mask)
     
-    # Error on PINN points
+    # Residual on PINN points
     pinn_points = ~cfd_mask
     if np.sum(pinn_points) > 0:
-        pinn_error = np.mean(errors[pinn_points])
+        pinn_residual = np.mean(residuals[pinn_points])
     else:
-        pinn_error = 0.0
+        pinn_residual = 0.0
     
-    loss_hybrid = beta * coverage_hybrid + (1 - coverage_hybrid) * pinn_error
+    loss_hybrid = beta * coverage_hybrid + (1 - coverage_hybrid) * pinn_residual
     
     # Find optimal operating point by sweeping thresholds on router output
     # Sort by router confidence (ascending)
     sorted_idx = np.argsort(confidences)
-    sorted_errors = errors[sorted_idx]
+    sorted_residuals = residuals[sorted_idx]
     sorted_confidences = confidences[sorted_idx]
     
     best_loss = float('inf')
@@ -308,11 +314,11 @@ def compute_expected_losses(error_field, router_output, layout, beta):
         # PINN points are those with confidence <= thresh
         pinn_pts = ~cfd_points
         if np.sum(pinn_pts) > 0:
-            pinn_err = np.mean(errors[pinn_pts])
+            pinn_res = np.mean(residuals[pinn_pts])
         else:
-            pinn_err = 0.0
+            pinn_res = 0.0
         
-        loss = beta * cov + (1 - cov) * pinn_err
+        loss = beta * cov + (1 - cov) * pinn_res
         coverages_list.append(cov)
         losses.append(loss)
         
@@ -451,19 +457,19 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
     return fig
 
 
-def compute_loss_vs_coverage(error_field, router_output, layout, beta, n_points=200):
+def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_points=200):
     """
     Compute the router training loss as a function of coverage.
     
-    Loss = β * coverage + (1 - coverage) * mean_PINN_error
+    Loss = β * coverage + (1 - coverage) * mean_PINN_residual
     
-    where mean_PINN_error is the average error at points assigned to PINN
+    where mean_PINN_residual is the average physics residual at points assigned to PINN
     (the points NOT sent to CFD, i.e., those with lower router confidence).
     
     Parameters:
     -----------
-    error_field : ndarray
-        Per-point error (e.g., L2 error PINN vs CFD)
+    residual_field : ndarray
+        Per-point normalized physics residual (continuity + momentum)
     router_output : ndarray
         Router confidence (0=PINN, 1=CFD)
     layout : ndarray
@@ -481,14 +487,14 @@ def compute_loss_vs_coverage(error_field, router_output, layout, beta, n_points=
         Router training loss at each coverage level
     """
     fluid_mask = layout > 0
-    errors = error_field[fluid_mask]
+    residuals = residual_field[fluid_mask]
     confidences = router_output[fluid_mask]
     
-    n_fluid = len(errors)
+    n_fluid = len(residuals)
     
     # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
     sorted_idx = np.argsort(confidences)[::-1]
-    sorted_errors = errors[sorted_idx]
+    sorted_residuals = residuals[sorted_idx]
     
     coverage = np.linspace(0, 1, n_points)
     loss = np.zeros(n_points)
@@ -502,19 +508,19 @@ def compute_loss_vs_coverage(error_field, router_output, layout, beta, n_points=
         # CFD cost component
         cfd_cost = beta * cov
         
-        # PINN error component (mean error on PINN points)
+        # PINN residual component (mean residual on PINN points)
         if n_pinn > 0:
-            mean_pinn_error = np.mean(sorted_errors[n_cfd:])
+            mean_pinn_residual = np.mean(sorted_residuals[n_cfd:])
         else:
-            mean_pinn_error = 0.0
+            mean_pinn_residual = 0.0
         
-        # Total loss: β * coverage + (1 - coverage) * mean_pinn_error
-        loss[i] = cfd_cost + (1 - cov) * mean_pinn_error
+        # Total loss: β * coverage + (1 - coverage) * mean_pinn_residual
+        loss[i] = cfd_cost + (1 - cov) * mean_pinn_residual
     
     return coverage, loss
 
 
-def plot_combined_metrics(coverage, accuracy, results, beta, error_field, router_output, layout, save_path=None):
+def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, router_output, layout, save_path=None):
     """
     Create a combined figure: Router Loss vs Coverage + Expected Loss comparison.
     
@@ -528,8 +534,8 @@ def plot_combined_metrics(coverage, accuracy, results, beta, error_field, router
         Results from compute_expected_losses
     beta : float
         Cost coefficient
-    error_field : ndarray
-        Per-point error field for loss computation
+    residual_field : ndarray
+        Per-point normalized physics residual for loss computation
     router_output : ndarray
         Router confidence output
     layout : ndarray
@@ -541,7 +547,7 @@ def plot_combined_metrics(coverage, accuracy, results, beta, error_field, router
     
     # ===== Left plot: Router Training Loss vs Coverage =====
     # Compute loss curve
-    cov_for_loss, loss_curve = compute_loss_vs_coverage(error_field, router_output, layout, beta)
+    cov_for_loss, loss_curve = compute_loss_vs_coverage(residual_field, router_output, layout, beta)
     
     ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5)
     
@@ -790,9 +796,40 @@ def main():
     print(f"  Router mean: {np.mean(router_output[layout > 0]):.4f}")
     
     # =========================================================================
-    # Step 5: Compute error field
+    # Step 5: Compute physics residual field (used in router training loss)
     # =========================================================================
-    print("\n[Step 5] Computing error field...")
+    print("\n[Step 5] Computing physics residual field...")
+    
+    # Create residual computer
+    residual_computer = PINNResidualComputer(pinn_model, nu=1.0/args.Re, rho=1.0)
+    
+    # Compute continuity and momentum residuals
+    X_tf = tf.constant(X, dtype=tf.float32)
+    Y_tf = tf.constant(Y, dtype=tf.float32)
+    bc_mask_tf = tf.constant(bc_mask, dtype=tf.float32)
+    bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
+    bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
+    
+    # Use the same residual computation as router training
+    residual_weights = {
+        'continuity': 1.0,
+        'momentum': 1.0,
+        'bc_local': 2.0,
+        'bc_propagated': 1.5
+    }
+    residual_field_tf = residual_computer.compute_total_residual_with_bc(
+        X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
+    )
+    residual_field = residual_field_tf.numpy()
+    
+    # Mask out obstacle regions
+    residual_field = residual_field * layout
+    
+    print(f"  Mean physics residual (fluid): {np.mean(residual_field[layout > 0]):.6f}")
+    print(f"  Max physics residual: {np.max(residual_field):.6f}")
+    
+    # Also compute L2 error field for reference (coverage curve uses this)
+    print("\n[Step 5b] Computing L2 error field (for R² curve)...")
     
     error_field = compute_l2_error_field(
         u_pinn, v_pinn, p_pinn,
@@ -822,15 +859,15 @@ def main():
     print(f"  R² at 100% coverage (all CFD): {r2_scores[-1]:.6f}")
     
     # =========================================================================
-    # Step 7: Compute expected losses
+    # Step 7: Compute expected losses (using physics residuals)
     # =========================================================================
-    print("\n[Step 7] Computing expected losses...")
+    print("\n[Step 7] Computing expected losses (using physics residuals)...")
     
-    results = compute_expected_losses(error_field, router_output, layout, args.beta)
+    results = compute_expected_losses(residual_field, router_output, layout, args.beta)
     
     print(f"\n  Expected Loss Comparison (β = {args.beta}):")
     print(f"  ----------------------------------------")
-    print(f"  PINN Only:     {results['loss_pinn_only']:.6f}")
+    print(f"  PINN Only:     {results['loss_pinn_only']:.6f} (mean residual)")
     print(f"  CFD Only:      {results['loss_cfd_only']:.6f} (= β)")
     print(f"  Hybrid:        {results['loss_hybrid']:.6f} (threshold: {results['default_threshold']:.2f}, coverage: {results['coverage_hybrid']*100:.1f}%)")
     print(f"  ----------------------------------------")
@@ -847,7 +884,7 @@ def main():
     # Combined metrics plot (left: loss vs coverage, right: bar chart)
     plot_combined_metrics(
         coverage, accuracy, results, args.beta,
-        error_field=error_field, router_output=router_output, layout=layout,
+        residual_field=residual_field, router_output=router_output, layout=layout,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
     
@@ -869,6 +906,7 @@ def main():
              accuracy=accuracy,
              router_output=router_output,
              error_field=error_field,
+             residual_field=residual_field,
              **results)
     print(f"  ✓ Saved numerical results to {results_path}")
     
