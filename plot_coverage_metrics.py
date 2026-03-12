@@ -94,7 +94,11 @@ def compute_cfd_solution(args):
         CFD solution on the grid
     X, Y : ndarray
         Coordinate grids
+    cfd_time : float
+        Time taken to compute CFD solution in seconds
     """
+    import time
+    
     print("\n[Computing CFD Solution]")
     print("  This may take a while...")
     
@@ -110,9 +114,13 @@ def compute_cfd_solution(args):
         inlet_velocity=args.inlet_velocity
     )
     
+    start_time = time.time()
     u_cfd, v_cfd, p_cfd = sim.solve()
+    cfd_time = time.time() - start_time
     
-    return u_cfd, v_cfd, p_cfd, sim.X, sim.Y
+    print(f"  ✓ CFD solution computed in {cfd_time:.2f} seconds")
+    
+    return u_cfd, v_cfd, p_cfd, sim.X, sim.Y, cfd_time
 
 
 def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layout):
@@ -145,6 +153,94 @@ def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layou
     error_field = np.sqrt(error_u + error_v + error_p) * layout
     
     return error_field
+
+
+def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylinder_radius, save_path=None):
+    """
+    Plot the CFD solution fields.
+    
+    Parameters:
+    -----------
+    u_cfd, v_cfd, p_cfd : ndarray
+        CFD solution components
+    X, Y : ndarray
+        Coordinate grids
+    layout : ndarray
+        Fluid domain mask
+    cylinder_center : tuple
+        (cx, cy) cylinder center
+    cylinder_radius : float
+        Cylinder radius
+    save_path : str, optional
+        Path to save the figure
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    cx, cy = cylinder_center
+    
+    # Velocity magnitude
+    vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
+    
+    # Mask obstacle regions for plotting
+    u_plot = np.ma.masked_where(layout == 0, u_cfd)
+    v_plot = np.ma.masked_where(layout == 0, v_cfd)
+    p_plot = np.ma.masked_where(layout == 0, p_cfd)
+    vel_plot = np.ma.masked_where(layout == 0, vel_mag)
+    
+    # Plot velocity magnitude
+    ax = axes[0, 0]
+    cf = ax.contourf(X, Y, vel_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('CFD: Velocity Magnitude |u|')
+    ax.set_aspect('equal')
+    
+    # Plot u-velocity
+    ax = axes[0, 1]
+    cf = ax.contourf(X, Y, u_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('CFD: u-velocity')
+    ax.set_aspect('equal')
+    
+    # Plot v-velocity
+    ax = axes[1, 0]
+    cf = ax.contourf(X, Y, v_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('CFD: v-velocity')
+    ax.set_aspect('equal')
+    
+    # Plot pressure
+    ax = axes[1, 1]
+    cf = ax.contourf(X, Y, p_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('CFD: Pressure')
+    ax.set_aspect('equal')
+    
+    plt.suptitle('CFD Ground Truth Solution', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved CFD solution plot to {save_path}")
+    
+    plt.close(fig)
+    
+    return fig
 
 
 def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
@@ -833,17 +929,27 @@ def main():
     # =========================================================================
     print("\n[Step 3] Getting CFD solution (ground truth)...")
     
+    cfd_time = None  # Track CFD computation time
+    
     if args.cfd_path and os.path.exists(args.cfd_path):
         print(f"  Loading from {args.cfd_path}")
         cfd_data = np.load(args.cfd_path)
         u_cfd = cfd_data['u']
         v_cfd = cfd_data['v']
         p_cfd = cfd_data['p']
-        print(f"  ✓ Loaded CFD solution")
+        # Load cfd_time if it was saved
+        if 'cfd_time' in cfd_data:
+            cfd_time = float(cfd_data['cfd_time'])
+            if cfd_time > 0:
+                print(f"  ✓ Loaded CFD solution (originally computed in {cfd_time:.2f}s)")
+            else:
+                print(f"  ✓ Loaded CFD solution")
+        else:
+            print(f"  ✓ Loaded CFD solution")
     elif args.compute_cfd:
-        u_cfd, v_cfd, p_cfd, X_cfd, Y_cfd = compute_cfd_solution(args)
+        u_cfd, v_cfd, p_cfd, X_cfd, Y_cfd, cfd_time = compute_cfd_solution(args)
         # Save for future use
-        np.savez(args.save_cfd, u=u_cfd, v=v_cfd, p=p_cfd, X=X_cfd, Y=Y_cfd)
+        np.savez(args.save_cfd, u=u_cfd, v=v_cfd, p=p_cfd, X=X_cfd, Y=Y_cfd, cfd_time=cfd_time)
         print(f"  ✓ Saved CFD solution to {args.save_cfd}")
     else:
         print("  ERROR: No CFD solution provided. Use --cfd-path or --compute-cfd")
@@ -851,6 +957,14 @@ def main():
     
     print(f"  CFD u range: [{u_cfd.min():.4f}, {u_cfd.max():.4f}]")
     print(f"  CFD v range: [{v_cfd.min():.4f}, {v_cfd.max():.4f}]")
+    
+    # Plot CFD solution
+    plot_cfd_solution(
+        u_cfd, v_cfd, p_cfd, X, Y, layout,
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        save_path=os.path.join(args.output_dir, 'cfd_solution.png')
+    )
     
     # =========================================================================
     # Step 4: Load router and perform inference
@@ -1009,6 +1123,7 @@ def main():
              router_output=router_output,
              error_field=error_field,
              residual_field=residual_field,
+             cfd_time=cfd_time if cfd_time is not None else -1,
              **results)
     print(f"  ✓ Saved numerical results to {results_path}")
     
@@ -1023,10 +1138,21 @@ def main():
     print(f"  OPTIMAL COVERAGE:    {results['optimal_coverage']*100:.2f}%")
     print("=" * 60)
     
+    # Print timing information
+    print("\n" + "=" * 60)
+    print("                  TIMING INFORMATION")
+    print("=" * 60)
+    if cfd_time is not None and cfd_time > 0:
+        print(f"  CFD Solution Time:   {cfd_time:.2f} seconds")
+    else:
+        print(f"  CFD Solution Time:   (loaded from file)")
+    print("=" * 60)
+    
     print("\n" + "=" * 60)
     print("METRICS COMPUTATION COMPLETE")
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
+    print(f"  - cfd_solution.png: CFD ground truth visualization")
 
 
 if __name__ == "__main__":
