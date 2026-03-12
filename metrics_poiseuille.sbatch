@@ -58,12 +58,13 @@ print('Default backend:', jax.default_backend())
 rm -rf metrics_output
 
 python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5 \
+    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
     --router-weights ./router_output/router.weights.h5 \
     --compute-cfd \
-    --save-cfd ./cfd_solution.npz \
+    --save-cfd ./cfd_poiseuille_solution.npz \
     --beta 1 \
-    --cylinder-y 0.8 \
+    --cylinder-y 0.5 \
+    --
     --temperature 0.5
 
 echo "=== Metrics Generation done ==="
