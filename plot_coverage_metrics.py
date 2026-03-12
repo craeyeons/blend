@@ -43,8 +43,16 @@ from lib.router import (
     create_router_input,
     create_cylinder_setup,
 )
-from lib.cylinder_flow import CylinderFlowSimulation
+from lib.cylinder_flow import CylinderFlowSimulation, CylinderFlowHybridSimulation
 from cylinder_network import Network as CylinderNetwork
+
+
+def compute_uv_direct(network, xy):
+    """Extract (u, v) directly from network output (u, v, p)."""
+    uvp = network.predict(xy, batch_size=len(xy), verbose=0)
+    u = uvp[..., 0]
+    v = uvp[..., 1]
+    return u, v
 
 
 def load_pinn_solution(pinn_model, X, Y, layout):
@@ -247,6 +255,9 @@ def create_hybrid_solution(u_pinn, v_pinn, p_pinn, u_cfd, v_cfd, p_cfd,
     """
     Create hybrid solution by blending PINN and CFD based on router output and threshold.
     
+    NOTE: This is a simple blending approach. For actual hybrid simulation that
+    re-computes CFD with PINN boundary conditions, use compute_hybrid_solution().
+    
     Points where router_output > threshold use CFD, otherwise use PINN.
     
     Parameters:
@@ -278,6 +289,72 @@ def create_hybrid_solution(u_pinn, v_pinn, p_pinn, u_cfd, v_cfd, p_cfd,
     p_hybrid = np.where(cfd_mask, p_cfd, p_pinn) * layout
     
     return u_hybrid, v_hybrid, p_hybrid, cfd_mask
+
+
+def compute_hybrid_solution(pinn_model, router_output, layout, threshold, args):
+    """
+    Compute actual hybrid solution by running CFD in CFD regions with PINN boundary conditions.
+    
+    This runs the full hybrid simulation: CFD solver in regions where router > threshold,
+    using PINN values as boundary conditions at the interface.
+    
+    Parameters:
+    -----------
+    pinn_model : tf.keras.Model
+        Pre-trained PINN model
+    router_output : ndarray
+        Router confidence output
+    layout : ndarray
+        Fluid domain mask
+    threshold : float
+        Threshold for CFD vs PINN decision
+    args : argparse.Namespace
+        Command line arguments with domain parameters
+        
+    Returns:
+    --------
+    u_hybrid, v_hybrid, p_hybrid : ndarray
+        Hybrid solution components
+    cfd_mask : ndarray
+        Binary mask indicating CFD regions
+    solve_time : float
+        Time taken to solve the hybrid system
+    """
+    # Create binary mask from router output
+    cfd_mask = (router_output >= threshold).astype(np.int32)
+    cfd_mask = cfd_mask * layout.astype(np.int32)
+    
+    cfd_fraction = np.sum(cfd_mask) / np.sum(layout) * 100
+    print(f"  CFD region: {cfd_fraction:.1f}%")
+    print(f"  PINN region: {100 - cfd_fraction:.1f}%")
+    
+    # Create hybrid simulation
+    sim = CylinderFlowHybridSimulation(
+        network=pinn_model,
+        uv_func=compute_uv_direct,
+        mask=cfd_mask,
+        Re=args.Re,
+        N=args.ny,
+        max_iter=args.max_iter,
+        tol=args.tol,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        inlet_velocity=args.inlet_velocity
+    )
+    
+    # Solve and time it
+    solve_start = time.time()
+    u_hybrid, v_hybrid, p_hybrid = sim.solve()
+    solve_time = time.time() - solve_start
+    
+    # Convert to numpy if needed
+    u_hybrid = np.array(u_hybrid)
+    v_hybrid = np.array(v_hybrid)
+    p_hybrid = np.array(p_hybrid)
+    
+    return u_hybrid, v_hybrid, p_hybrid, cfd_mask, solve_time
 
 
 def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
@@ -1309,25 +1386,23 @@ def main():
     print(f"    Loss:      {full_loss_optimal['optimal_loss']:.6f}")
     
     # =========================================================================
-    # Step 7c: Create and plot hybrid solution using optimal threshold from full loss
+    # Step 7c: Compute actual hybrid solution using optimal threshold from full loss
     # =========================================================================
-    print("\n[Step 7c] Creating hybrid solution with optimal threshold (from full loss)...")
+    print("\n[Step 7c] Computing hybrid solution with optimal threshold (from full loss)...")
+    print("  Running hybrid PINN-CFD simulation (CFD in high-confidence regions, PINN elsewhere)...")
     
     optimal_threshold = full_loss_optimal['optimal_threshold']
-    hybrid_start_time = time.time()
-    u_hybrid, v_hybrid, p_hybrid, cfd_mask = create_hybrid_solution(
-        u_pinn, v_pinn, p_pinn,
-        u_cfd, v_cfd, p_cfd,
-        router_output, layout,
-        threshold=optimal_threshold
+    
+    u_hybrid, v_hybrid, p_hybrid, cfd_mask, hybrid_solve_time = compute_hybrid_solution(
+        pinn_model, router_output, layout, optimal_threshold, args
     )
-    hybrid_blend_time = time.time() - hybrid_start_time
     
     # Compute actual coverage with this threshold
     actual_coverage = np.mean(cfd_mask[layout > 0])
     print(f"  Optimal threshold: {optimal_threshold:.6f}")
     print(f"  CFD coverage: {actual_coverage*100:.2f}%")
     print(f"  PINN coverage: {(1-actual_coverage)*100:.2f}%")
+    print(f"  Hybrid solve time: {hybrid_solve_time:.2f} seconds")
     print(f"  Hybrid u range: [{u_hybrid[layout > 0].min():.4f}, {u_hybrid[layout > 0].max():.4f}]")
     print(f"  Hybrid v range: [{v_hybrid[layout > 0].min():.4f}, {v_hybrid[layout > 0].max():.4f}]")
     
@@ -1402,7 +1477,7 @@ def main():
         print(f"  CFD Solution Time:       {cfd_time:.2f} seconds")
     else:
         print(f"  CFD Solution Time:       (loaded from file)")
-    print(f"  Hybrid Solution Time:    {hybrid_blend_time:.4f} seconds")
+    print(f"  Hybrid Solution Time:    {hybrid_solve_time:.2f} seconds")
     print("=" * 60)
     
     print("\n" + "=" * 60)
