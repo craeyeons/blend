@@ -243,6 +243,177 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     return fig
 
 
+def create_hybrid_solution(u_pinn, v_pinn, p_pinn, u_cfd, v_cfd, p_cfd, 
+                           router_output, layout, threshold):
+    """
+    Create hybrid solution by blending PINN and CFD based on router output and threshold.
+    
+    Points where router_output > threshold use CFD, otherwise use PINN.
+    
+    Parameters:
+    -----------
+    u_pinn, v_pinn, p_pinn : ndarray
+        PINN solution components
+    u_cfd, v_cfd, p_cfd : ndarray
+        CFD solution components
+    router_output : ndarray
+        Router confidence (higher = more likely to use CFD)
+    layout : ndarray
+        Fluid domain mask
+    threshold : float
+        Threshold for router decision (router > threshold => CFD)
+        
+    Returns:
+    --------
+    u_hybrid, v_hybrid, p_hybrid : ndarray
+        Hybrid solution components
+    cfd_mask : ndarray
+        Boolean mask indicating which points use CFD
+    """
+    # Determine which points use CFD vs PINN
+    cfd_mask = router_output > threshold
+    
+    # Create hybrid solution
+    u_hybrid = np.where(cfd_mask, u_cfd, u_pinn) * layout
+    v_hybrid = np.where(cfd_mask, v_cfd, v_pinn) * layout
+    p_hybrid = np.where(cfd_mask, p_cfd, p_pinn) * layout
+    
+    return u_hybrid, v_hybrid, p_hybrid, cfd_mask
+
+
+def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
+                         cylinder_center, cylinder_radius, threshold, coverage,
+                         save_path=None):
+    """
+    Plot the hybrid solution fields with CFD/PINN region overlay.
+    
+    Parameters:
+    -----------
+    u_hybrid, v_hybrid, p_hybrid : ndarray
+        Hybrid solution components
+    X, Y : ndarray
+        Coordinate grids
+    layout : ndarray
+        Fluid domain mask
+    cfd_mask : ndarray
+        Boolean mask indicating CFD regions
+    cylinder_center : tuple
+        (cx, cy) cylinder center
+    cylinder_radius : float
+        Cylinder radius
+    threshold : float
+        Threshold used for hybrid decision
+    coverage : float
+        Fraction of points using CFD
+    save_path : str, optional
+        Path to save the figure
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    
+    cx, cy = cylinder_center
+    
+    # Velocity magnitude
+    vel_mag = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    
+    # Mask obstacle regions for plotting
+    u_plot = np.ma.masked_where(layout == 0, u_hybrid)
+    v_plot = np.ma.masked_where(layout == 0, v_hybrid)
+    p_plot = np.ma.masked_where(layout == 0, p_hybrid)
+    vel_plot = np.ma.masked_where(layout == 0, vel_mag)
+    
+    # Plot velocity magnitude
+    ax = axes[0, 0]
+    cf = ax.contourf(X, Y, vel_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Hybrid: Velocity Magnitude |u|')
+    ax.set_aspect('equal')
+    
+    # Plot u-velocity
+    ax = axes[0, 1]
+    cf = ax.contourf(X, Y, u_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Hybrid: u-velocity')
+    ax.set_aspect('equal')
+    
+    # Plot v-velocity
+    ax = axes[0, 2]
+    cf = ax.contourf(X, Y, v_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Hybrid: v-velocity')
+    ax.set_aspect('equal')
+    
+    # Plot pressure
+    ax = axes[1, 0]
+    cf = ax.contourf(X, Y, p_plot, levels=50, cmap='rainbow')
+    plt.colorbar(cf, ax=ax)
+    circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Hybrid: Pressure')
+    ax.set_aspect('equal')
+    
+    # Plot CFD/PINN region map
+    ax = axes[1, 1]
+    # Create a visualization: CFD=1, PINN=0, obstacle=0.5
+    region_map = np.where(layout == 0, 0.5, np.where(cfd_mask, 1.0, 0.0))
+    im = ax.imshow(region_map, extent=[X.min(), X.max(), Y.min(), Y.max()],
+                   origin='lower', cmap='RdYlBu', vmin=0, vmax=1, aspect='auto')
+    cbar = plt.colorbar(im, ax=ax, ticks=[0, 0.5, 1])
+    cbar.ax.set_yticklabels(['PINN', 'Obstacle', 'CFD'])
+    circle = plt.Circle((cx, cy), cylinder_radius, color='black', fill=False, linewidth=2)
+    ax.add_patch(circle)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title(f'Solver Region Map (threshold={threshold:.4f})')
+    ax.set_aspect('equal')
+    
+    # Add text info panel
+    ax = axes[1, 2]
+    ax.axis('off')
+    info_text = f"""Hybrid Solution Summary
+    
+    Optimal Threshold: {threshold:.6f}
+    CFD Coverage: {coverage*100:.2f}%
+    PINN Coverage: {(1-coverage)*100:.2f}%
+    
+    Legend:
+    • Blue regions: PINN solver
+    • Red regions: CFD solver
+    • Gray circle: Cylinder obstacle
+    
+    The hybrid solution uses CFD for regions
+    where router_output > threshold, and
+    PINN elsewhere.
+    """
+    ax.text(0.1, 0.9, info_text, transform=ax.transAxes, fontsize=11,
+            verticalalignment='top', fontfamily='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+    
+    plt.suptitle(f'Hybrid PINN-CFD Solution (Optimal Threshold)', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved hybrid solution plot to {save_path}")
+    
+    plt.close(fig)
+    
+    return fig
+
+
 def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
     """
     Compute MSE and R² of PINN points as a function of CFD coverage.
@@ -589,6 +760,8 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         FULL training loss at each coverage level (all terms included)
     actual_loss_info : dict
         Breakdown of actual router loss components
+    optimal_info : dict
+        Information about the optimal operating point (minimum of full loss curve)
     """
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
@@ -599,6 +772,7 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
     # Sort by router confidence DESCENDING (highest confidence first → go to CFD first)
     sorted_idx = np.argsort(confidences)[::-1]
     sorted_residuals = residuals[sorted_idx]
+    sorted_confidences = confidences[sorted_idx]  # Also sort confidences
     
     # For TV computation, we need the 2D structure
     r_2d = router_output * layout
@@ -675,6 +849,27 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
     # Total actual loss
     actual_router_loss = actual_cfd_cost + actual_residual_loss + actual_tv_loss + actual_entropy_term + actual_variance_term
     
+    # ===== Find optimal point on the full loss curve =====
+    min_idx = np.argmin(loss)
+    opt_coverage = coverage[min_idx]
+    opt_loss = loss[min_idx]
+    
+    # Reverse-engineer the threshold that achieves this coverage
+    # Since we sorted by confidence descending, the top opt_coverage fraction
+    # has the highest confidences. The threshold is the confidence at the boundary.
+    n_cfd_opt = int(opt_coverage * n_fluid)
+    if n_cfd_opt == 0:
+        # All PINN: threshold should be above max confidence
+        opt_threshold = sorted_confidences[0] + 0.001 if n_fluid > 0 else 1.0
+    elif n_cfd_opt >= n_fluid:
+        # All CFD: threshold should be below min confidence
+        opt_threshold = sorted_confidences[-1] - 0.001 if n_fluid > 0 else 0.0
+    else:
+        # Threshold is between the last CFD point and first PINN point
+        # sorted_confidences[n_cfd_opt-1] is the last point going to CFD
+        # sorted_confidences[n_cfd_opt] is the first point staying with PINN
+        opt_threshold = (sorted_confidences[n_cfd_opt - 1] + sorted_confidences[n_cfd_opt]) / 2
+    
     return coverage, loss, {
         'actual_total_loss': actual_router_loss,
         'cfd_cost': actual_cfd_cost,
@@ -684,6 +879,10 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         'entropy_term': actual_entropy_term,
         'variance': variance,
         'variance_term': actual_variance_term,
+    }, {
+        'optimal_coverage': opt_coverage,
+        'optimal_loss': opt_loss,
+        'optimal_threshold': opt_threshold,
     }
 
 
@@ -717,7 +916,7 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
     
     # ===== Left plot: Full Router Training Loss vs Coverage =====
     # Compute loss curve AND actual router loss
-    cov_for_loss, loss_curve, actual_loss_info = compute_loss_vs_coverage(
+    cov_for_loss, loss_curve, actual_loss_info, optimal_info = compute_loss_vs_coverage(
         residual_field, router_output, layout, beta,
         lambda_tv=lambda_tv, lambda_entropy=lambda_entropy, lambda_variance=lambda_variance
     )
@@ -1086,10 +1285,57 @@ def main():
     print(f"  CFD Only:      {results['loss_cfd_only']:.6f} (= β)")
     print(f"  Hybrid:        {results['loss_hybrid']:.6f} (threshold: {results['default_threshold']:.2f}, coverage: {results['coverage_hybrid']*100:.1f}%)")
     print(f"  ----------------------------------------")
-    print(f"  OPTIMAL THRESHOLD: {results['optimal_threshold']:.4f}")
-    print(f"  OPTIMAL LOSS:      {results['optimal_loss']:.6f}")
-    print(f"  OPTIMAL COVERAGE:  {results['optimal_coverage']*100:.1f}%")
+    print(f"  OPTIMAL THRESHOLD (simple): {results['optimal_threshold']:.4f}")
+    print(f"  OPTIMAL LOSS (simple):      {results['optimal_loss']:.6f}")
+    print(f"  OPTIMAL COVERAGE (simple):  {results['optimal_coverage']*100:.1f}%")
     print(f"  ----------------------------------------")
+    
+    # =========================================================================
+    # Step 7b: Compute optimal threshold from FULL training loss curve
+    # =========================================================================
+    print("\n[Step 7b] Computing optimal threshold from full training loss curve...")
+    
+    # Compute full loss curve to find the threshold corresponding to the star in coverage_metrics.png
+    _, _, _, full_loss_optimal = compute_loss_vs_coverage(
+        residual_field, router_output, layout, args.beta,
+        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy, lambda_variance=args.lambda_variance
+    )
+    
+    print(f"  Full Loss Curve Optimal:")
+    print(f"    Threshold: {full_loss_optimal['optimal_threshold']:.6f}")
+    print(f"    Coverage:  {full_loss_optimal['optimal_coverage']*100:.2f}%")
+    print(f"    Loss:      {full_loss_optimal['optimal_loss']:.6f}")
+    
+    # =========================================================================
+    # Step 7c: Create and plot hybrid solution using optimal threshold from full loss
+    # =========================================================================
+    print("\n[Step 7c] Creating hybrid solution with optimal threshold (from full loss)...")
+    
+    optimal_threshold = full_loss_optimal['optimal_threshold']
+    u_hybrid, v_hybrid, p_hybrid, cfd_mask = create_hybrid_solution(
+        u_pinn, v_pinn, p_pinn,
+        u_cfd, v_cfd, p_cfd,
+        router_output, layout,
+        threshold=optimal_threshold
+    )
+    
+    # Compute actual coverage with this threshold
+    actual_coverage = np.mean(cfd_mask[layout > 0])
+    print(f"  Optimal threshold: {optimal_threshold:.6f}")
+    print(f"  CFD coverage: {actual_coverage*100:.2f}%")
+    print(f"  PINN coverage: {(1-actual_coverage)*100:.2f}%")
+    print(f"  Hybrid u range: [{u_hybrid[layout > 0].min():.4f}, {u_hybrid[layout > 0].max():.4f}]")
+    print(f"  Hybrid v range: [{v_hybrid[layout > 0].min():.4f}, {v_hybrid[layout > 0].max():.4f}]")
+    
+    # Plot hybrid solution
+    plot_hybrid_solution(
+        u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        threshold=optimal_threshold,
+        coverage=actual_coverage,
+        save_path=os.path.join(args.output_dir, 'hybrid_solution.png')
+    )
     
     # =========================================================================
     # Step 8: Generate plots
@@ -1124,18 +1370,28 @@ def main():
              error_field=error_field,
              residual_field=residual_field,
              cfd_time=cfd_time if cfd_time is not None else -1,
+             u_hybrid=u_hybrid,
+             v_hybrid=v_hybrid,
+             p_hybrid=p_hybrid,
+             cfd_mask=cfd_mask,
+             # Full loss curve optimal (used for hybrid solution)
+             full_loss_optimal_threshold=full_loss_optimal['optimal_threshold'],
+             full_loss_optimal_coverage=full_loss_optimal['optimal_coverage'],
+             full_loss_optimal_loss=full_loss_optimal['optimal_loss'],
              **results)
     print(f"  ✓ Saved numerical results to {results_path}")
     
     # Print summary box
     print("\n" + "=" * 60)
-    print("                    OPTIMAL RESULTS")
+    print("           OPTIMAL RESULTS (Full Training Loss)")
     print("=" * 60)
     print(f"  β (CFD cost):        {args.beta}")
     print(f"  ----------------------------------------")
-    print(f"  OPTIMAL THRESHOLD:   {results['optimal_threshold']:.6f}")
-    print(f"  OPTIMAL LOSS:        {results['optimal_loss']:.6f}")
-    print(f"  OPTIMAL COVERAGE:    {results['optimal_coverage']*100:.2f}%")
+    print(f"  OPTIMAL THRESHOLD:   {full_loss_optimal['optimal_threshold']:.6f}")
+    print(f"  OPTIMAL LOSS:        {full_loss_optimal['optimal_loss']:.6f}")
+    print(f"  OPTIMAL COVERAGE:    {full_loss_optimal['optimal_coverage']*100:.2f}%")
+    print(f"  ----------------------------------------")
+    print(f"  (This is the star point in coverage_metrics.png)")
     print("=" * 60)
     
     # Print timing information
@@ -1153,6 +1409,11 @@ def main():
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
     print(f"  - cfd_solution.png: CFD ground truth visualization")
+    print(f"  - hybrid_solution.png: Hybrid solution with optimal threshold")
+    print(f"  - coverage_metrics.png: Combined metrics plot")
+    print(f"  - coverage_curve.png: R² vs coverage curve")
+    print(f"  - loss_comparison.png: Expected loss comparison")
+    print(f"  - metrics_results.npz: All numerical results")
 
 
 if __name__ == "__main__":

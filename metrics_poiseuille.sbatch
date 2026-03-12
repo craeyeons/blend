@@ -64,7 +64,7 @@ python plot_coverage_metrics.py \
     --save-cfd ./cfd_poiseuille_solution.npz \
     --beta 1 \
     --cylinder-y 0.5 \
-    --
+    --cylinder-radius 0 \
     --temperature 0.5
 
 echo "=== Metrics Generation done ==="
