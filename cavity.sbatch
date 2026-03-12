@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=cavity_metrics
+#SBATCH --job-name=cavity_router
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -47,16 +47,32 @@ print('GPU available:', len(jax.devices('gpu')) > 0)
 print('Default backend:', jax.default_backend())
 "
 
-rm -rf metrics_output_cavity
+rm -rf router_output_cavity threshold_plots_cavity
 
-python plot_coverage_metrics_cavity.py \
-    --pinn-path ./models/pinn_cavity_flow.h5 \
-    --router-weights ./router_output_cavity/router.weights.h5 \
-    --compute-cfd \
-    --save-cfd ./cfd_cavity_solution.npz \
+# Train router for cavity flow
+echo "=== Training Router for Cavity Flow ==="
+python train_router_cavity.py \
+    --model-path ./models/pinn_cavity_flow.h5 \
+    --output-dir ./router_output_cavity \
+    --epochs 500 \
     --beta 1 \
-    --temperature 0.5 \
+    --lambda-tv 0.1 \
+    --lr 1e-4 \
+    --weight-continuity 1.0 \
+    --weight-momentum 1.0 \
     --N 100 \
-    --output-dir ./metrics_output_cavity
+    --threshold 0.5 \
+    --temperature 0.5 
 
-echo "=== Metrics Generation done ==="
+echo "=== Router training completed ==="
+
+python plot_router_thresholds_cavity.py \
+    --router-path ./router_output_cavity/router.weights.h5 \
+    --pinn-path ./models/pinn_cavity_flow.h5 \
+    --threshold-start 0.1 \
+    --threshold-end 0.9 \
+    --num-thresholds 9 \
+    --temperature 0.5 \
+    --N 100
+
+echo "=== Job completed ==="

@@ -1137,3 +1137,67 @@ def plot_training_history(history, save_path=None):
     
     plt.show()
     return fig
+
+
+def create_cavity_setup(N=100, x_domain=(0, 1), y_domain=(0, 1), lid_velocity=1.0):
+    """
+    Create the standard lid-driven cavity flow setup for router training.
+    
+    Parameters:
+    -----------
+    N : int
+        Grid size (N x N)
+    x_domain, y_domain : tuple
+        Domain bounds
+    lid_velocity : float
+        Lid velocity (top wall)
+        
+    Returns:
+    --------
+    X, Y : np.ndarray
+        Coordinate grids of shape (N, N)
+    layout : np.ndarray
+        Layout mask (all 1s for cavity - no obstacles)
+    bc_mask : np.ndarray
+        Boundary condition mask
+    bc_u, bc_v, bc_p : np.ndarray
+        Boundary condition values
+    """
+    x_min, x_max = x_domain
+    y_min, y_max = y_domain
+    
+    # Create coordinate grids
+    x = np.linspace(x_min, x_max, N)
+    y = np.linspace(y_min, y_max, N)
+    X, Y = np.meshgrid(x, y)  # Shape: (N, N)
+    
+    # Layout: all fluid (no obstacles in cavity)
+    layout = np.ones((N, N), dtype=np.float32)
+    
+    # Boundary condition mask and values
+    bc_mask = np.zeros((N, N), dtype=np.float32)
+    bc_u = np.zeros((N, N), dtype=np.float32)
+    bc_v = np.zeros((N, N), dtype=np.float32)
+    bc_p = np.zeros((N, N), dtype=np.float32)
+    
+    # Top lid (y = y_max): u = lid_velocity, v = 0
+    bc_mask[-1, :] = 1.0
+    bc_u[-1, :] = lid_velocity
+    bc_v[-1, :] = 0.0
+    
+    # Bottom wall (y = y_min): no-slip
+    bc_mask[0, :] = 1.0
+    bc_u[0, :] = 0.0
+    bc_v[0, :] = 0.0
+    
+    # Left wall (x = x_min): no-slip
+    bc_mask[:, 0] = 1.0
+    bc_u[:, 0] = 0.0
+    bc_v[:, 0] = 0.0
+    
+    # Right wall (x = x_max): no-slip
+    bc_mask[:, -1] = 1.0
+    bc_u[:, -1] = 0.0
+    bc_v[:, -1] = 0.0
+    
+    return X, Y, layout, bc_mask, bc_u, bc_v, bc_p
