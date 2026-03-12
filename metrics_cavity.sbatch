@@ -38,12 +38,12 @@ nvcc --version 2>/dev/null || echo "nvcc not found, using nvidia-smi info:"
 nvidia-smi | grep "CUDA Version"
 
 # Uninstall CPU-only JAX and install CUDA version
-echo "=== Installing JAX with CUDA support ==="
-pip uninstall -y jax jaxlib
-pip install --upgrade pip
+#echo "=== Installing JAX with CUDA support ==="
+#pip uninstall -y jax jaxlib
+#pip install --upgrade pip
 
 # Install JAX with CUDA 12 support
-pip install --upgrade "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+#pip install --upgrade "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 # Verify GPU is now available
 echo "=== Verifying JAX GPU support ==="
@@ -55,32 +55,16 @@ print('GPU available:', len(jax.devices('gpu')) > 0)
 print('Default backend:', jax.default_backend())
 "
 
-# Train router
-echo "=== Training Router ==="
-python train_router.py \
-    --model-path ./models/pinn_cylinder_100.0.h5 \
-    --output-dir ./router_output \
-    --epochs 500 \
-    --beta 0.1 \
-    --lambda-tv 0.01 \
-    --lr 1e-4 \
-    --weight-continuity 1.0 \
-    --weight-momentum 1.0 \
-    --weight-bc-local 2.0 \
-    --weight-bc-propagated 1.5 \
-    --nx 200 \
-    --ny 100 \
-    --threshold 0.5
+rm -rf metrics_output
 
-echo "=== Router training completed ==="
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5 \
+    --router-weights ./router_output/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_solution.npz \
+    --beta 1 \
+    --cylinder-y 0.8 \
+    --temperature 0.5
 
-# Run hybrid simulation with trained router
-echo "=== Running Hybrid Simulation ==="
-python run_router_hybrid.py \
-    --router-path ./router_output/router.weights.h5 \
-    --pinn-path ./models/pinn_cylinder_100.0.h5 \
-    --output-dir ./router_hybrid_output \
-    --Re 100 \
-    --max-iter 100000
-
-echo "=== Job completed ==="
+echo "=== Metrics Generation done ==="
+    #--cfd-path cfd_solution.npz \
