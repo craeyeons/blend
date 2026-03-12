@@ -19,6 +19,7 @@ The graph shows the optimal hybrid system operating point.
 
 import argparse
 import os
+import time
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -97,8 +98,6 @@ def compute_cfd_solution(args):
     cfd_time : float
         Time taken to compute CFD solution in seconds
     """
-    import time
-    
     print("\n[Computing CFD Solution]")
     print("  This may take a while...")
     
@@ -1119,7 +1118,10 @@ def main():
     pinn_model.load_weights(args.pinn_path)
     print(f"  ✓ Loaded PINN from {args.pinn_path}")
     
+    pinn_start_time = time.time()
     u_pinn, v_pinn, p_pinn = load_pinn_solution(pinn_model, X, Y, layout)
+    pinn_inference_time = time.time() - pinn_start_time
+    print(f"  ✓ PINN inference completed in {pinn_inference_time:.2f} seconds")
     print(f"  PINN u range: [{u_pinn.min():.4f}, {u_pinn.max():.4f}]")
     print(f"  PINN v range: [{v_pinn.min():.4f}, {v_pinn.max():.4f}]")
     
@@ -1312,12 +1314,14 @@ def main():
     print("\n[Step 7c] Creating hybrid solution with optimal threshold (from full loss)...")
     
     optimal_threshold = full_loss_optimal['optimal_threshold']
+    hybrid_start_time = time.time()
     u_hybrid, v_hybrid, p_hybrid, cfd_mask = create_hybrid_solution(
         u_pinn, v_pinn, p_pinn,
         u_cfd, v_cfd, p_cfd,
         router_output, layout,
         threshold=optimal_threshold
     )
+    hybrid_blend_time = time.time() - hybrid_start_time
     
     # Compute actual coverage with this threshold
     actual_coverage = np.mean(cfd_mask[layout > 0])
@@ -1354,11 +1358,6 @@ def main():
     plot_coverage_curve(
         coverage, accuracy, results, args.beta,
         save_path=os.path.join(args.output_dir, 'coverage_curve.png')
-    )
-    
-    plot_expected_loss_comparison(
-        results, args.beta,
-        save_path=os.path.join(args.output_dir, 'loss_comparison.png')
     )
     
     # Save numerical results
@@ -1398,10 +1397,12 @@ def main():
     print("\n" + "=" * 60)
     print("                  TIMING INFORMATION")
     print("=" * 60)
+    print(f"  PINN Inference Time:     {pinn_inference_time:.2f} seconds")
     if cfd_time is not None and cfd_time > 0:
-        print(f"  CFD Solution Time:   {cfd_time:.2f} seconds")
+        print(f"  CFD Solution Time:       {cfd_time:.2f} seconds")
     else:
-        print(f"  CFD Solution Time:   (loaded from file)")
+        print(f"  CFD Solution Time:       (loaded from file)")
+    print(f"  Hybrid Solution Time:    {hybrid_blend_time:.4f} seconds")
     print("=" * 60)
     
     print("\n" + "=" * 60)
@@ -1412,7 +1413,6 @@ def main():
     print(f"  - hybrid_solution.png: Hybrid solution with optimal threshold")
     print(f"  - coverage_metrics.png: Combined metrics plot")
     print(f"  - coverage_curve.png: R² vs coverage curve")
-    print(f"  - loss_comparison.png: Expected loss comparison")
     print(f"  - metrics_results.npz: All numerical results")
 
 

@@ -78,17 +78,17 @@ python train_router.py \
 echo "=== Router training completed ==="
 
 # Run hybrid simulation with trained router
-echo "=== Running Hybrid Simulation ==="
-python run_router_hybrid.py \
-    --router-path ./router_output/router.weights.h5 \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
-    --output-dir ./router_hybrid_output \
-    --Re 100 \
-    --max-iter 100000 \
-    --threshold 0.63 \
-    --temperature 0.5 \
-    --cylinder-y 0.5 \
-    --cylinder-radius 0
+# echo "=== Running Hybrid Simulation ==="
+# python run_router_hybrid.py \
+#     --router-path ./router_output/router.weights.h5 \
+#     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
+#     --output-dir ./router_hybrid_output \
+#     --Re 100 \
+#     --max-iter 100000 \
+#     --threshold 0.63 \
+#     --temperature 0.5 \
+#     --cylinder-y 0.5 \
+#     --cylinder-radius 0
 python plot_router_thresholds.py --router-path ./router_output/router.weights.h5 \
 	--threshold-start 0.45 \
 	--threshold-end 0.65 \
