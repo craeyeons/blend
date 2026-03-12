@@ -263,9 +263,11 @@ class CavityPINNResidualComputer:
         momentum_norm = clip_and_normalize(momentum)
         bc_error_norm = clip_and_normalize(bc_error)
         
+        total_weight = (weights.get('continuity', 1.0) + weights.get('momentum', 1.0) +
+                        weights.get('bc_local', 0.0))
         total = (weights['continuity'] * continuity_norm + 
                  weights['momentum'] * momentum_norm +
-                 weights['bc_local'] * bc_error_norm)
+                 weights['bc_local'] * bc_error_norm) / (total_weight + 1e-10)
         
         return total
 
