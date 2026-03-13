@@ -1,0 +1,76 @@
+{
+  "train": [
+    {
+      "inlet_velocity": 10,
+      "cylinder_radius": 0.05,
+      "cylinder_x": 0.7,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re1000_0.7_0.8_0.05.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.15,
+      "cylinder_x": 0.7,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.7_0.8_0.15.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.15,
+      "cylinder_x": 0.3,
+      "cylinder_y": 0.3,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.3_0.3_0.15.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.1,
+      "cylinder_x": 0.5,
+      "cylinder_y": 0.5,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.1,
+      "cylinder_x": 0.5,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.2,
+      "cylinder_x": 0.5,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.5_0.8_0.2.h5"
+    },
+    {
+      "inlet_velocity": 1.0,
+      "cylinder_radius": 0.1,
+      "cylinder_x": 1,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re100_1.0_0.8_0.1.h5"
+    },
+    {
+      "inlet_velocity": 0.1,
+      "cylinder_radius": 0.1,
+      "cylinder_x": 0.5,
+      "cylinder_y": 0.8,
+      "pinn_path": "./models/pinn_cylinder_Re10_0.5_0.8_0.1.h5"
+    },
+    {
+      "inlet_velocity": 5.0,
+      "cylinder_radius": 0.15,
+      "cylinder_x": 1.0,
+      "cylinder_y": 0.35,
+      "pinn_path": "./models/pinn_cylinder_Re100_1.0_0.35_0.15.h5"
+    }
+  ],
+  "test": [
+    {
+      "inlet_velocity": 6.0,
+      "cylinder_radius": 0.13,
+      "cylinder_x": 0.6,
+      "cylinder_y": 0.4,
+      "pinn_path": "./models/pinn_cylinder_Re100_0.6_0.4_0.13.h5"
+    }
+  ]
+}
