@@ -9,10 +9,10 @@
     },
     {
       "inlet_velocity": 1.0,
-      "cylinder_radius": 0.15,
+      "cylinder_radius": 0.05,
       "cylinder_x": 0.7,
       "cylinder_y": 0.8,
-      "pinn_path": "./models/pinn_cylinder_Re100_0.7_0.8_0.15.h5"
+      "pinn_path": "./models/pinn_cylinder_Re100_0.7_0.8_0.05.h5"
     },
     {
       "inlet_velocity": 1.0,
