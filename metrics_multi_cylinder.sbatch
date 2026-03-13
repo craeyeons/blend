@@ -51,39 +51,41 @@ rm -rf metrics_output_multi
 # ============================================================================
 # Evaluate router on TRAINING configs (sanity check)
 # ============================================================================
-echo "=== Metrics: Training config 1 (cy=0.5) ==="
-python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
-    --router-weights ./router_output_multi/router.weights.h5 \
-    --compute-cfd \
-    --save-cfd ./cfd_multi_train1.npz \
-    --beta 1 \
-    --cylinder-y 0.5 \
-    --temperature 0.5 \
-    --output-dir ./metrics_output_multi/train_cy0.5
+# echo "=== Metrics: Training config 1 (cy=0.5) ==="
+# python plot_coverage_metrics.py \
+#     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
+#     --router-weights ./router_output_multi/router.weights.h5 \
+#     --compute-cfd \
+#     --save-cfd ./cfd_multi_train1.npz \
+#     --beta 1 \
+#     --cylinder-y 0.5 \
+#     --temperature 0.5 \
+#     --output-dir ./metrics_output_multi/train_cy0.5
 
-echo "=== Metrics: Training config 2 (cy=0.8) ==="
-python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5 \
-    --router-weights ./router_output_multi/router.weights.h5 \
-    --compute-cfd \
-    --save-cfd ./cfd_multi_train2.npz \
-    --beta 1 \
-    --cylinder-y 0.8 \
-    --temperature 0.5 \
-    --output-dir ./metrics_output_multi/train_cy0.8
+# echo "=== Metrics: Training config 2 (cy=0.8) ==="
+# python plot_coverage_metrics.py \
+#     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5 \
+#     --router-weights ./router_output_multi/router.weights.h5 \
+#     --compute-cfd \
+#     --save-cfd ./cfd_multi_train2.npz \
+#     --beta 1 \
+#     --cylinder-y 0.8 \
+#     --temperature 0.5 \
+#     --output-dir ./metrics_output_multi/train_cy0.8
 
 # ============================================================================
 # Evaluate router on TEST config (unseen during training)
 # ============================================================================
-echo "=== Metrics: TEST config (cy=0.65, UNSEEN) ==="
+echo "=== Metrics: TEST config (UNSEEN) ==="
 python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.65_0.1.h5 \
+    --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
     --router-weights ./router_output_multi/router.weights.h5 \
     --compute-cfd \
     --save-cfd ./cfd_multi_test1.npz \
     --beta 1 \
-    --cylinder-y 0.65 \
+    --cylinder-y 0.4 \
+    --cylinder-x 0.6 \
+
     --temperature 0.5 \
     --output-dir ./metrics_output_multi/test_cy0.65
 
