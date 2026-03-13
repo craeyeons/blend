@@ -85,7 +85,7 @@ python plot_coverage_metrics.py \
     --beta 1 \
     --cylinder-y 0.4 \
     --cylinder-x 0.6 \
-
+    --cylinder-radius 0.13 \
     --temperature 0.5 \
     --output-dir ./metrics_output_multi/test_cy0.65
 
