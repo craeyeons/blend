@@ -54,7 +54,7 @@
       "cylinder_radius": 0.15,
       "cylinder_x": 1.0,
       "cylinder_y": 0.35,
-      "pinn_path": "./models/pinn_cylinder_Re100_1.0_0.35_0.15.h5"
+      "pinn_path": "./models/pinn_cylinder_Re500_1.0_0.35_0.15.h5"
     }
   ],
   "test": [
@@ -63,7 +63,7 @@
       "cylinder_radius": 0.13,
       "cylinder_x": 0.6,
       "cylinder_y": 0.4,
-      "pinn_path": "./models/pinn_cylinder_Re100_0.6_0.4_0.13.h5"
+      "pinn_path": "./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5"
     }
   ]
 }
