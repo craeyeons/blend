@@ -55,7 +55,7 @@ python train_router_cavity.py \
     --model-path ./models/pinn_cavity_flow.h5 \
     --output-dir ./router_output_cavity \
     --epochs 500 \
-    --beta 1.2 \
+    --beta 1 \
     --lambda-tv 0.1 \
     --lr 1e-4 \
     --weight-continuity 1.0 \

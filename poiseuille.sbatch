@@ -63,7 +63,7 @@ python train_router.py \
   --model-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
   --output-dir ./router_output \
   --epochs 500 \
-  --beta 1.2 \
+  --beta 1 \
   --lambda-tv 0.1 \
   --lr 1e-4 \
   --weight-continuity 1.0 \
