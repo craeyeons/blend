@@ -57,7 +57,7 @@ rm -rf metrics_output_multi
 #     --router-weights ./router_output_multi/router.weights.h5 \
 #     --compute-cfd \
 #     --save-cfd ./cfd_multi_train1.npz \
-#     --beta 1 \
+#     --beta 1.1 \
 #     --cylinder-y 0.5 \
 #     --temperature 0.5 \
 #     --output-dir ./metrics_output_multi/train_cy0.5
@@ -68,7 +68,7 @@ rm -rf metrics_output_multi
 #     --router-weights ./router_output_multi/router.weights.h5 \
 #     --compute-cfd \
 #     --save-cfd ./cfd_multi_train2.npz \
-#     --beta 1 \
+#     --beta 1.1 \
 #     --cylinder-y 0.8 \
 #     --temperature 0.5 \
 #     --output-dir ./metrics_output_multi/train_cy0.8
@@ -82,7 +82,7 @@ python plot_coverage_metrics.py \
     --router-weights ./router_output_multi/router.weights.h5 \
     --compute-cfd \
     --save-cfd ./cfd_multi_test1.npz \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.4 \
     --cylinder-x 0.6 \
     --cylinder-radius 0.13 \
