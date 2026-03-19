@@ -803,12 +803,12 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
 
 
 def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_points=200,
-                             lambda_tv=0.01):
+                             lambda_tv=0.01, lambda_entropy=0.1):
     """
     Compute the FULL router training loss as a function of coverage.
-    
+
     The router training loss is:
-    L = β*mean(r) + mean((1-r)*R) + λ_TV*TV(r)
+    L = β*mean(r) + mean((1-r)*R) + λ_TV*TV(r) - λ_H*H(r)
     
     For a given coverage level, we simulate binary assignment (threshold-based)
     and compute all loss terms.
@@ -827,6 +827,8 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         Number of coverage points to compute
     lambda_tv : float
         Total variation regularization weight
+    lambda_entropy : float
+        Entropy regularization weight
 
     Returns:
     --------
@@ -881,9 +883,17 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         # For simplicity, use a coverage-dependent approximation
         # TV is highest around 50% coverage, lower at extremes
         tv_approx = lambda_tv * 4 * cov * (1 - cov)  # Parabola peaking at 0.5
-        
+
+        # 4. Entropy: For binary r, entropy = 0 (no uncertainty)
+        # But coverage itself represents the distribution
+        if cov > 1e-7 and cov < 1 - 1e-7:
+            entropy = -cov * np.log(cov) - (1 - cov) * np.log(1 - cov)
+        else:
+            entropy = 0.0
+        entropy_term = -lambda_entropy * entropy
+
         # Total loss (all terms)
-        loss[i] = cfd_cost + residual_loss + tv_approx
+        loss[i] = cfd_cost + residual_loss + tv_approx + entropy_term
     
     # ===== Compute ACTUAL router loss with current soft router output =====
     r = router_output[fluid_mask]
@@ -899,9 +909,14 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
     tv_h = np.mean(np.abs(r_2d[:, 1:] - r_2d[:, :-1]))
     tv_v = np.mean(np.abs(r_2d[1:, :] - r_2d[:-1, :]))
     actual_tv_loss = lambda_tv * (tv_h + tv_v)
-    
+
+    # Entropy: -mean(r*log(r) + (1-r)*log(1-r))
+    r_clipped = np.clip(r, 1e-7, 1 - 1e-7)
+    entropy = -np.mean(r_clipped * np.log(r_clipped) + (1 - r_clipped) * np.log(1 - r_clipped))
+    actual_entropy_term = -lambda_entropy * entropy
+
     # Total actual loss
-    actual_router_loss = actual_cfd_cost + actual_residual_loss + actual_tv_loss
+    actual_router_loss = actual_cfd_cost + actual_residual_loss + actual_tv_loss + actual_entropy_term
     
     # ===== Find optimal point on the full loss curve =====
     min_idx = np.argmin(loss)
@@ -929,6 +944,8 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         'cfd_cost': actual_cfd_cost,
         'residual_loss': actual_residual_loss,
         'tv_loss': actual_tv_loss,
+        'entropy': entropy,
+        'entropy_term': actual_entropy_term,
     }, {
         'optimal_coverage': opt_coverage,
         'optimal_loss': opt_loss,
@@ -937,7 +954,7 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
 
 
 def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, router_output, layout,
-                          lambda_tv=0.01, save_path=None):
+                          lambda_tv=0.01, lambda_entropy=0.1, save_path=None):
     """
     Create a combined figure: Router Loss vs Coverage + Expected Loss comparison.
     
@@ -959,19 +976,21 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
         Fluid domain mask
     lambda_tv : float
         Total variation regularization weight
+    lambda_entropy : float
+        Entropy regularization weight
     save_path : str, optional
         Path to save figure
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
+
     # ===== Left plot: Full Router Training Loss vs Coverage =====
     # Compute loss curve AND actual router loss
     cov_for_loss, loss_curve, actual_loss_info, optimal_info = compute_loss_vs_coverage(
         residual_field, router_output, layout, beta,
-        lambda_tv=lambda_tv
+        lambda_tv=lambda_tv, lambda_entropy=lambda_entropy
     )
 
-    # Plot FULL loss curve (all terms: CFD + residual + TV)
+    # Plot FULL loss curve (all terms: CFD + residual + TV - entropy)
     ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5, label='Full Training Loss')
     
     # Mark key points
@@ -1027,14 +1046,15 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
     
     # ===== Right plot: Loss breakdown =====
     # Show all components of the actual router loss
-    components = ['CFD\nCost', 'Residual\nLoss', 'TV\nLoss', 'TOTAL']
+    components = ['CFD\nCost', 'Residual\nLoss', 'TV\nLoss', 'Entropy\n(neg)', 'TOTAL']
     values = [
         actual_loss_info['cfd_cost'],
         actual_loss_info['residual_loss'],
         actual_loss_info['tv_loss'],
+        actual_loss_info['entropy_term'],
         actual_loss_info['actual_total_loss']
     ]
-    colors = ['steelblue', 'coral', 'gold', 'red']
+    colors = ['steelblue', 'coral', 'gold', 'lightgreen', 'red']
     
     bars = ax2.bar(components, values, color=colors, edgecolor='black', linewidth=1.5)
     
@@ -1051,7 +1071,9 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
     
     # Info box
     info = f"Router Coverage: {actual_coverage*100:.1f}%\n"
-    info += f"λ_TV={lambda_tv}"
+    info += f"Entropy: {actual_loss_info['entropy']:.4f}\n"
+    info += f"---\n"
+    info += f"λ_TV={lambda_tv}, λ_H={lambda_entropy}"
     ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=9,
              va='top', ha='right', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
     
@@ -1098,6 +1120,8 @@ def main():
     # Regularization weights (must match training)
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
+    parser.add_argument('--lambda-entropy', type=float, default=0.1,
+                        help='Entropy regularization weight')
     # Domain parameters (must match PINN training)
     parser.add_argument('--nx', type=int, default=200)
     parser.add_argument('--ny', type=int, default=100)
@@ -1341,7 +1365,7 @@ def main():
     # Compute full loss curve to find the threshold corresponding to the star in coverage_metrics.png
     _, _, _, full_loss_optimal = compute_loss_vs_coverage(
         residual_field, router_output, layout, args.beta,
-        lambda_tv=args.lambda_tv
+        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy
     )
 
     print(f"  Full Loss Curve Optimal:")
@@ -1389,7 +1413,7 @@ def main():
     plot_combined_metrics(
         coverage, accuracy, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
-        lambda_tv=args.lambda_tv,
+        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
     

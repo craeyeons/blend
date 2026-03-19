@@ -495,12 +495,17 @@ class RouterTrainer:
 
     Implements the training loop with the loss function:
     L = β · Σ r(x_i) + Σ (1 - r(x_i)) · L_residual + λ_tv · TV(r)
+        - λ_entropy · H(r)
+
+    Where:
+    - H(r) is binary entropy to encourage diverse (not all 0 or 1) outputs
 
     Includes BC error propagation to detect upstream errors.
     """
     
-    def __init__(self, router, pinn_model, 
+    def __init__(self, router, pinn_model,
                  beta=0.1, lambda_tv=0.01,
+                 lambda_entropy=0.1,
                  grad_clip_norm=1.0,
                  residual_weights=None,
                  nu=0.01, rho=1.0,
@@ -520,6 +525,9 @@ class RouterTrainer:
             Cost coefficient for CFD usage (higher = less CFD)
         lambda_tv : float
             Weight for total variation regularization (spatial smoothness)
+        lambda_entropy : float
+            Weight for entropy regularization (encourages non-extreme outputs).
+            Higher = more intermediate values. Try 0.05-0.2.
         grad_clip_norm : float
             Maximum gradient norm for clipping (stabilizes training).
             Set to None to disable. Recommended: 1.0-5.0.
@@ -542,6 +550,7 @@ class RouterTrainer:
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
+        self.lambda_entropy = lambda_entropy
         self.grad_clip_norm = grad_clip_norm
         
         # Default residual weights with BC propagation
@@ -570,7 +579,42 @@ class RouterTrainer:
         self.cfd_cost_history = []
         self.residual_loss_history = []
         self.tv_loss_history = []
-    
+        self.entropy_history = []
+
+    def compute_binary_entropy(self, r, layout_mask):
+        """
+        Compute binary entropy of router output.
+
+        H(r) = -Σ [r log(r) + (1-r) log(1-r)] / N
+
+        Maximum entropy (0.693) at r=0.5, minimum (0) at r=0 or r=1.
+        We MAXIMIZE entropy to encourage non-extreme outputs.
+
+        Parameters:
+        -----------
+        r : tf.Tensor
+            Router output of shape (H, W), values in [0, 1]
+        layout_mask : tf.Tensor
+            Fluid domain mask
+
+        Returns:
+        --------
+        entropy : tf.Tensor
+            Mean binary entropy (scalar)
+        """
+        eps = 1e-7  # Prevent log(0)
+        r_clipped = tf.clip_by_value(r, eps, 1.0 - eps)
+
+        # Binary entropy: -[r*log(r) + (1-r)*log(1-r)]
+        entropy_per_point = -(r_clipped * tf.math.log(r_clipped) +
+                              (1.0 - r_clipped) * tf.math.log(1.0 - r_clipped))
+
+        # Average over fluid points only
+        num_fluid = tf.reduce_sum(layout_mask) + eps
+        mean_entropy = tf.reduce_sum(entropy_per_point * layout_mask) / num_fluid
+
+        return mean_entropy
+
     def compute_total_variation(self, r):
         """
         Compute total variation of router output for spatial smoothness.
@@ -664,9 +708,14 @@ class RouterTrainer:
             # 3. Total variation regularization (spatial smoothness)
             r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
             tv_loss = self.lambda_tv * self.compute_total_variation(r_4d)
-            
+
+            # 4. Entropy regularization (encourage non-extreme outputs)
+            # We SUBTRACT entropy because we want to MAXIMIZE it
+            entropy = self.compute_binary_entropy(r_masked, tf.cast(layout_mask, tf.float32))
+            entropy_loss = -self.lambda_entropy * entropy  # Negative = maximize entropy
+
             # Total loss
-            total_loss = cfd_cost + residual_loss + tv_loss
+            total_loss = cfd_cost + residual_loss + tv_loss + entropy_loss
         
         # Compute gradients
         gradients = tape.gradient(total_loss, self.router.trainable_variables)
@@ -683,6 +732,7 @@ class RouterTrainer:
             'cfd_cost': cfd_cost,
             'residual_loss': residual_loss,
             'tv_loss': tv_loss,
+            'entropy': entropy,
             'cfd_fraction': cfd_fraction,
             'pinn_fraction': pinn_fraction
         }
@@ -725,19 +775,22 @@ class RouterTrainer:
             self.cfd_cost_history.append(float(metrics['cfd_cost']))
             self.residual_loss_history.append(float(metrics['residual_loss']))
             self.tv_loss_history.append(float(metrics['tv_loss']))
+            self.entropy_history.append(float(metrics['entropy']))
 
             if verbose and (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
                       f"Loss: {metrics['total_loss']:.4f}, "
                       f"CFD: {metrics['cfd_cost']:.4f}, "
                       f"Res: {metrics['residual_loss']:.4f}, "
+                      f"Ent: {metrics['entropy']:.3f}, "
                       f"CFD%: {metrics['cfd_fraction']*100:.1f}%")
         
         history = {
             'total_loss': self.loss_history,
             'cfd_cost': self.cfd_cost_history,
             'residual_loss': self.residual_loss_history,
-            'tv_loss': self.tv_loss_history
+            'tv_loss': self.tv_loss_history,
+            'entropy': self.entropy_history
         }
         
         return history
