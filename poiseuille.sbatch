@@ -58,24 +58,24 @@ print('Default backend:', jax.default_backend())
 rm -rf threshold_plots router_hybrid_outputs
 
 # Train router
-#echo "=== Training Router ==="
-#python train_router.py \
-#   --model-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
-#   --output-dir ./router_output \
-#   --epochs 500 \
-#   --beta 1 \
-#   --lambda-tv 0.1 \
-#   --lr 1e-4 \
-#   --weight-continuity 1.0 \
-#   --weight-momentum 1.0 \
-#   --nx 200 \
-#   --ny 100 \
-#   --threshold 0.67 \
-#   --temperature 0.5 \
-#   --cylinder-y 0.5 \
-#   --cylinder-radius 0
-#
-#echo "=== Router training completed ==="
+echo "=== Training Router ==="
+python train_router.py \
+  --model-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
+  --output-dir ./router_output \
+  --epochs 500 \
+  --beta 1 \
+  --lambda-tv 0.1 \
+  --lr 1e-4 \
+  --weight-continuity 1.0 \
+  --weight-momentum 1.0 \
+  --nx 200 \
+  --ny 100 \
+  --threshold 0.67 \
+  --temperature 0.5 \
+  --cylinder-y 0.5 \
+  --cylinder-radius 0
+
+echo "=== Router training completed ==="
 
 # Run hybrid simulation with trained router
 # echo "=== Running Hybrid Simulation ==="
