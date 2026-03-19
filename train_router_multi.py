@@ -148,24 +148,6 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     }
 
 
-def compute_binary_entropy(r, layout_mask):
-    """Compute binary entropy of router output over fluid points."""
-    eps = 1e-7
-    r_clipped = tf.clip_by_value(r, eps, 1.0 - eps)
-    entropy_per_point = -(r_clipped * tf.math.log(r_clipped) +
-                          (1.0 - r_clipped) * tf.math.log(1.0 - r_clipped))
-    num_fluid = tf.reduce_sum(layout_mask) + eps
-    return tf.reduce_sum(entropy_per_point * layout_mask) / num_fluid
-
-
-def compute_output_variance(r, layout_mask):
-    """Compute variance of router output over fluid points."""
-    eps = 1e-7
-    num_fluid = tf.reduce_sum(layout_mask) + eps
-    mean_r = tf.reduce_sum(r * layout_mask) / num_fluid
-    return tf.reduce_sum(((r - mean_r) ** 2) * layout_mask) / num_fluid
-
-
 def compute_total_variation(r_4d):
     """Compute total variation for spatial smoothness."""
     tv_h = tf.reduce_mean(tf.abs(r_4d[:, :, 1:, :] - r_4d[:, :, :-1, :]))
@@ -175,8 +157,7 @@ def compute_total_variation(r_4d):
 
 @tf.function
 def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm,
-                            beta, lambda_tv, lambda_entropy, lambda_variance,
-                            grad_clip_norm):
+                            beta, lambda_tv, grad_clip_norm):
     """
     One training step using pre-computed residuals.
 
@@ -202,15 +183,7 @@ def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm
         r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
         tv_loss = lambda_tv * compute_total_variation(r_4d)
 
-        # 4. Entropy (maximize -> subtract)
-        entropy = compute_binary_entropy(r_masked, layout_mask)
-        entropy_loss = -lambda_entropy * entropy
-
-        # 5. Variance (maximize -> subtract)
-        variance = compute_output_variance(r_masked, layout_mask)
-        variance_loss = -lambda_variance * variance
-
-        total_loss = cfd_cost + residual_loss + tv_loss + entropy_loss + variance_loss
+        total_loss = cfd_cost + residual_loss + tv_loss
 
     gradients = tape.gradient(total_loss, router.trainable_variables)
     if grad_clip_norm > 0:
@@ -222,8 +195,6 @@ def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm
         'cfd_cost': cfd_cost,
         'residual_loss': residual_loss,
         'tv_loss': tv_loss,
-        'entropy': entropy,
-        'variance': variance,
         'cfd_fraction': cfd_fraction,
     }
 
@@ -281,10 +252,6 @@ def main():
                         help='CFD cost coefficient')
     parser.add_argument('--lambda-tv', type=float, default=0.1,
                         help='Total variation regularization weight')
-    parser.add_argument('--lambda-entropy', type=float, default=0.1,
-                        help='Entropy regularization weight')
-    parser.add_argument('--lambda-variance', type=float, default=0.05,
-                        help='Variance regularization weight')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
     parser.add_argument('--grad-clip', type=float, default=1.0,
@@ -378,8 +345,7 @@ def main():
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
 
-    print(f"\n  beta={args.beta}, lambda_tv={args.lambda_tv}, "
-          f"lambda_entropy={args.lambda_entropy}, lambda_variance={args.lambda_variance}")
+    print(f"\n  beta={args.beta}, lambda_tv={args.lambda_tv}")
     print(f"  lr={args.lr}, grad_clip={args.grad_clip}")
 
     # =========================================================================
@@ -394,13 +360,11 @@ def main():
     # Convert hyperparams to tensors for tf.function
     beta_tf = tf.constant(args.beta, dtype=tf.float32)
     ltv_tf = tf.constant(args.lambda_tv, dtype=tf.float32)
-    lent_tf = tf.constant(args.lambda_entropy, dtype=tf.float32)
-    lvar_tf = tf.constant(args.lambda_variance, dtype=tf.float32)
     gc_tf = tf.constant(args.grad_clip, dtype=tf.float32)
 
     history = {
         'total_loss': [], 'cfd_cost': [], 'residual_loss': [],
-        'tv_loss': [], 'entropy': [], 'variance': []
+        'tv_loss': []
     }
 
     for epoch in range(args.epochs):
@@ -412,7 +376,7 @@ def main():
             metrics = train_step_precomputed(
                 router, optimizer,
                 d['inputs'], d['layout'], d['residual'],
-                beta_tf, ltv_tf, lent_tf, lvar_tf, gc_tf
+                beta_tf, ltv_tf, gc_tf
             )
             epoch_losses.append(float(metrics['total_loss']))
 
@@ -422,16 +386,12 @@ def main():
         history['cfd_cost'].append(float(metrics['cfd_cost']))
         history['residual_loss'].append(float(metrics['residual_loss']))
         history['tv_loss'].append(float(metrics['tv_loss']))
-        history['entropy'].append(float(metrics['entropy']))
-        history['variance'].append(float(metrics['variance']))
 
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{args.epochs} - "
                   f"AvgLoss: {avg_loss:.4f}, "
                   f"CFD: {float(metrics['cfd_cost']):.4f}, "
                   f"Res: {float(metrics['residual_loss']):.4f}, "
-                  f"Ent: {float(metrics['entropy']):.3f}, "
-                  f"Var: {float(metrics['variance']):.3f}, "
                   f"CFD%: {float(metrics['cfd_fraction'])*100:.1f}%")
 
     training_time = (datetime.now() - start_time).total_seconds()

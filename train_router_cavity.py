@@ -278,15 +278,12 @@ class CavityRouterTrainer:
     """
     
     def __init__(self, router, pinn_model, beta=0.1, lambda_tv=0.01,
-                 lambda_entropy=0.1, lambda_variance=0.05,
                  grad_clip_norm=None, residual_weights=None,
                  nu=0.01, rho=1.0, x_domain=(0, 1), y_domain=(0, 1)):
         self.router = router
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
-        self.lambda_entropy = lambda_entropy
-        self.lambda_variance = lambda_variance
         self.grad_clip_norm = grad_clip_norm
         
         if residual_weights is None:
@@ -343,26 +340,15 @@ class CavityRouterTrainer:
         tv_v = tf.reduce_sum(tf.abs(r_2d[1:, :] - r_2d[:-1, :]))
         tv_loss = self.lambda_tv * (tv_h + tv_v) / n_fluid
         
-        # Entropy regularization: encourage non-extreme values
-        r_clipped = tf.clip_by_value(r_fluid / (layout_mask_tf + 1e-10), 1e-7, 1 - 1e-7)
-        entropy = -tf.reduce_mean(r_clipped * tf.math.log(r_clipped) + 
-                                  (1 - r_clipped) * tf.math.log(1 - r_clipped))
-        entropy_term = -self.lambda_entropy * entropy
-        
-        # Variance regularization
-        mean_r = tf.reduce_sum(r_fluid) / n_fluid
-        variance = tf.reduce_sum(layout_mask_tf * (r_fluid / (layout_mask_tf + 1e-10) - mean_r)**2) / n_fluid
-        variance_term = -self.lambda_variance * variance
-        
-        total_loss = cfd_cost + residual_loss + tv_loss + entropy_term + variance_term
-        
-        return total_loss, cfd_cost, residual_loss, tv_loss, entropy_term, variance_term
+        total_loss = cfd_cost + residual_loss + tv_loss
+
+        return total_loss, cfd_cost, residual_loss, tv_loss
     
     @tf.function
     def train_step(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v):
         """Single training step."""
         with tf.GradientTape() as tape:
-            total_loss, cfd_cost, residual_loss, tv_loss, entropy_term, variance_term = \
+            total_loss, cfd_cost, residual_loss, tv_loss = \
                 self.compute_loss(inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v)
         
         gradients = tape.gradient(total_loss, self.router.trainable_variables)
@@ -372,13 +358,13 @@ class CavityRouterTrainer:
         
         self.optimizer.apply_gradients(zip(gradients, self.router.trainable_variables))
         
-        return total_loss, cfd_cost, residual_loss, tv_loss, entropy_term, variance_term
-    
+        return total_loss, cfd_cost, residual_loss, tv_loss
+
     def train(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v, epochs=200, verbose=True):
         """Train the router."""
         history = {
             'total_loss': [], 'cfd_cost': [], 'residual_loss': [],
-            'tv_loss': [], 'entropy_term': [], 'variance_term': []
+            'tv_loss': []
         }
         
         X_tf = tf.constant(X, dtype=tf.float32)
@@ -390,25 +376,22 @@ class CavityRouterTrainer:
         inputs_tf = tf.constant(inputs, dtype=tf.float32)
         
         for epoch in range(epochs):
-            total_loss, cfd_cost, residual_loss, tv_loss, entropy_term, variance_term = \
+            total_loss, cfd_cost, residual_loss, tv_loss = \
                 self.train_step(inputs_tf, X_tf, Y_tf, layout_tf, bc_mask_tf, bc_u_tf, bc_v_tf)
             
             history['total_loss'].append(float(total_loss))
             history['cfd_cost'].append(float(cfd_cost))
             history['residual_loss'].append(float(residual_loss))
             history['tv_loss'].append(float(tv_loss))
-            history['entropy_term'].append(float(entropy_term))
-            history['variance_term'].append(float(variance_term))
-            
+
             if verbose and (epoch + 1) % 10 == 0:
                 r = self.router(inputs_tf, training=False)
                 r_np = r.numpy().squeeze()
                 cfd_frac = np.sum(r_np * layout_mask) / np.sum(layout_mask) * 100
-                
+
                 print(f"Epoch {epoch+1:4d} | Loss: {float(total_loss):.4f} | "
                       f"CFD: {float(cfd_cost):.4f} | Res: {float(residual_loss):.4f} | "
-                      f"TV: {float(tv_loss):.4f} | Ent: {float(entropy_term):.4f} | "
-                      f"Var: {float(variance_term):.4f} | CFD%: {cfd_frac:.1f}%")
+                      f"TV: {float(tv_loss):.4f} | CFD%: {cfd_frac:.1f}%")
         
         return history
     
@@ -454,10 +437,6 @@ def main():
                         help='CFD cost coefficient (higher = less CFD)')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
-    parser.add_argument('--lambda-entropy', type=float, default=0.1,
-                        help='Entropy regularization weight')
-    parser.add_argument('--lambda-variance', type=float, default=0.05,
-                        help='Variance regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,
                         help='Learning rate')
     parser.add_argument('--grad-clip', type=float, default=1.0,
@@ -624,8 +603,6 @@ def main():
         pinn_model=pinn_model,
         beta=args.beta,
         lambda_tv=args.lambda_tv,
-        lambda_entropy=args.lambda_entropy,
-        lambda_variance=args.lambda_variance,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
         residual_weights=residual_weights,
         nu=args.nu,
@@ -637,8 +614,6 @@ def main():
     
     print(f"  β (CFD cost): {args.beta}")
     print(f"  λ_tv (TV reg): {args.lambda_tv}")
-    print(f"  λ_entropy: {args.lambda_entropy}")
-    print(f"  λ_variance: {args.lambda_variance}")
     print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
     
