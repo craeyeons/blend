@@ -54,7 +54,7 @@ python train_router_multi.py \
     --config configs_multi_cylinder.json \
     --output-dir ./router_output_multi \
     --epochs 500 \
-    --beta 1 \
+    --beta 1.1 \
     --lambda-tv 0.1 \
     --lr 1e-4 \
     --temperature 0.5 \

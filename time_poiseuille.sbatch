@@ -30,7 +30,7 @@ echo "=== Timing: Poiseuille (no cylinder) ==="
 python time_cylinder.py \
     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.0.h5 \
     --router-weights ./router_output/router.weights.h5 \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.5 \
     --cylinder-radius 0 \
     --temperature 0.5 \

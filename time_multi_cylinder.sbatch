@@ -30,7 +30,7 @@ echo "=== Timing: Multi-Cylinder TEST (unseen config) ==="
 python time_cylinder.py \
     --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
     --router-weights ./router_output_multi/router.weights.h5 \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.4 \
     --cylinder-x 0.6 \
     --cylinder-radius 0.13 \

@@ -62,7 +62,7 @@ python plot_coverage_metrics.py \
     --router-weights ./router_output/router.weights.h5 \
     --compute-cfd \
     --save-cfd ./cfd_mid_cylinder_solution.npz \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.5 \
     --temperature 0.5
 

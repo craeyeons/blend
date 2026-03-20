@@ -30,7 +30,7 @@ echo "=== Timing: Mid Cylinder (cy=0.5, r=0.1) ==="
 python time_cylinder.py \
     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
     --router-weights ./router_output/router.weights.h5 \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.5 \
     --temperature 0.5 \
     --n-runs 3

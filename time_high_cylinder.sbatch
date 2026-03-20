@@ -30,7 +30,7 @@ echo "=== Timing: High Cylinder (cy=0.8, r=0.1) ==="
 python time_cylinder.py \
     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.8_0.1.h5 \
     --router-weights ./router_output/router.weights.h5 \
-    --beta 1 \
+    --beta 1.1 \
     --cylinder-y 0.8 \
     --temperature 0.5 \
     --n-runs 3

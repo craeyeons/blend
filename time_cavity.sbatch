@@ -30,7 +30,7 @@ echo "=== Timing: Cavity Flow ==="
 python time_cavity.py \
     --pinn-path ./models/pinn_cavity_flow.h5 \
     --router-weights ./router_output_cavity/router.weights.h5 \
-    --beta 1 \
+    --beta 1.1 \
     --temperature 0.5 \
     --N 100 \
     --n-runs 3
