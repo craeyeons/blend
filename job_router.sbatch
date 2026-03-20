@@ -51,10 +51,10 @@ echo "=== Training Router ==="
 python train_router.py \
     --model-path ./models/pinn_cylinder_100.0.h5 \
     --output-dir ./router_output \
-    --epochs 500 \
+    --epochs 2000 \
     --beta 0.1 \
     --lambda-tv 1.0 \
-    --lr 1e-4 \
+    --lr 1e-3 \
     --weight-continuity 1.0 \
     --weight-momentum 1.0 \
     --nx 200 \

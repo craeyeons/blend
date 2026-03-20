@@ -522,8 +522,8 @@ class RouterTrainer:
             inlet_velocity=inlet_velocity
         )
         
-        # Optimizer
-        self.optimizer = keras.optimizers.Adam(learning_rate=1e-4)
+        # Optimizer (learning rate set in train() via schedule)
+        self.optimizer = keras.optimizers.Adam(learning_rate=1e-3)
         
         # Metrics
         self.loss_history = []
@@ -629,14 +629,15 @@ class RouterTrainer:
 
         return total_loss, metrics
     
-    def train(self, inputs, X, Y, layout_mask, epochs=100, verbose=True):
+    def train(self, inputs, X, Y, layout_mask, epochs=100, verbose=True,
+              lr=1e-3, lr_min=1e-5):
         """
-        Train the router for multiple epochs.
-        
+        Train the router for multiple epochs with cosine LR schedule.
+
         Parameters:
         -----------
         inputs : tf.Tensor or np.ndarray
-            Router input of shape (1, H, W, 5)
+            Router input of shape (1, H, W, 8)
         X, Y : np.ndarray
             Coordinate grids of shape (H, W)
         layout_mask : np.ndarray
@@ -645,7 +646,11 @@ class RouterTrainer:
             Number of training epochs
         verbose : bool
             Whether to print progress
-            
+        lr : float
+            Initial learning rate
+        lr_min : float
+            Minimum learning rate at end of cosine schedule
+
         Returns:
         --------
         history : dict
@@ -656,8 +661,16 @@ class RouterTrainer:
         X = tf.constant(X, dtype=tf.float32)
         Y = tf.constant(Y, dtype=tf.float32)
         layout_mask = tf.constant(layout_mask, dtype=tf.float32)
-        
+
+        # Set initial learning rate
+        self.optimizer.learning_rate.assign(lr)
+
         for epoch in range(epochs):
+            # Cosine annealing: lr decays from lr to lr_min
+            progress = epoch / max(epochs - 1, 1)
+            current_lr = lr_min + 0.5 * (lr - lr_min) * (1 + np.cos(np.pi * progress))
+            self.optimizer.learning_rate.assign(current_lr)
+
             loss, metrics = self.train_step(inputs, X, Y, layout_mask)
 
             # Record history
@@ -670,14 +683,15 @@ class RouterTrainer:
                       f"Loss: {metrics['total_loss']:.4f}, "
                       f"Logistic: {metrics['logistic_loss']:.4f}, "
                       f"TV: {metrics['tv_loss']:.4f}, "
-                      f"CFD%: {metrics['cfd_fraction']*100:.1f}%")
+                      f"CFD%: {metrics['cfd_fraction']*100:.1f}%, "
+                      f"lr: {current_lr:.2e}")
 
         history = {
             'total_loss': self.loss_history,
             'logistic_loss': self.logistic_loss_history,
             'tv_loss': self.tv_loss_history,
         }
-        
+
         return history
     
     def predict(self, inputs, threshold=0.0):

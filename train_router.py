@@ -254,7 +254,8 @@ def main():
         Y=Y,
         layout_mask=layout,
         epochs=args.epochs,
-        verbose=True
+        verbose=True,
+        lr=args.lr,
     )
     
     training_time = (datetime.now() - start_time).total_seconds()

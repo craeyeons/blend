@@ -338,8 +338,9 @@ class CavityRouterTrainer:
 
         return total_loss, logistic_loss, tv_loss
 
-    def train(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v, epochs=200, verbose=True):
-        """Train the router."""
+    def train(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v,
+              epochs=200, verbose=True, lr=1e-3, lr_min=1e-5):
+        """Train the router with cosine LR schedule."""
         history = {
             'total_loss': [], 'logistic_loss': [],
             'tv_loss': []
@@ -353,7 +354,14 @@ class CavityRouterTrainer:
         bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
         inputs_tf = tf.constant(inputs, dtype=tf.float32)
 
+        self.optimizer.learning_rate.assign(lr)
+
         for epoch in range(epochs):
+            # Cosine annealing
+            progress = epoch / max(epochs - 1, 1)
+            current_lr = lr_min + 0.5 * (lr - lr_min) * (1 + np.cos(np.pi * progress))
+            self.optimizer.learning_rate.assign(current_lr)
+
             total_loss, logistic_loss, tv_loss = \
                 self.train_step(inputs_tf, X_tf, Y_tf, layout_tf, bc_mask_tf, bc_u_tf, bc_v_tf)
 
@@ -369,7 +377,8 @@ class CavityRouterTrainer:
                 print(f"Epoch {epoch+1:4d} | Loss: {float(total_loss):.4f} | "
                       f"Logistic: {float(logistic_loss):.4f} | "
                       f"TV: {float(tv_loss):.4f} | "
-                      f"CFD%: {cfd_frac:.1f}%")
+                      f"CFD%: {cfd_frac:.1f}%, "
+                      f"lr: {current_lr:.2e}")
 
         return history
 
@@ -602,7 +611,8 @@ def main():
         bc_u=bc_u,
         bc_v=bc_v,
         epochs=args.epochs,
-        verbose=True
+        verbose=True,
+        lr=args.lr,
     )
     
     training_time = (datetime.now() - start_time).total_seconds()

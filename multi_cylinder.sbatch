@@ -53,10 +53,10 @@ echo "=== Training Multi-Config Router ==="
 python train_router_multi.py \
     --config configs_multi_cylinder.json \
     --output-dir ./router_output_multi \
-    --epochs 500 \
+    --epochs 2000 \
     --beta 1.1 \
     --lambda-tv 1.0 \
-    --lr 1e-4 \
+    --lr 1e-3 \
 
 echo "=== Multi-config router training completed ==="
 

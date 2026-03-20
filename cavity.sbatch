@@ -54,10 +54,10 @@ echo "=== Training Router for Cavity Flow ==="
 python train_router_cavity.py \
     --model-path ./models/pinn_cavity_flow.h5 \
     --output-dir ./router_output_cavity \
-    --epochs 500 \
+    --epochs 2000 \
     --beta 1.1 \
     --lambda-tv 1.0 \
-    --lr 1e-4 \
+    --lr 1e-3 \
     --weight-continuity 1.0 \
     --weight-momentum 1.0 \
     --N 100 \

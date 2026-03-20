@@ -560,10 +560,11 @@ def compute_residual_field(pinn_model, X, Y, layout, nu=0.01, rho=1.0):
     continuity, momentum = residual_computer.compute_residuals(X_tf, Y_tf)
     residual_field = (np.array(continuity) + np.array(momentum)) * layout
     
-    # Normalize
-    residual_max = np.percentile(residual_field[layout > 0], 95)
-    residual_field = np.minimum(residual_field / (residual_max + 1e-10), 1.0) * layout
-    
+    # Median normalization (robust to heavy-tailed residuals)
+    fluid_vals = residual_field[layout > 0]
+    median = np.median(fluid_vals)
+    residual_field = residual_field / (median + 1e-10) * layout
+
     return residual_field
 
 
