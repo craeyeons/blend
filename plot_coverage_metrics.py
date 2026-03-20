@@ -1234,8 +1234,6 @@ def main():
     residual_weights = {
         'continuity': 1.0,
         'momentum': 1.0,
-        'bc_local': 2.0,
-        'bc_propagated': 1.5
     }
     residual_field_tf = residual_computer.compute_total_residual_with_bc(
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights

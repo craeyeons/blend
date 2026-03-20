@@ -230,45 +230,26 @@ class CavityPINNResidualComputer:
         return bc_error
     
     def compute_total_residual_with_bc(self, X, Y, bc_mask, bc_u, bc_v, weights=None):
-        """Compute total residual including BC error."""
+        """Compute total PDE residual, normalized by median."""
         if weights is None:
             weights = {
                 'continuity': 1.0,
                 'momentum': 1.0,
-                'bc_local': 2.0,
-                'bc_propagated': 1.5
             }
-        
-        def clip_and_normalize(x, percentile=0.95, max_scale=1.5):
-            x_flat = tf.reshape(x, [-1])
-            num_elements = tf.shape(x_flat)[0]
-            k = tf.cast(tf.cast(num_elements, tf.float32) * percentile, tf.int32)
-            k = tf.maximum(k, 1)
-            top_k_vals, _ = tf.math.top_k(x_flat, k=k)
-            p95_val = top_k_vals[-1]
-            x_clipped = tf.minimum(x, p95_val * max_scale)
-            x_norm = x_clipped / (p95_val + 1e-10)
-            return x_norm
-        
+
         X_tf = tf.cast(X, tf.float32)
         Y_tf = tf.cast(Y, tf.float32)
-        bc_mask_tf = tf.cast(bc_mask, tf.float32)
-        bc_u_tf = tf.cast(bc_u, tf.float32)
-        bc_v_tf = tf.cast(bc_v, tf.float32)
-        
+
         continuity, momentum = self.compute_residuals(X_tf, Y_tf)
-        bc_error = self.compute_bc_error(X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf)
-        
-        continuity_norm = clip_and_normalize(continuity)
-        momentum_norm = clip_and_normalize(momentum)
-        bc_error_norm = clip_and_normalize(bc_error)
-        
-        total_weight = (weights.get('continuity', 1.0) + weights.get('momentum', 1.0) +
-                        weights.get('bc_local', 0.0))
-        total = (weights['continuity'] * continuity_norm + 
-                 weights['momentum'] * momentum_norm +
-                 weights['bc_local'] * bc_error_norm) / (total_weight + 1e-10)
-        
+
+        total = (weights.get('continuity', 1.0) * continuity +
+                 weights.get('momentum', 1.0) * momentum)
+
+        # Normalize by median (robust to heavy-tailed, right-skewed residuals)
+        total_flat = tf.reshape(total, [-1])
+        median = tf.sort(total_flat)[tf.shape(total_flat)[0] // 2]
+        total = total / (median + 1e-10)
+
         return total
 
 
@@ -291,8 +272,6 @@ class CavityRouterTrainer:
             residual_weights = {
                 'continuity': 1.0,
                 'momentum': 1.0,
-                'bc_local': 2.0,
-                'bc_propagated': 1.5
             }
         self.residual_weights = residual_weights
         
@@ -446,11 +425,6 @@ def main():
                         help='Weight for continuity residual')
     parser.add_argument('--weight-momentum', type=float, default=1.0,
                         help='Weight for momentum residual')
-    parser.add_argument('--weight-bc-local', type=float, default=2.0,
-                        help='Weight for local BC error')
-    parser.add_argument('--weight-bc-propagated', type=float, default=1.5,
-                        help='Weight for BC error propagation')
-    
     # Domain parameters (cavity is square)
     parser.add_argument('--N', type=int, default=100,
                         help='Grid size (N x N)')
@@ -590,8 +564,6 @@ def main():
     residual_weights = {
         'continuity': args.weight_continuity,
         'momentum': args.weight_momentum,
-        'bc_local': args.weight_bc_local,
-        'bc_propagated': args.weight_bc_propagated
     }
 
     trainer = CavityRouterTrainer(

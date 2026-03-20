@@ -121,13 +121,10 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
 
-    # Normalize by p95, clip at 1.5 (same as RouterTrainer.train_step)
+    # Normalize by median (robust to heavy-tailed, right-skewed residuals)
     residual_flat = tf.reshape(total_residual, [-1])
-    k = tf.cast(tf.cast(tf.size(residual_flat), tf.float32) * 0.95, tf.int32)
-    k = tf.maximum(k, 1)
-    top_values, _ = tf.nn.top_k(residual_flat, k)
-    residual_p95 = top_values[-1] + 1e-10
-    total_residual_norm = tf.minimum(total_residual / residual_p95, 1.5)
+    median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
+    total_residual_norm = total_residual / (median + 1e-10)
 
     fluid_points = np.sum(layout)
     print(f"    Fluid points: {fluid_points:.0f}/{layout.size} ({100*np.mean(layout):.1f}%)")
@@ -261,9 +258,6 @@ def main():
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0)
     parser.add_argument('--weight-momentum', type=float, default=1.0)
-    parser.add_argument('--weight-bc-local', type=float, default=2.0)
-    parser.add_argument('--weight-bc-propagated', type=float, default=1.5)
-
     # Domain parameters (shared across all configs)
     parser.add_argument('--nx', type=int, default=200)
     parser.add_argument('--ny', type=int, default=100)
@@ -307,8 +301,6 @@ def main():
     residual_weights = {
         'continuity': args.weight_continuity,
         'momentum': args.weight_momentum,
-        'bc_local': args.weight_bc_local,
-        'bc_propagated': args.weight_bc_propagated
     }
 
     # =========================================================================

@@ -64,7 +64,7 @@ python train_router.py \
    --output-dir ./router_output \
    --epochs 500 \
    --beta 1.1 \
-   --lambda-tv 0.1 \
+   --lambda-tv 1.0 \
    --lr 1e-4 \
    --weight-continuity 1.0 \
    --weight-momentum 1.0 \
