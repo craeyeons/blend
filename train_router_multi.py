@@ -148,16 +148,6 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     }
 
 
-def compute_binary_entropy(r, layout_mask):
-    """Compute binary entropy of router output over fluid points."""
-    eps = 1e-7
-    r_clipped = tf.clip_by_value(r, eps, 1.0 - eps)
-    entropy_per_point = -(r_clipped * tf.math.log(r_clipped) +
-                          (1.0 - r_clipped) * tf.math.log(1.0 - r_clipped))
-    num_fluid = tf.reduce_sum(layout_mask) + eps
-    return tf.reduce_sum(entropy_per_point * layout_mask) / num_fluid
-
-
 def compute_total_variation(r_4d):
     """Compute total variation for spatial smoothness."""
     tv_h = tf.reduce_mean(tf.abs(r_4d[:, :, 1:, :] - r_4d[:, :, :-1, :]))
@@ -173,48 +163,44 @@ def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm
 
     This avoids re-computing PINN residuals each step (they're constant
     since the PINN is frozen).
+
+    Uses logistic loss: 1/N * sum(beta * softplus(s) + residual * softplus(-s))
     """
     with tf.GradientTape() as tape:
-        r = router(inputs, training=True)
-        r = r[0, :, :, 0]  # (H, W)
+        s = router(inputs, training=True)
+        s = s[0, :, :, 0]  # (H, W)
 
-        r_masked = r * layout_mask
         num_fluid = tf.reduce_sum(layout_mask) + 1e-10
 
-        # 1. CFD cost
-        cfd_fraction = tf.reduce_sum(r_masked) / num_fluid
-        cfd_cost = beta * cfd_fraction
+        # Logistic loss
+        logistic_loss = tf.reduce_sum(
+            (beta * tf.math.softplus(s) +
+             residual_norm * tf.math.softplus(-s)) * layout_mask
+        ) / num_fluid
 
-        # 2. PINN residual weighted by (1 - r)
-        pinn_weight = (1.0 - r_masked) * layout_mask
-        residual_loss = tf.reduce_sum(pinn_weight * residual_norm) / num_fluid
+        # Total variation
+        s_masked = s * layout_mask
+        s_4d = tf.reshape(s_masked, [1, tf.shape(s)[0], tf.shape(s)[1], 1])
+        tv_loss = lambda_tv * compute_total_variation(s_4d)
 
-        # 3. Total variation
-        r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
-        tv_loss = lambda_tv * compute_total_variation(r_4d)
-
-        # 4. Entropy (maximize -> subtract)
-        entropy = compute_binary_entropy(r_masked, layout_mask)
-        entropy_loss = -lambda_entropy * entropy
-
-        total_loss = cfd_cost + residual_loss + tv_loss + entropy_loss
+        total_loss = logistic_loss + tv_loss
 
     gradients = tape.gradient(total_loss, router.trainable_variables)
     if grad_clip_norm > 0:
         gradients, _ = tf.clip_by_global_norm(gradients, grad_clip_norm)
     optimizer.apply_gradients(zip(gradients, router.trainable_variables))
 
+    cfd_fraction = tf.reduce_sum(tf.cast(s > 0, tf.float32) * layout_mask) / num_fluid
+
     return {
         'total_loss': total_loss,
-        'cfd_cost': cfd_cost,
-        'residual_loss': residual_loss,
+        'logistic_loss': logistic_loss,
         'tv_loss': tv_loss,
-        'entropy': entropy,
         'cfd_fraction': cfd_fraction,
     }
 
 
-def evaluate_on_config(router, cfg_data, threshold):
+def evaluate_on_config(router, cfg_data, threshold=0.0):
     """Evaluate the router on a single config, return metrics."""
     inputs = cfg_data['inputs']
     layout = cfg_data['layout']
@@ -267,14 +253,10 @@ def main():
                         help='CFD cost coefficient')
     parser.add_argument('--lambda-tv', type=float, default=0.1,
                         help='Total variation regularization weight')
-    parser.add_argument('--lambda-entropy', type=float, default=0.1,
-                        help='Entropy regularization weight')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate')
     parser.add_argument('--grad-clip', type=float, default=1.0,
                         help='Gradient clipping norm (0 to disable)')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                        help='Sigmoid temperature')
 
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0)
@@ -298,7 +280,7 @@ def main():
     parser.add_argument('--base-filters', type=int, default=32)
 
     # Inference
-    parser.add_argument('--threshold', type=float, default=0.5)
+    parser.add_argument('--threshold', type=float, default=0.0)
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -353,17 +335,15 @@ def main():
     # Initialize router
     # =========================================================================
     print("\n[Step 2] Initializing router CNN...")
-    router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
+    router = RouterCNN(base_filters=args.base_filters)
 
     # Build with first training config's input shape
     _ = router(train_data[0]['inputs'])
     print(f"  Parameters: {router.count_params():,}")
-    print(f"  Temperature: {args.temperature}")
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
 
-    print(f"\n  beta={args.beta}, lambda_tv={args.lambda_tv}, "
-          f"lambda_entropy={args.lambda_entropy}")
+    print(f"\n  beta={args.beta}, lambda_tv={args.lambda_tv}")
     print(f"  lr={args.lr}, grad_clip={args.grad_clip}")
 
     # =========================================================================
@@ -378,12 +358,12 @@ def main():
     # Convert hyperparams to tensors for tf.function
     beta_tf = tf.constant(args.beta, dtype=tf.float32)
     ltv_tf = tf.constant(args.lambda_tv, dtype=tf.float32)
-    lent_tf = tf.constant(args.lambda_entropy, dtype=tf.float32)
+    lent_tf = tf.constant(0.0, dtype=tf.float32)  # unused, kept for API compat
     gc_tf = tf.constant(args.grad_clip, dtype=tf.float32)
 
     history = {
-        'total_loss': [], 'cfd_cost': [], 'residual_loss': [],
-        'tv_loss': [], 'entropy': []
+        'total_loss': [], 'logistic_loss': [],
+        'tv_loss': []
     }
 
     for epoch in range(args.epochs):
@@ -402,17 +382,14 @@ def main():
         # Record average loss across configs
         avg_loss = np.mean(epoch_losses)
         history['total_loss'].append(avg_loss)
-        history['cfd_cost'].append(float(metrics['cfd_cost']))
-        history['residual_loss'].append(float(metrics['residual_loss']))
+        history['logistic_loss'].append(float(metrics['logistic_loss']))
         history['tv_loss'].append(float(metrics['tv_loss']))
-        history['entropy'].append(float(metrics['entropy']))
 
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{args.epochs} - "
                   f"AvgLoss: {avg_loss:.4f}, "
-                  f"CFD: {float(metrics['cfd_cost']):.4f}, "
-                  f"Res: {float(metrics['residual_loss']):.4f}, "
-                  f"Ent: {float(metrics['entropy']):.3f}, "
+                  f"Logistic: {float(metrics['logistic_loss']):.4f}, "
+                  f"TV: {float(metrics['tv_loss']):.4f}, "
                   f"CFD%: {float(metrics['cfd_fraction'])*100:.1f}%")
 
     training_time = (datetime.now() - start_time).total_seconds()

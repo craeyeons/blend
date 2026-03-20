@@ -57,31 +57,26 @@ import os
 class RouterCNN(keras.Model):
     """
     CNN-based router for PINN-CFD domain segregation.
-    
+
     The architecture uses a U-Net-like structure to preserve spatial resolution
     while learning multi-scale features for optimal domain partitioning.
-    
-    Uses temperature-scaled sigmoid to control sharpness of decisions:
-    - Low temperature (e.g., 0.5): softer decisions, outputs closer to 0.5
-    - High temperature (e.g., 2.0): sharper decisions, outputs closer to 0 or 1
+
+    Outputs raw logits in R (unbounded). Positive = CFD, negative = PINN.
     """
-    
+
     def __init__(self, base_filters=32, temperature=1.0, name="router_cnn"):
         """
         Initialize the router CNN.
-        
+
         Parameters:
         -----------
         base_filters : int
             Number of filters in the first convolutional layer.
             Subsequent layers double this number.
         temperature : float
-            Temperature for sigmoid scaling. Lower = softer outputs.
-            Start with 0.5-1.0 for stable training, increase for sharper masks.
+            Unused, kept for backwards compatibility with saved configs.
         """
         super().__init__(name=name)
-        
-        self.temperature = temperature
         
         # Encoder path
         self.conv1 = layers.Conv2D(base_filters, 3, padding='same', activation='relu')
@@ -113,8 +108,8 @@ class RouterCNN(keras.Model):
         self.conv7 = layers.Conv2D(base_filters, 3, padding='same', activation='relu')
         self.conv7b = layers.Conv2D(base_filters, 3, padding='same', activation='relu')
         
-        # Output layer - no activation, we apply temperature-scaled sigmoid in call()
-        # Initialize bias to 0 so initial outputs are around 0.5
+        # Output layer - raw logits, no activation
+        # Initialize bias to 0 so initial outputs are around 0
         self.output_conv = layers.Conv2D(
             1, 1, padding='same', activation=None,
             kernel_initializer='glorot_uniform',
@@ -137,57 +132,48 @@ class RouterCNN(keras.Model):
         --------
         tf.Tensor
             Router output of shape (batch, height, width, 1)
-            Values in [0, 1], masked by layout
+            Raw logits in R, masked to 0 at obstacle locations.
+            Positive = CFD, negative = PINN.
         """
         # Extract layout mask for final masking
         layout = inputs[..., 0:1]  # Shape: (batch, H, W, 1)
-        
+
         # Encoder
         e1 = self.conv1b(self.conv1(inputs))
         p1 = self.pool1(e1)
-        
+
         e2 = self.conv2b(self.conv2(p1))
         p2 = self.pool2(e2)
-        
+
         e3 = self.conv3b(self.conv3(p2))
         p3 = self.pool3(e3)
-        
+
         # Bottleneck
         b = self.conv4b(self.conv4(p3))
-        
+
         # Decoder with skip connections
         d3 = self.up3(b)
-        # Handle size mismatch due to pooling
         d3 = self._match_size(d3, e3)
         d3 = layers.Concatenate()([d3, e3])
         d3 = self.conv5b(self.conv5(d3))
-        
+
         d2 = self.up2(d3)
         d2 = self._match_size(d2, e2)
         d2 = layers.Concatenate()([d2, e2])
         d2 = self.conv6b(self.conv6(d2))
-        
+
         d1 = self.up1(d2)
         d1 = self._match_size(d1, e1)
         d1 = layers.Concatenate()([d1, e1])
         d1 = self.conv7b(self.conv7(d1))
-        
-        # Output logits (no activation yet)
+
+        # Output raw logits (no sigmoid)
         logits = self.output_conv(d1)
-        
-        # Temperature-scaled sigmoid: sigmoid(logits / temperature)
-        # Lower temperature = softer outputs (closer to 0.5)
-        # Higher temperature = sharper outputs (closer to 0 or 1)
-        output = tf.sigmoid(logits / self.temperature)
-        
+
         # Mask output: 0 at obstacle locations
-        output = output * layout
-        
+        output = logits * layout
+
         return output
-    
-    def set_temperature(self, temperature):
-        """Update temperature for inference (e.g., anneal during training)."""
-        self.temperature = temperature
     
     def _match_size(self, x, target):
         """Resize x to match target spatial dimensions using tf ops only."""
@@ -493,16 +479,17 @@ class RouterTrainer:
     """
     Training manager for the CNN router.
 
-    Implements the training loop with the loss function:
-    L = β · Σ r(x_i) + Σ (1 - r(x_i)) · L_residual + λ_tv · TV(r)
-        - λ_entropy · H(r)
+    Implements the training loop with the logistic loss:
+    L = 1/N * Σ [β · φ(s,0) + R(x) · φ(s,1)] + λ_tv · TV(s)
 
     Where:
-    - H(r) is binary entropy to encourage diverse (not all 0 or 1) outputs
+    - s = r(x) is the raw router output (unbounded, in R)
+    - φ(s,j) = log(1 + exp(-[2j-1]·s))  (logistic cost)
+    - R(x) is the PINN residual at point x
 
     Includes BC error propagation to detect upstream errors.
     """
-    
+
     def __init__(self, router, pinn_model,
                  beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
@@ -514,7 +501,7 @@ class RouterTrainer:
                  inlet_velocity=1.0):
         """
         Initialize the trainer.
-        
+
         Parameters:
         -----------
         router : RouterCNN
@@ -526,8 +513,7 @@ class RouterTrainer:
         lambda_tv : float
             Weight for total variation regularization (spatial smoothness)
         lambda_entropy : float
-            Weight for entropy regularization (encourages non-extreme outputs).
-            Higher = more intermediate values. Try 0.05-0.2.
+            Unused, kept for API compatibility.
         grad_clip_norm : float
             Maximum gradient norm for clipping (stabilizes training).
             Set to None to disable. Recommended: 1.0-5.0.
@@ -550,7 +536,6 @@ class RouterTrainer:
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
-        self.lambda_entropy = lambda_entropy
         self.grad_clip_norm = grad_clip_norm
         
         # Default residual weights with BC propagation
@@ -576,44 +561,8 @@ class RouterTrainer:
         
         # Metrics
         self.loss_history = []
-        self.cfd_cost_history = []
-        self.residual_loss_history = []
+        self.logistic_loss_history = []
         self.tv_loss_history = []
-        self.entropy_history = []
-
-    def compute_binary_entropy(self, r, layout_mask):
-        """
-        Compute binary entropy of router output.
-
-        H(r) = -Σ [r log(r) + (1-r) log(1-r)] / N
-
-        Maximum entropy (0.693) at r=0.5, minimum (0) at r=0 or r=1.
-        We MAXIMIZE entropy to encourage non-extreme outputs.
-
-        Parameters:
-        -----------
-        r : tf.Tensor
-            Router output of shape (H, W), values in [0, 1]
-        layout_mask : tf.Tensor
-            Fluid domain mask
-
-        Returns:
-        --------
-        entropy : tf.Tensor
-            Mean binary entropy (scalar)
-        """
-        eps = 1e-7  # Prevent log(0)
-        r_clipped = tf.clip_by_value(r, eps, 1.0 - eps)
-
-        # Binary entropy: -[r*log(r) + (1-r)*log(1-r)]
-        entropy_per_point = -(r_clipped * tf.math.log(r_clipped) +
-                              (1.0 - r_clipped) * tf.math.log(1.0 - r_clipped))
-
-        # Average over fluid points only
-        num_fluid = tf.reduce_sum(layout_mask) + eps
-        mean_entropy = tf.reduce_sum(entropy_per_point * layout_mask) / num_fluid
-
-        return mean_entropy
 
     def compute_total_variation(self, r):
         """
@@ -642,17 +591,16 @@ class RouterTrainer:
     def train_step(self, inputs, X, Y, layout_mask):
         """
         Perform one training step.
-        
+
         Parameters:
         -----------
         inputs : tf.Tensor
-            Router input of shape (batch, H, W, 5)
-            Channel 0: layout, Channel 1: bc_mask, Channels 2-4: bc_u, bc_v, bc_p
+            Router input of shape (batch, H, W, 8)
         X, Y : tf.Tensor
             Coordinate grids of shape (H, W)
         layout_mask : tf.Tensor
             Fluid domain mask of shape (H, W), 1=fluid, 0=obstacle
-            
+
         Returns:
         --------
         loss : tf.Tensor
@@ -664,79 +612,65 @@ class RouterTrainer:
         bc_mask = inputs[0, :, :, 1]
         bc_u = inputs[0, :, :, 2]
         bc_v = inputs[0, :, :, 3]
-        
+
         with tf.GradientTape() as tape:
-            # Forward pass
-            r = self.router(inputs, training=True)  # Shape: (batch, H, W, 1)
-            r = r[0, :, :, 0]  # Remove batch and channel dims: (H, W)
-            
-            # Apply layout mask
-            r_masked = r * tf.cast(layout_mask, tf.float32)
-            num_fluid = tf.reduce_sum(tf.cast(layout_mask, tf.float32)) + 1e-10
-            
-            # 1. CFD cost: β · mean(r) → in [0, β]
-            # This is the fraction of domain assigned to CFD, scaled by β
-            cfd_fraction = tf.reduce_sum(r_masked) / num_fluid  # in [0, 1]
-            cfd_cost = self.beta * cfd_fraction
-            
-            # 2. PINN residual weighted by (1 - r)
-            # Compute PINN residuals including BC error propagation
-            # Residuals are normalized to [0, 1] by clipping at 95th percentile
+            # Forward pass: raw logits in R
+            s = self.router(inputs, training=True)  # Shape: (batch, H, W, 1)
+            s = s[0, :, :, 0]  # Remove batch and channel dims: (H, W)
+
+            layout_f = tf.cast(layout_mask, tf.float32)
+            num_fluid = tf.reduce_sum(layout_f) + 1e-10
+
+            # Compute PINN residuals
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
-            
+
             # Normalize total_residual by 95th percentile, then clip at 1.5
             residual_flat = tf.reshape(total_residual, [-1])
             k = tf.cast(tf.cast(tf.size(residual_flat), tf.float32) * 0.95, tf.int32)
             k = tf.maximum(k, 1)
             top_values, _ = tf.nn.top_k(residual_flat, k)
             residual_p95 = top_values[-1] + 1e-10
-            # Normalize by p95, then clip at 1.5x
-            total_residual_norm = total_residual / residual_p95
-            total_residual_norm = tf.minimum(total_residual_norm, 1.5)
-            
-            # Weight by (1 - r): points assigned to PINN should have low residual
-            pinn_weight = (1.0 - r_masked) * tf.cast(layout_mask, tf.float32)
-            pinn_fraction = tf.reduce_sum(pinn_weight) / num_fluid  # in [0, 1]
-            
-            # FIXED: Use mean over all fluid points, not weighted mean
-            # This gives proper gradients even when r→0 or r→1
-            # residual_loss = mean((1-r) * residual) → in [0, 1]
-            residual_loss = tf.reduce_sum(pinn_weight * total_residual_norm) / num_fluid
-            
-            # 3. Total variation regularization (spatial smoothness)
-            r_4d = tf.reshape(r_masked, [1, tf.shape(r_masked)[0], tf.shape(r_masked)[1], 1])
-            tv_loss = self.lambda_tv * self.compute_total_variation(r_4d)
+            total_residual_norm = tf.minimum(total_residual / residual_p95, 1.5)
 
-            # 4. Entropy regularization (encourage non-extreme outputs)
-            # We SUBTRACT entropy because we want to MAXIMIZE it
-            entropy = self.compute_binary_entropy(r_masked, tf.cast(layout_mask, tf.float32))
-            entropy_loss = -self.lambda_entropy * entropy  # Negative = maximize entropy
+            # Logistic loss: 1/N * sum(beta * phi(s,0) + residual * phi(s,1))
+            # phi(s,j) = log(1 + exp(-[2j-1]*s))
+            # phi(s,0) = softplus(s)   → cost of assigning to PINN (penalizes s>0)
+            # phi(s,1) = softplus(-s)  → cost of assigning to CFD (penalizes s<0)
+            logistic_loss = tf.reduce_sum(
+                (self.beta * tf.math.softplus(s) +
+                 total_residual_norm * tf.math.softplus(-s)) * layout_f
+            ) / num_fluid
+
+            # Total variation regularization (spatial smoothness)
+            s_masked = s * layout_f
+            s_4d = tf.reshape(s_masked, [1, tf.shape(s)[0], tf.shape(s)[1], 1])
+            tv_loss = self.lambda_tv * self.compute_total_variation(s_4d)
 
             # Total loss
-            total_loss = cfd_cost + residual_loss + tv_loss + entropy_loss
-        
+            total_loss = logistic_loss + tv_loss
+
         # Compute gradients
         gradients = tape.gradient(total_loss, self.router.trainable_variables)
-        
+
         # Gradient clipping for stability
         if self.grad_clip_norm is not None:
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_norm)
-        
+
         # Apply gradients
         self.optimizer.apply_gradients(zip(gradients, self.router.trainable_variables))
-        
+
+        # Compute CFD fraction for logging (sigmoid of s gives probability)
+        cfd_fraction = tf.reduce_sum(tf.sigmoid(s) * layout_f) / num_fluid
+
         metrics = {
             'total_loss': total_loss,
-            'cfd_cost': cfd_cost,
-            'residual_loss': residual_loss,
+            'logistic_loss': logistic_loss,
             'tv_loss': tv_loss,
-            'entropy': entropy,
             'cfd_fraction': cfd_fraction,
-            'pinn_fraction': pinn_fraction
         }
-        
+
         return total_loss, metrics
     
     def train(self, inputs, X, Y, layout_mask, epochs=100, verbose=True):
@@ -769,56 +703,51 @@ class RouterTrainer:
         
         for epoch in range(epochs):
             loss, metrics = self.train_step(inputs, X, Y, layout_mask)
-            
+
             # Record history
             self.loss_history.append(float(metrics['total_loss']))
-            self.cfd_cost_history.append(float(metrics['cfd_cost']))
-            self.residual_loss_history.append(float(metrics['residual_loss']))
+            self.logistic_loss_history.append(float(metrics['logistic_loss']))
             self.tv_loss_history.append(float(metrics['tv_loss']))
-            self.entropy_history.append(float(metrics['entropy']))
 
             if verbose and (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
                       f"Loss: {metrics['total_loss']:.4f}, "
-                      f"CFD: {metrics['cfd_cost']:.4f}, "
-                      f"Res: {metrics['residual_loss']:.4f}, "
-                      f"Ent: {metrics['entropy']:.3f}, "
+                      f"Logistic: {metrics['logistic_loss']:.4f}, "
+                      f"TV: {metrics['tv_loss']:.4f}, "
                       f"CFD%: {metrics['cfd_fraction']*100:.1f}%")
-        
+
         history = {
             'total_loss': self.loss_history,
-            'cfd_cost': self.cfd_cost_history,
-            'residual_loss': self.residual_loss_history,
+            'logistic_loss': self.logistic_loss_history,
             'tv_loss': self.tv_loss_history,
-            'entropy': self.entropy_history
         }
         
         return history
     
-    def predict(self, inputs, threshold=0.5):
+    def predict(self, inputs, threshold=0.0):
         """
         Get router prediction and binary mask.
-        
+
         Parameters:
         -----------
         inputs : tf.Tensor or np.ndarray
-            Router input of shape (1, H, W, 5)
+            Router input of shape (1, H, W, 8)
         threshold : float
-            Threshold for binary mask (default: 0.5)
-            
+            Threshold for binary mask (default: 0.0, positive=CFD)
+
         Returns:
         --------
         r : np.ndarray
-            Continuous router output (H, W)
+            Raw router logits (H, W), positive=CFD, negative=PINN
         mask : np.ndarray
             Binary mask (H, W), 1=CFD, 0=PINN
         """
         inputs = tf.constant(inputs, dtype=tf.float32)
         r = self.router(inputs, training=False)
         r = r[0, :, :, 0].numpy()
-        
+
         mask = (r >= threshold).astype(np.int32)
-        
+
         return r, mask
 
 
@@ -977,13 +906,14 @@ def plot_router_output(r, X, Y, layout, title='Router Output',
         (cx, cy, radius) for cylinder visualization
     """
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    
-    # 1. Continuous router output
+
+    # 1. Continuous router output (raw logits)
     ax = axes[0]
     r_masked = np.ma.masked_where(layout == 0, r)
-    cf = ax.contourf(X, Y, r_masked, levels=50, cmap='RdBu_r', 
-                     norm=Normalize(vmin=0, vmax=1))
-    plt.colorbar(cf, ax=ax, label='Router Score')
+    vmax = max(abs(np.nanmin(r[layout == 1])), abs(np.nanmax(r[layout == 1])), 1e-6)
+    cf = ax.contourf(X, Y, r_masked, levels=50, cmap='RdBu_r',
+                     norm=Normalize(vmin=-vmax, vmax=vmax))
+    plt.colorbar(cf, ax=ax, label='Router Logit')
     if show_circle:
         cx, cy, radius = show_circle
         circle = plt.Circle((cx, cy), radius, color='gray', fill=True)
@@ -991,15 +921,15 @@ def plot_router_output(r, X, Y, layout, title='Router Output',
     ax.set_aspect('equal')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Continuous Router Output\n(0=PINN, 1=CFD)')
-    
-    # 2. Binary mask (threshold = 0.5)
+    ax.set_title('Router Logits\n(neg=PINN, pos=CFD)')
+
+    # 2. Binary mask (threshold = 0)
     ax = axes[1]
-    mask = (r >= 0.5).astype(np.float32)
+    mask = (r >= 0.0).astype(np.float32)
     mask_masked = np.ma.masked_where(layout == 0, mask)
-    cf = ax.contourf(X, Y, mask_masked, levels=[0, 0.5, 1], 
+    cf = ax.contourf(X, Y, mask_masked, levels=[-0.5, 0.5, 1.5],
                      colors=['blue', 'red'], alpha=0.7)
-    cbar = plt.colorbar(cf, ax=ax, ticks=[0.25, 0.75])
+    cbar = plt.colorbar(cf, ax=ax, ticks=[0.0, 1.0])
     cbar.ax.set_yticklabels(['PINN', 'CFD'])
     if show_circle:
         circle = plt.Circle((cx, cy), radius, color='gray', fill=True)
@@ -1007,14 +937,14 @@ def plot_router_output(r, X, Y, layout, title='Router Output',
     ax.set_aspect('equal')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Binary Mask (threshold=0.5)')
-    
+    ax.set_title('Binary Mask (threshold=0)')
+
     # 3. Layout with regions
     ax = axes[2]
     combined = np.zeros_like(r)
     combined[layout == 0] = 0  # Obstacle
-    combined[(layout == 1) & (r < 0.5)] = 1  # PINN region
-    combined[(layout == 1) & (r >= 0.5)] = 2  # CFD region
+    combined[(layout == 1) & (r < 0.0)] = 1  # PINN region
+    combined[(layout == 1) & (r >= 0.0)] = 2  # CFD region
     cf = ax.contourf(X, Y, combined, levels=[-0.5, 0.5, 1.5, 2.5],
                      colors=['gray', 'blue', 'red'], alpha=0.7)
     cbar = plt.colorbar(cf, ax=ax, ticks=[0, 1, 2])
@@ -1047,34 +977,27 @@ def plot_training_history(history, save_path=None):
     save_path : str, optional
         Path to save figure
     """
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
     # Total loss
-    ax = axes[0, 0]
+    ax = axes[0]
     ax.plot(history['total_loss'], 'b-', linewidth=1.5)
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Total Loss')
     ax.set_title('Total Loss')
     ax.grid(True, alpha=0.3)
-    
-    # CFD cost
-    ax = axes[0, 1]
-    ax.plot(history['cfd_cost'], 'r-', linewidth=1.5)
+
+    # Logistic loss
+    ax = axes[1]
+    logistic_key = 'logistic_loss' if 'logistic_loss' in history else 'cfd_cost'
+    ax.plot(history[logistic_key], 'r-', linewidth=1.5)
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('CFD Cost')
-    ax.set_title('CFD Cost (β · Σr)')
+    ax.set_ylabel('Logistic Loss')
+    ax.set_title('Logistic Loss')
     ax.grid(True, alpha=0.3)
-    
-    # Residual loss
-    ax = axes[1, 0]
-    ax.plot(history['residual_loss'], 'g-', linewidth=1.5)
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Residual Loss')
-    ax.set_title('PINN Residual Loss')
-    ax.grid(True, alpha=0.3)
-    
+
     # TV loss
-    ax = axes[1, 1]
+    ax = axes[2]
     ax.plot(history['tv_loss'], 'm-', linewidth=1.5)
     ax.set_xlabel('Epoch')
     ax.set_ylabel('TV Loss')

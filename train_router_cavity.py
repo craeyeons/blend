@@ -285,7 +285,6 @@ class CavityRouterTrainer:
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
-        self.lambda_entropy = lambda_entropy
         self.grad_clip_norm = grad_clip_norm
         
         if residual_weights is None:
@@ -307,74 +306,66 @@ class CavityRouterTrainer:
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
     
     def compute_loss(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v):
-        """Compute total loss for router training."""
-        r = self.router(inputs, training=True)
-        r = tf.squeeze(r, axis=0)
-        r = tf.squeeze(r, axis=-1)
-        
+        """Compute total loss for router training using logistic formulation."""
+        s = self.router(inputs, training=True)
+        s = tf.squeeze(s, axis=0)
+        s = tf.squeeze(s, axis=-1)
+
         layout_mask_tf = tf.cast(layout_mask, tf.float32)
         bc_mask_tf = tf.cast(bc_mask, tf.float32)
         bc_u_tf = tf.cast(bc_u, tf.float32)
         bc_v_tf = tf.cast(bc_v, tf.float32)
         X_tf = tf.cast(X, tf.float32)
         Y_tf = tf.cast(Y, tf.float32)
-        
+
         # Compute physics residual
         residual = self.residual_computer.compute_total_residual_with_bc(
             X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf,
             weights=self.residual_weights
         )
-        
-        # Mask to fluid region
-        r_fluid = r * layout_mask_tf
+
         residual_fluid = residual * layout_mask_tf
         n_fluid = tf.reduce_sum(layout_mask_tf) + 1e-10
-        
-        # CFD cost: β * mean(r)
-        cfd_cost = self.beta * tf.reduce_sum(r_fluid) / n_fluid
-        
-        # Residual loss: mean((1-r) * R) where R is physics residual
-        residual_loss = tf.reduce_sum((1.0 - r_fluid) * residual_fluid) / n_fluid
-        
+
+        # Logistic loss: 1/N * sum(beta * softplus(s) + residual * softplus(-s))
+        logistic_loss = tf.reduce_sum(
+            (self.beta * tf.math.softplus(s) +
+             residual_fluid * tf.math.softplus(-s)) * layout_mask_tf
+        ) / n_fluid
+
         # Total variation regularization
-        r_2d = r * layout_mask_tf
-        tv_h = tf.reduce_sum(tf.abs(r_2d[:, 1:] - r_2d[:, :-1]))
-        tv_v = tf.reduce_sum(tf.abs(r_2d[1:, :] - r_2d[:-1, :]))
+        s_2d = s * layout_mask_tf
+        tv_h = tf.reduce_sum(tf.abs(s_2d[:, 1:] - s_2d[:, :-1]))
+        tv_v = tf.reduce_sum(tf.abs(s_2d[1:, :] - s_2d[:-1, :]))
         tv_loss = self.lambda_tv * (tv_h + tv_v) / n_fluid
 
-        # Entropy regularization: encourage non-extreme values
-        r_clipped = tf.clip_by_value(r_fluid / (layout_mask_tf + 1e-10), 1e-7, 1 - 1e-7)
-        entropy = -tf.reduce_mean(r_clipped * tf.math.log(r_clipped) +
-                                  (1 - r_clipped) * tf.math.log(1 - r_clipped))
-        entropy_term = -self.lambda_entropy * entropy
+        total_loss = logistic_loss + tv_loss
 
-        total_loss = cfd_cost + residual_loss + tv_loss + entropy_term
-
-        return total_loss, cfd_cost, residual_loss, tv_loss, entropy_term
+        return total_loss, logistic_loss, tv_loss
     
     @tf.function
     def train_step(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v):
         """Single training step."""
         with tf.GradientTape() as tape:
-            total_loss, cfd_cost, residual_loss, tv_loss, entropy_term = \
+            total_loss, logistic_loss, tv_loss = \
                 self.compute_loss(inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v)
-        
+
         gradients = tape.gradient(total_loss, self.router.trainable_variables)
-        
+
         if self.grad_clip_norm is not None:
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_norm)
-        
+
         self.optimizer.apply_gradients(zip(gradients, self.router.trainable_variables))
-        
-        return total_loss, cfd_cost, residual_loss, tv_loss, entropy_term
+
+        return total_loss, logistic_loss, tv_loss
 
     def train(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v, epochs=200, verbose=True):
         """Train the router."""
         history = {
-            'total_loss': [], 'cfd_cost': [], 'residual_loss': [],
-            'tv_loss': [], 'entropy_term': []
+            'total_loss': [], 'logistic_loss': [],
+            'tv_loss': []
         }
-        
+
         X_tf = tf.constant(X, dtype=tf.float32)
         Y_tf = tf.constant(Y, dtype=tf.float32)
         layout_tf = tf.constant(layout_mask, dtype=tf.float32)
@@ -382,30 +373,28 @@ class CavityRouterTrainer:
         bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
         bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
         inputs_tf = tf.constant(inputs, dtype=tf.float32)
-        
+
         for epoch in range(epochs):
-            total_loss, cfd_cost, residual_loss, tv_loss, entropy_term = \
+            total_loss, logistic_loss, tv_loss = \
                 self.train_step(inputs_tf, X_tf, Y_tf, layout_tf, bc_mask_tf, bc_u_tf, bc_v_tf)
 
             history['total_loss'].append(float(total_loss))
-            history['cfd_cost'].append(float(cfd_cost))
-            history['residual_loss'].append(float(residual_loss))
+            history['logistic_loss'].append(float(logistic_loss))
             history['tv_loss'].append(float(tv_loss))
-            history['entropy_term'].append(float(entropy_term))
 
             if verbose and (epoch + 1) % 10 == 0:
-                r = self.router(inputs_tf, training=False)
-                r_np = r.numpy().squeeze()
-                cfd_frac = np.sum(r_np * layout_mask) / np.sum(layout_mask) * 100
+                s = self.router(inputs_tf, training=False)
+                s_np = s.numpy().squeeze()
+                cfd_frac = np.sum((s_np > 0) * layout_mask) / np.sum(layout_mask) * 100
 
                 print(f"Epoch {epoch+1:4d} | Loss: {float(total_loss):.4f} | "
-                      f"CFD: {float(cfd_cost):.4f} | Res: {float(residual_loss):.4f} | "
-                      f"TV: {float(tv_loss):.4f} | Ent: {float(entropy_term):.4f} | "
+                      f"Logistic: {float(logistic_loss):.4f} | "
+                      f"TV: {float(tv_loss):.4f} | "
                       f"CFD%: {cfd_frac:.1f}%")
-        
+
         return history
-    
-    def predict(self, inputs, threshold=0.5):
+
+    def predict(self, inputs, threshold=0.0):
         """Get router predictions and binary mask."""
         r = self.router(inputs, training=False)
         r = r.numpy().squeeze()
@@ -447,14 +436,10 @@ def main():
                         help='CFD cost coefficient (higher = less CFD)')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
-    parser.add_argument('--lambda-entropy', type=float, default=0.1,
-                        help='Entropy regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,
                         help='Learning rate')
     parser.add_argument('--grad-clip', type=float, default=1.0,
                         help='Gradient clipping norm')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                        help='Sigmoid temperature')
     
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0,
@@ -491,8 +476,8 @@ def main():
                         help='Base number of filters in router CNN')
     
     # Inference
-    parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Threshold for binary mask')
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='Threshold for binary mask (0=decision boundary)')
     
     args = parser.parse_args()
     
@@ -591,31 +576,29 @@ def main():
     # =========================================================================
     print("\n[Step 3] Initializing router CNN...")
     
-    router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
-    
+    router = RouterCNN(base_filters=args.base_filters)
+
     # Build the model
     _ = router(inputs)
     print(f"  Router parameters: {router.count_params():,}")
-    print(f"  Temperature: {args.temperature}")
-    
+
     # =========================================================================
     # Step 4: Initialize trainer
     # =========================================================================
     print("\n[Step 4] Initializing trainer...")
-    
+
     residual_weights = {
         'continuity': args.weight_continuity,
         'momentum': args.weight_momentum,
         'bc_local': args.weight_bc_local,
         'bc_propagated': args.weight_bc_propagated
     }
-    
+
     trainer = CavityRouterTrainer(
         router=router,
         pinn_model=pinn_model,
         beta=args.beta,
         lambda_tv=args.lambda_tv,
-        lambda_entropy=args.lambda_entropy,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
         residual_weights=residual_weights,
         nu=args.nu,
@@ -624,10 +607,9 @@ def main():
         y_domain=(args.y_min, args.y_max)
     )
     trainer.optimizer.learning_rate.assign(args.lr)
-    
+
     print(f"  β (CFD cost): {args.beta}")
     print(f"  λ_tv (TV reg): {args.lambda_tv}")
-    print(f"  λ_entropy: {args.lambda_entropy}")
     print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
     
