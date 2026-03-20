@@ -57,8 +57,6 @@ python train_router_multi.py \
     --beta 1.1 \
     --lambda-tv 0.1 \
     --lr 1e-4 \
-    --temperature 0.5 \
-    --threshold 0.67
 
 echo "=== Multi-config router training completed ==="
 
@@ -69,7 +67,6 @@ python plot_router_thresholds.py \
     --threshold-start 0.45 \
     --threshold-end 0.75 \
     --num-thresholds 11 \
-    --temperature 0.5 \
     --cylinder-y 0.5 \
     --output-dir ./threshold_plots_multi
 

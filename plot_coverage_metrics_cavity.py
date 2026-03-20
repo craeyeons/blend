@@ -397,21 +397,24 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
 def compute_expected_losses(residual_field, router_output, layout, beta):
     """
     Compute expected losses for different strategies.
+
+    Router output is logits in R: positive = CFD, negative = PINN.
+    Default threshold is 0.
     """
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
-    confidences = router_output[fluid_mask]
-    
+    logits = router_output[fluid_mask]
+
     n_fluid = len(residuals)
-    
+
     # PINN only: all residuals
     loss_pinn_only = np.mean(residuals)
-    
+
     # CFD only: just beta (cost)
     loss_cfd_only = beta
-    
-    # Hybrid with default threshold 0.5
-    cfd_mask = confidences >= 0.5
+
+    # Hybrid with default threshold 0
+    cfd_mask = logits >= 0.0
     n_cfd = np.sum(cfd_mask)
     coverage_hybrid = n_cfd / n_fluid
     pinn_residuals = residuals[~cfd_mask]
@@ -419,37 +422,36 @@ def compute_expected_losses(residual_field, router_output, layout, beta):
         loss_hybrid = beta * coverage_hybrid + np.mean(pinn_residuals) * (1 - coverage_hybrid)
     else:
         loss_hybrid = beta
-    
-    # Find optimal threshold
-    sorted_idx = np.argsort(confidences)[::-1]
-    sorted_residuals = residuals[sorted_idx]
-    sorted_confidences = confidences[sorted_idx]
-    
-    n_thresholds = 100
-    thresholds = np.linspace(0, 1, n_thresholds)
+
+    # Find optimal threshold by sweeping over actual logit range
+    logit_min = float(np.min(logits))
+    logit_max = float(np.max(logits))
+    margin = max(0.1, (logit_max - logit_min) * 0.05)
+    n_thresholds = 500
+    thresholds = np.linspace(logit_min - margin, logit_max + margin, n_thresholds)
     losses = np.zeros(n_thresholds)
-    
+
     for i, t in enumerate(thresholds):
-        n_cfd = np.sum(confidences >= t)
+        n_cfd = np.sum(logits >= t)
         cov = n_cfd / n_fluid
         if n_cfd == n_fluid:
             losses[i] = beta
         elif n_cfd == 0:
             losses[i] = np.mean(residuals)
         else:
-            pinn_res = residuals[confidences < t]
+            pinn_res = residuals[logits < t]
             losses[i] = beta * cov + np.mean(pinn_res) * (1 - cov)
-    
+
     optimal_idx = np.argmin(losses)
     optimal_threshold = thresholds[optimal_idx]
     optimal_loss = losses[optimal_idx]
-    optimal_coverage = np.sum(confidences >= optimal_threshold) / n_fluid
-    
+    optimal_coverage = np.sum(logits >= optimal_threshold) / n_fluid
+
     return {
         'loss_pinn_only': loss_pinn_only,
         'loss_cfd_only': loss_cfd_only,
         'loss_hybrid': loss_hybrid,
-        'default_threshold': 0.5,
+        'default_threshold': 0.0,
         'coverage_hybrid': coverage_hybrid,
         'optimal_threshold': optimal_threshold,
         'optimal_loss': optimal_loss,
@@ -460,96 +462,81 @@ def compute_expected_losses(residual_field, router_output, layout, beta):
 def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_points=200,
                              lambda_tv=0.01, lambda_entropy=0.1):
     """
-    Compute the FULL router training loss as a function of coverage.
+    Compute the router training loss as a function of coverage.
+
+    Uses logistic loss: 1/N * sum(beta * softplus(s) + R * softplus(-s)) + TV
+    For the coverage sweep, uses the asymptotic binary limit.
     """
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
-    confidences = router_output[fluid_mask]
-    
+    logits = router_output[fluid_mask]
+
     n_fluid = len(residuals)
-    
-    # Sort by confidence descending
-    sorted_idx = np.argsort(confidences)[::-1]
+
+    # Sort by logit descending
+    sorted_idx = np.argsort(logits)[::-1]
     sorted_residuals = residuals[sorted_idx]
-    sorted_confidences = confidences[sorted_idx]
-    
+    sorted_logits = logits[sorted_idx]
+
     coverage = np.linspace(0, 1, n_points)
     loss = np.zeros(n_points)
-    
+
     for i, cov in enumerate(coverage):
         n_cfd = int(cov * n_fluid)
         n_pinn = n_fluid - n_cfd
-        
-        # CFD cost
+
+        # Binary limit: beta*c + (1-c)*mean(R_pinn) + TV
         cfd_cost = beta * cov
-        
-        # Residual loss
         if n_pinn > 0:
             residual_loss = (1 - cov) * np.mean(sorted_residuals[n_cfd:])
         else:
             residual_loss = 0.0
-        
-        # TV approximation
         tv_approx = lambda_tv * 4 * cov * (1 - cov)
 
-        # Entropy
-        if cov > 1e-7 and cov < 1 - 1e-7:
-            entropy = -cov * np.log(cov) - (1 - cov) * np.log(1 - cov)
-        else:
-            entropy = 0.0
-        entropy_term = -lambda_entropy * entropy
+        loss[i] = cfd_cost + residual_loss + tv_approx
 
-        loss[i] = cfd_cost + residual_loss + tv_approx + entropy_term
-    
     # Find optimal
     optimal_idx = np.argmin(loss)
     optimal_coverage = coverage[optimal_idx]
     optimal_loss = loss[optimal_idx]
-    
+
     # Find corresponding threshold
     n_cfd_optimal = int(optimal_coverage * n_fluid)
     if n_cfd_optimal > 0 and n_cfd_optimal < n_fluid:
-        optimal_threshold = sorted_confidences[n_cfd_optimal - 1]
+        optimal_threshold = sorted_logits[n_cfd_optimal - 1]
     elif n_cfd_optimal == 0:
-        optimal_threshold = 1.0
+        optimal_threshold = sorted_logits[0] + 0.001 if n_fluid > 0 else 1.0
     else:
-        optimal_threshold = 0.0
-    
-    # Compute actual router loss
-    mean_r = np.mean(confidences)
-    actual_cfd_cost = beta * mean_r
-    actual_residual_loss = np.mean((1 - confidences) * residuals)
-    
-    r_2d = router_output * layout
-    tv_h = np.sum(np.abs(r_2d[:, 1:] - r_2d[:, :-1]))
-    tv_v = np.sum(np.abs(r_2d[1:, :] - r_2d[:-1, :]))
-    actual_tv_loss = lambda_tv * (tv_h + tv_v) / n_fluid
-    
-    conf_clipped = np.clip(confidences, 1e-7, 1 - 1e-7)
-    actual_entropy = np.mean(-conf_clipped * np.log(conf_clipped) -
-                             (1 - conf_clipped) * np.log(1 - conf_clipped))
-    actual_entropy_term = -lambda_entropy * actual_entropy
+        optimal_threshold = sorted_logits[-1] - 0.001 if n_fluid > 0 else 0.0
 
-    actual_total_loss = (actual_cfd_cost + actual_residual_loss + actual_tv_loss +
-                        actual_entropy_term)
-    actual_coverage = mean_r
-    
+    # Compute actual logistic loss
+    s = logits
+    actual_logistic_loss = np.mean(
+        beta * np.log1p(np.exp(np.clip(s, -50, 50))) +
+        residuals * np.log1p(np.exp(np.clip(-s, -50, 50)))
+    )
+
+    s_2d = router_output * layout
+    tv_h = np.sum(np.abs(s_2d[:, 1:] - s_2d[:, :-1]))
+    tv_v = np.sum(np.abs(s_2d[1:, :] - s_2d[:-1, :]))
+    actual_tv_loss = lambda_tv * (tv_h + tv_v) / n_fluid
+
+    actual_total_loss = actual_logistic_loss + actual_tv_loss
+    actual_coverage = np.mean(logits > 0)
+
     actual_loss_info = {
-        'cfd_cost': actual_cfd_cost,
-        'residual_loss': actual_residual_loss,
+        'logistic_loss': actual_logistic_loss,
         'tv_loss': actual_tv_loss,
-        'entropy': actual_entropy,
-        'entropy_term': actual_entropy_term,
         'actual_total_loss': actual_total_loss,
         'actual_coverage': actual_coverage
     }
-    
+
     optimal_info = {
         'optimal_threshold': optimal_threshold,
         'optimal_coverage': optimal_coverage,
         'optimal_loss': optimal_loss
     }
-    
+
     return coverage, loss, actual_loss_info, optimal_info
 
 
@@ -589,24 +576,24 @@ def plot_combined_metrics(coverage, accuracy, results, beta,
     # Compute loss vs coverage
     loss_coverage, loss_values, actual_loss_info, full_loss_optimal = compute_loss_vs_coverage(
         residual_field, router_output, layout, beta,
-        lambda_tv=lambda_tv, lambda_entropy=lambda_entropy
+        lambda_tv=lambda_tv
     )
-    
+
     actual_coverage = actual_loss_info['actual_coverage']
-    
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
+
     # Left plot: Loss vs Coverage
-    ax1.plot(loss_coverage * 100, loss_values, 'b-', linewidth=2.5, label='Full Training Loss')
-    
+    ax1.plot(loss_coverage * 100, loss_values, 'b-', linewidth=2.5, label='Reference Loss')
+
     opt_cov = full_loss_optimal['optimal_coverage']
     opt_loss = full_loss_optimal['optimal_loss']
-    ax1.scatter([opt_cov * 100], [opt_loss], s=200, c='red', marker='*', 
+    ax1.scatter([opt_cov * 100], [opt_loss], s=200, c='red', marker='*',
                 zorder=10, label=f'Optimal: cov={opt_cov*100:.1f}%, loss={opt_loss:.4f}')
-    
+
     ax1.axvline(x=actual_coverage * 100, color='green', linestyle='--', linewidth=2,
                 label=f'Router Output: {actual_coverage*100:.1f}%')
-    
+
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
     ax1.set_ylabel('Training Loss', fontsize=14)
     ax1.set_xlim(-5, 105)
@@ -615,33 +602,31 @@ def plot_combined_metrics(coverage, accuracy, results, beta,
     ax1.spines['right'].set_visible(False)
     ax1.grid(True, alpha=0.3)
     ax1.legend(loc='upper right', fontsize=8)
-    
+
     # Right plot: Loss breakdown
-    components = ['CFD\nCost', 'Residual\nLoss', 'TV\nLoss', 'Entropy\n(neg)', 'TOTAL']
+    components = ['Logistic\nLoss', 'TV\nLoss', 'TOTAL']
     values = [
-        actual_loss_info['cfd_cost'],
-        actual_loss_info['residual_loss'],
+        actual_loss_info['logistic_loss'],
         actual_loss_info['tv_loss'],
-        actual_loss_info['entropy_term'],
         actual_loss_info['actual_total_loss']
     ]
-    colors = ['steelblue', 'coral', 'gold', 'lightgreen', 'red']
-    
+    colors = ['steelblue', 'gold', 'red']
+
     bars = ax2.bar(components, values, color=colors, edgecolor='black', linewidth=1.5)
-    
+
     for bar, val in zip(bars, values):
         height = bar.get_height()
         y_pos = height + 0.01 if height >= 0 else height - 0.03
         va = 'bottom' if height >= 0 else 'top'
         ax2.text(bar.get_x() + bar.get_width()/2., y_pos,
                 f'{val:.4f}', ha='center', va=va, fontsize=10, fontweight='bold')
-    
+
     ax2.axhline(y=0, color='black', linewidth=0.5)
     ax2.set_ylabel('Loss Value', fontsize=14)
     ax2.set_title('Router Loss Breakdown', fontsize=16, fontweight='bold')
-    
+
     info = f"Router Coverage: {actual_coverage*100:.1f}%\n"
-    info += f"Entropy: {actual_loss_info['entropy']:.4f}"
+    info += f"β={beta}, λ_TV={lambda_tv}"
     ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=9,
              va='top', ha='right', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
     
@@ -719,8 +704,6 @@ def main():
     # Router parameters
     parser.add_argument('--base-filters', type=int, default=32,
                         help='Base filters in router CNN')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                        help='Router temperature')
     
     # Cost coefficient
     parser.add_argument('--beta', type=float, default=1,
@@ -728,7 +711,6 @@ def main():
     
     # Regularization weights
     parser.add_argument('--lambda-tv', type=float, default=0.01)
-    parser.add_argument('--lambda-entropy', type=float, default=0.1)
     # Domain parameters (cavity is square)
     parser.add_argument('--N', type=int, default=100,
                         help='Grid size')
@@ -851,7 +833,7 @@ def main():
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
                                      pinn_u, pinn_v, pinn_p)
         
-        router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
+        router = RouterCNN(base_filters=args.base_filters)
         _ = router(inputs)
         router.load_weights(args.router_weights)
         
@@ -913,7 +895,7 @@ def main():
     
     _, _, _, full_loss_optimal = compute_loss_vs_coverage(
         residual_field, router_output, layout, args.beta,
-        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy
+        lambda_tv=args.lambda_tv
     )
 
     print(f"  Full Loss Optimal Threshold: {full_loss_optimal['optimal_threshold']:.6f}")
@@ -952,7 +934,7 @@ def main():
     plot_combined_metrics(
         coverage, accuracy, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
-        lambda_tv=args.lambda_tv, lambda_entropy=args.lambda_entropy,
+        lambda_tv=args.lambda_tv,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
     

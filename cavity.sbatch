@@ -61,8 +61,6 @@ python train_router_cavity.py \
     --weight-continuity 1.0 \
     --weight-momentum 1.0 \
     --N 100 \
-    --threshold 0.5 \
-    --temperature 0.5 
 
 echo "=== Router training completed ==="
 
@@ -72,7 +70,6 @@ python plot_router_thresholds_cavity.py \
     --threshold-start 0.1 \
     --threshold-end 0.9 \
     --num-thresholds 9 \
-    --temperature 0.5 \
     --N 100
 
 echo "=== Job completed ==="

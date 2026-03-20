@@ -32,7 +32,6 @@ python time_cylinder.py \
     --router-weights ./router_output/router.weights.h5 \
     --beta 1.1 \
     --cylinder-y 0.5 \
-    --temperature 0.5 \
     --n-runs 3
 
 echo "=== Job completed ==="

@@ -70,9 +70,7 @@ python train_router.py \
     --weight-momentum 1.0 \
     --nx 200 \
     --ny 100 \
-    --threshold 0.78 \
-    --cylinder-y 0.8 \
-    --temperature 0.5 
+    --cylinder-y 0.8
 
 echo "=== Router training completed ==="
 
@@ -86,13 +84,10 @@ echo "=== Router training completed ==="
 #     --max-iter 100000 \
 #     --threshold 0.78 \
 #     --cylinder-y 0.8 \
-#     --temperature 0.5
-
 python plot_router_thresholds.py --router-path ./router_output/router.weights.h5 \
-	--threshold-start 0.65 \
-	--threshold-end 0.75 \
+	--threshold-start -0.5 \
+	--threshold-end 0.5 \
 	--num-thresholds 11 \
-	--temperature 0.5 \
 	--cylinder-y 0.8
 
 echo "=== Job completed ==="

@@ -41,15 +41,15 @@ def compute_uv_direct(network, xy):
 
 def find_optimal_threshold(residual_field, router_output, layout, beta,
                            lambda_tv=0.01, lambda_entropy=0.1, n_points=200):
-    """Find optimal threshold from full training loss curve."""
+    """Find optimal threshold from training loss curve."""
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
-    confidences = router_output[fluid_mask]
+    logits = router_output[fluid_mask]
     n_fluid = len(residuals)
 
-    sorted_idx = np.argsort(confidences)[::-1]
+    sorted_idx = np.argsort(logits)[::-1]
     sorted_residuals = residuals[sorted_idx]
-    sorted_confidences = confidences[sorted_idx]
+    sorted_logits = logits[sorted_idx]
 
     coverage = np.linspace(0, 1, n_points)
     loss = np.zeros(n_points)
@@ -62,22 +62,18 @@ def find_optimal_threshold(residual_field, router_output, layout, beta,
         else:
             residual_loss = 0.0
         tv_approx = lambda_tv * 4 * cov * (1 - cov)
-        if 1e-7 < cov < 1 - 1e-7:
-            entropy = -cov * np.log(cov) - (1 - cov) * np.log(1 - cov)
-        else:
-            entropy = 0.0
-        loss[i] = cfd_cost + residual_loss + tv_approx - lambda_entropy * entropy
+        loss[i] = cfd_cost + residual_loss + tv_approx
 
     optimal_idx = np.argmin(loss)
     optimal_coverage = coverage[optimal_idx]
     n_cfd_optimal = int(optimal_coverage * n_fluid)
 
     if 0 < n_cfd_optimal < n_fluid:
-        optimal_threshold = sorted_confidences[n_cfd_optimal - 1]
+        optimal_threshold = sorted_logits[n_cfd_optimal - 1]
     elif n_cfd_optimal == 0:
-        optimal_threshold = 1.0
+        optimal_threshold = sorted_logits[0] + 0.001 if n_fluid > 0 else 1.0
     else:
-        optimal_threshold = 0.0
+        optimal_threshold = sorted_logits[-1] - 0.001 if n_fluid > 0 else 0.0
 
     return optimal_threshold, optimal_coverage
 
@@ -126,7 +122,6 @@ def main():
     parser.add_argument('--temperature', type=float, default=0.5)
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--lambda-tv', type=float, default=0.01)
-    parser.add_argument('--lambda-entropy', type=float, default=0.1)
     parser.add_argument('--n-runs', type=int, default=3)
     args = parser.parse_args()
 
@@ -195,7 +190,7 @@ def main():
 
     optimal_threshold, optimal_coverage = find_optimal_threshold(
         residual_field, router_output, layout, args.beta,
-        args.lambda_tv, args.lambda_entropy,
+        args.lambda_tv,
     )
 
     cfd_mask = (router_output >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)

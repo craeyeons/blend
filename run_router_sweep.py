@@ -42,9 +42,7 @@ def run_training(beta, args):
         '--output-dir', output_dir,
         '--epochs', str(args.epochs),
         '--lambda-tv', str(args.lambda_tv),
-        '--lambda-entropy', str(args.lambda_entropy),
         '--lr', str(args.lr),
-        '--temperature', str(args.temperature),
         '--model-path', args.model_path,
         '--threshold', str(args.threshold),
     ]
@@ -186,16 +184,12 @@ def main():
                         help='Number of training epochs')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
-    parser.add_argument('--lambda-entropy', type=float, default=0.1,
-                        help='Entropy regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,
                         help='Learning rate')
-    parser.add_argument('--temperature', type=float, default=0.5,
-                        help='Sigmoid temperature')
     parser.add_argument('--grad-clip', type=float, default=1.0,
                         help='Gradient clipping norm (0 to disable)')
-    parser.add_argument('--threshold', type=float, default=0.5,
-                        help='Threshold for binary mask')
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='Threshold for binary mask (0=decision boundary)')
     
     # Model path
     parser.add_argument('--model-path', type=str, 

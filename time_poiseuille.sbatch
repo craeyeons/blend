@@ -33,7 +33,6 @@ python time_cylinder.py \
     --beta 1.1 \
     --cylinder-y 0.5 \
     --cylinder-radius 0 \
-    --temperature 0.5 \
     --n-runs 3
 
 echo "=== Job completed ==="

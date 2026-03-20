@@ -55,7 +55,6 @@ python plot_coverage_metrics_cavity.py \
     --compute-cfd \
     --save-cfd ./cfd_cavity_solution.npz \
     --beta 1.1 \
-    --temperature 0.5 \
     --N 100 \
     --output-dir ./metrics_output_cavity
 

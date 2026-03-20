@@ -59,7 +59,6 @@ python train_router.py \
     --weight-momentum 1.0 \
     --nx 200 \
     --ny 100 \
-    --threshold 0.5
 
 echo "=== Router training completed ==="
 

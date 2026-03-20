@@ -63,8 +63,7 @@ python plot_coverage_metrics.py \
     --compute-cfd \
     --save-cfd ./cfd_high_cylinder_solution.npz \
     --beta 1.1 \
-    --cylinder-y 0.8 \
-    --temperature 0.5
+    --cylinder-y 0.8
 
 echo "=== Metrics Generation done ==="
     #--cfd-path cfd_solution.npz \
