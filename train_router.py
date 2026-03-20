@@ -68,11 +68,6 @@ def main():
                         help='Weight for continuity residual')
     parser.add_argument('--weight-momentum', type=float, default=1.0,
                         help='Weight for momentum residual')
-    parser.add_argument('--weight-bc-local', type=float, default=2.0,
-                        help='Weight for local BC error (high = penalize BC mismatch)')
-    parser.add_argument('--weight-bc-propagated', type=float, default=1.5,
-                        help='Weight for BC error propagation downstream')
-    
     # Domain parameters (matching cylinder flow setup)
     parser.add_argument('--nx', type=int, default=200,
                         help='Grid points in x direction')
@@ -220,8 +215,6 @@ def main():
     residual_weights = {
         'continuity': args.weight_continuity,
         'momentum': args.weight_momentum,
-        'bc_local': args.weight_bc_local,
-        'bc_propagated': args.weight_bc_propagated
     }
     
     trainer = RouterTrainer(
