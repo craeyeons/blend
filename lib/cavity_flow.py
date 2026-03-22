@@ -253,11 +253,13 @@ class CavityFlowHybridSimulation(CavityFlowSimulation):
             p_new = p_new.at[-1, :].set(p_new[-2, :])
             p_new = p_new.at[:, 0].set(p_new[:, 1])
             p_new = p_new.at[:, -1].set(p_new[:, -2])
-            
+            # Pin pressure at one point to prevent drift (pure Neumann problem)
+            p_new = p_new - p_new[0, 0]
+
             # In PINN region: use PINN pressure
             p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
             return p_new
-        
+
         @jit
         def solve_pressure_poisson_hybrid(p, rhs, n_iter=100):
             """Solve pressure Poisson equation with Jacobi iterations"""
@@ -616,8 +618,10 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
             p_new = p_new.at[-1, :].set(p_new[-2, :])
             p_new = p_new.at[:, 0].set(p_new[:, 1])
             p_new = p_new.at[:, -1].set(p_new[:, -2])
+            # Pin pressure at one point to prevent drift (pure Neumann problem)
+            p_new = p_new - p_new[0, 0]
             return p_new
-        
+
         @jit
         def solve_pressure_poisson_hybrid(p, rhs, n_iter=100):
             """Solve pressure Poisson equation with Jacobi iterations"""

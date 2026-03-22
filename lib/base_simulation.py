@@ -165,6 +165,8 @@ class BaseSimulation(ABC):
             p_new = p_new.at[-1, :].set(p_new[-2, :])
             p_new = p_new.at[:, 0].set(p_new[:, 1])
             p_new = p_new.at[:, -1].set(p_new[:, -2])
+            # Pin pressure at one point to prevent drift (pure Neumann problem)
+            p_new = p_new - p_new[0, 0]
             return p_new
         
         @jit
