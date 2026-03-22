@@ -89,6 +89,16 @@ python plot_router_thresholds.py --router-path ./router_output/router.weights.h5
 	--threshold-end 0.5 \
 	--num-thresholds 11 \
     --cylinder-y 0.5
-echo "=== Job completed ==="
+rm -rf metrics_output
 
-#python run_router_sweep.py --betas 0.7 0.8 0.9 1
+echo "=== Metrics: Mid Cylinder ==="
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
+    --router-weights ./router_output/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_mid_cylinder_solution.npz \
+    --beta 1.1 \
+    --cylinder-y 0.5 \
+    --threshold 0
+
+echo "=== Job completed ==="

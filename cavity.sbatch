@@ -72,4 +72,17 @@ python plot_router_thresholds_cavity.py \
     --num-thresholds 9 \
     --N 100
 
+rm -rf metrics_output_cavity
+
+echo "=== Metrics: Cavity ==="
+python plot_coverage_metrics_cavity.py \
+    --pinn-path ./models/pinn_cavity_flow.h5 \
+    --router-weights ./router_output_cavity/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_cavity_solution.npz \
+    --beta 1.1 \
+    --N 100 \
+    --output-dir ./metrics_output_cavity \
+    --threshold 0
+
 echo "=== Job completed ==="

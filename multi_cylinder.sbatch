@@ -70,4 +70,19 @@ python plot_router_thresholds.py \
     --cylinder-y 0.5 \
     --output-dir ./threshold_plots_multi
 
+rm -rf metrics_output_multi
+
+echo "=== Metrics: Multi-Cylinder TEST (unseen config) ==="
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
+    --router-weights ./router_output_multi/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_multi_test1.npz \
+    --beta 1.1 \
+    --cylinder-y 0.4 \
+    --cylinder-x 0.6 \
+    --cylinder-radius 0.13 \
+    --output-dir ./metrics_output_multi/test_cy0.65 \
+    --threshold 0
+
 echo "=== Job completed ==="
