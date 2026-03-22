@@ -1331,7 +1331,15 @@ def main():
     print(f"  Hybrid solve time: {hybrid_solve_time:.2f} seconds")
     print(f"  Hybrid u range: [{u_hybrid[layout > 0].min():.4f}, {u_hybrid[layout > 0].max():.4f}]")
     print(f"  Hybrid v range: [{v_hybrid[layout > 0].min():.4f}, {v_hybrid[layout > 0].max():.4f}]")
-    
+
+    # Compute R² of hybrid solution vs CFD (velocity magnitude)
+    hybrid_vel_mag = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    fluid_mask = layout > 0
+    mse_hybrid = np.mean((hybrid_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2)
+    var_cfd = np.var(cfd_vel_mag[fluid_mask])
+    r2_hybrid = 1 - mse_hybrid / var_cfd if var_cfd > 1e-10 else 1.0
+    print(f"  Hybrid R² (vs CFD): {r2_hybrid:.6f}")
+
     # Plot hybrid solution
     plot_hybrid_solution(
         u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,

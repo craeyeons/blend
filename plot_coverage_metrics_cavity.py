@@ -918,7 +918,16 @@ def main():
     print(f"  Optimal threshold: {optimal_threshold:.6f}")
     print(f"  CFD coverage: {actual_coverage*100:.2f}%")
     print(f"  Hybrid solve time: {hybrid_solve_time:.2f} seconds")
-    
+
+    # Compute R² of hybrid solution vs CFD (velocity magnitude)
+    hybrid_vel_mag = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
+    fluid_mask = layout > 0
+    mse_hybrid = np.mean((hybrid_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2)
+    var_cfd = np.var(cfd_vel_mag[fluid_mask])
+    r2_hybrid = 1 - mse_hybrid / var_cfd if var_cfd > 1e-10 else 1.0
+    print(f"  Hybrid R² (vs CFD): {r2_hybrid:.6f}")
+
     # Plot hybrid solution
     plot_hybrid_solution(
         u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
