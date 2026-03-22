@@ -712,6 +712,8 @@ def main():
     
     # Regularization weights
     parser.add_argument('--lambda-tv', type=float, default=0.01)
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='Manual threshold for router decision (default: 0.0)')
     # Domain parameters (cavity is square)
     parser.add_argument('--N', type=int, default=100,
                         help='Grid size')
@@ -905,9 +907,8 @@ def main():
     # =========================================================================
     # Step 7c: Compute hybrid solution
     # =========================================================================
-    print("\n[Step 7c] Computing hybrid solution...")
-    
-    optimal_threshold = full_loss_optimal['optimal_threshold']
+    optimal_threshold = args.threshold
+    print(f"\n[Step 7c] Computing hybrid solution with threshold={optimal_threshold:.6f}...")
     
     u_hybrid, v_hybrid, p_hybrid, cfd_mask, hybrid_solve_time = compute_hybrid_solution(
         pinn_model, router_output, layout, optimal_threshold, args

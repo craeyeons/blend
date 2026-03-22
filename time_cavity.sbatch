@@ -32,6 +32,7 @@ python time_cavity.py \
     --router-weights ./router_output_cavity/router.weights.h5 \
     --beta 1.1 \
     --N 100 \
+    --threshold 0 \
     --n-runs 3
 
 echo "=== Job completed ==="

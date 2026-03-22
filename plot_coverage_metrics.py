@@ -1061,6 +1061,8 @@ def main():
     # Regularization weights (must match training)
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='Manual threshold for router decision (default: 0.0)')
     # Domain parameters (must match PINN training)
     parser.add_argument('--nx', type=int, default=200)
     parser.add_argument('--ny', type=int, default=100)
@@ -1311,12 +1313,11 @@ def main():
     print(f"    Loss:      {full_loss_optimal['optimal_loss']:.6f}")
     
     # =========================================================================
-    # Step 7c: Compute actual hybrid solution using optimal threshold from full loss
+    # Step 7c: Compute actual hybrid solution using threshold
     # =========================================================================
-    print("\n[Step 7c] Computing hybrid solution with optimal threshold (from full loss)...")
+    optimal_threshold = args.threshold
+    print(f"\n[Step 7c] Computing hybrid solution with threshold={optimal_threshold:.6f}...")
     print("  Running hybrid PINN-CFD simulation (CFD in high-confidence regions, PINN elsewhere)...")
-    
-    optimal_threshold = full_loss_optimal['optimal_threshold']
     
     u_hybrid, v_hybrid, p_hybrid, cfd_mask, hybrid_solve_time = compute_hybrid_solution(
         pinn_model, router_output, layout, optimal_threshold, args

@@ -122,6 +122,8 @@ def main():
     parser.add_argument('--temperature', type=float, default=0.5)
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--lambda-tv', type=float, default=0.01)
+    parser.add_argument('--threshold', type=float, default=0.0,
+                        help='Manual threshold for router decision (default: 0.0)')
     parser.add_argument('--n-runs', type=int, default=3)
     args = parser.parse_args()
 
@@ -173,29 +175,12 @@ def main():
     router.load_weights(args.router_weights)
     router_output = router(inputs, training=False)[0, :, :, 0].numpy()
 
-    # Residual field + optimal threshold
-    residual_computer = PINNResidualComputer(pinn_model, nu=1.0 / args.Re, rho=1.0)
-    X_tf = tf.constant(X, dtype=tf.float32)
-    Y_tf = tf.constant(Y, dtype=tf.float32)
-    bc_mask_tf = tf.constant(bc_mask, dtype=tf.float32)
-    bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
-    bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
-    residual_weights = {
-        'continuity': 1.0, 'momentum': 1.0,
-    }
-    residual_field = residual_computer.compute_total_residual_with_bc(
-        X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
-    ).numpy() * layout
-
-    optimal_threshold, optimal_coverage = find_optimal_threshold(
-        residual_field, router_output, layout, args.beta,
-        args.lambda_tv,
-    )
-
-    cfd_mask = (router_output >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)
+    # Use manual threshold
+    threshold = args.threshold
+    cfd_mask = (router_output >= threshold).astype(np.int32) * layout.astype(np.int32)
     actual_coverage = np.sum(cfd_mask) / np.sum(layout)
 
-    print(f"  Optimal threshold: {optimal_threshold:.6f}")
+    print(f"  Threshold: {threshold:.6f}")
     print(f"  CFD coverage:      {actual_coverage * 100:.2f}%")
     print()
 
@@ -258,7 +243,7 @@ def main():
     print(f"  Hybrid  : {hyb_mean:.4f} +/- {hyb_std:.4f} s  {hybrid_times}")
     print(f"  Speedup : {speedup:.2f}x")
     print(f"  Coverage: {actual_coverage * 100:.2f}%")
-    print(f"  Threshold: {optimal_threshold:.6f}")
+    print(f"  Threshold: {threshold:.6f}")
     print("=" * 60)
 
 
