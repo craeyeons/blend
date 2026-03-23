@@ -88,7 +88,9 @@ def load_pinn_solution(pinn_model, X, Y, layout):
     u_pinn = u_flat.reshape(X.shape).astype(np.float32)
     v_pinn = v_flat.reshape(X.shape).astype(np.float32)
     p_pinn = psi_p[:, 1].reshape(X.shape).astype(np.float32)
-    
+    # Shift PINN pressure so p(0,0)=0 to match CFD reference
+    p_pinn = p_pinn - p_pinn[0, 0]
+
     # Mask out obstacle regions (no obstacles in cavity)
     u_pinn = u_pinn * layout
     v_pinn = v_pinn * layout

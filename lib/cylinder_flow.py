@@ -395,6 +395,8 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         else:
             # Network outputs (u, v, p) directly
             self.p_pinn = psi_p[..., -1].reshape(self.X.shape)
+        # Shift PINN pressure so p(0,0)=0 to match CFD reference
+        self.p_pinn = self.p_pinn - self.p_pinn[0, 0]
         
         # Compute velocities from PINN
         u_pinn, v_pinn = self.uv_func(self.network, self.xy)
@@ -790,7 +792,9 @@ class CylinderFlowDynamicHybridSimulation(CylinderFlowSimulation):
         self.u_pinn = uvp[..., 0].reshape(self.X.shape)
         self.v_pinn = uvp[..., 1].reshape(self.X.shape)
         self.p_pinn = uvp[..., 2].reshape(self.X.shape)
-        
+        # Shift PINN pressure so p(0,0)=0 to match CFD reference
+        self.p_pinn = self.p_pinn - self.p_pinn[0, 0]
+
         # Find interface: boundary between PINN and CFD regions
         pinn_region = (self.mask == 0).astype(float)
         dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)

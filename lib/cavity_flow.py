@@ -120,29 +120,31 @@ class CavityFlowHybridSimulation(CavityFlowSimulation):
         psi_p = self.network.predict(self.xy, batch_size=len(self.xy))
         self.psi_pinn = psi_p[..., 0].reshape(self.X.shape)
         self.p_pinn = psi_p[..., 1].reshape(self.X.shape)
-        
+        # Shift PINN pressure so p(0,0)=0 to match CFD reference
+        self.p_pinn = self.p_pinn - self.p_pinn[0, 0]
+
         # Compute velocities from PINN
         u_pinn, v_pinn = self.uv_func(self.network, self.xy)
         self.u_pinn = u_pinn.reshape(self.X.shape)
         self.v_pinn = v_pinn.reshape(self.X.shape)
-        
+
         # Find interface: boundary between PINN and CFD regions
         pinn_region = (self.mask == 0).astype(float)
         dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)
-        
+
         # Interface is where CFD region meets dilated PINN region
         self.interface_mask = (self.mask == 1) & (dilated_pinn == 1)
-        
+
         # Domain boundaries
         domain_boundary = np.zeros_like(self.mask, dtype=bool)
         domain_boundary[0, :] = True   # Bottom
         domain_boundary[-1, :] = True  # Top
         domain_boundary[:, 0] = True   # Left
         domain_boundary[:, -1] = True  # Right
-        
+
         # Combined boundary for CFD
         self.cfd_boundary = self.interface_mask | (domain_boundary & (self.mask == 1))
-        
+
         # Convert to JAX arrays
         self.mask_jax = jnp.array(self.mask, dtype=jnp.float64)
         self.interface_jax = jnp.array(self.interface_mask, dtype=bool)
@@ -150,11 +152,11 @@ class CavityFlowHybridSimulation(CavityFlowSimulation):
         self.u_pinn_jax = jnp.array(self.u_pinn)
         self.v_pinn_jax = jnp.array(self.v_pinn)
         self.p_pinn_jax = jnp.array(self.p_pinn)
-        
+
         print(f"CFD region: {np.sum(self.mask)} cells ({100*np.sum(self.mask)/(N*N):.1f}%)")
         print(f"PINN region: {N*N - np.sum(self.mask)} cells ({100*(N*N - np.sum(self.mask))/(N*N):.1f}%)")
         print(f"Interface cells: {np.sum(self.interface_mask)}")
-    
+
     def apply_hybrid_boundary_conditions(self, u, v):
         """
         Apply boundary conditions for hybrid solver:
@@ -484,29 +486,31 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
         psi_p = self.network.predict(self.xy, batch_size=len(self.xy))
         self.psi_pinn = psi_p[..., 0].reshape(self.X.shape)
         self.p_pinn = psi_p[..., 1].reshape(self.X.shape)
-        
+        # Shift PINN pressure so p(0,0)=0 to match CFD reference
+        self.p_pinn = self.p_pinn - self.p_pinn[0, 0]
+
         # Compute velocities from PINN
         u_pinn, v_pinn = self.uv_func(self.network, self.xy)
         self.u_pinn = u_pinn.reshape(self.X.shape)
         self.v_pinn = v_pinn.reshape(self.X.shape)
-        
+
         # Find interface: boundary between PINN and CFD regions
         pinn_region = (self.mask == 0).astype(float)
         dilated_pinn = ndimage.binary_dilation(pinn_region, iterations=1).astype(float)
-        
+
         # Interface is where CFD region meets dilated PINN region
         self.interface_mask = (self.mask == 1) & (dilated_pinn == 1)
-        
+
         # Domain boundaries
         domain_boundary = np.zeros_like(self.mask, dtype=bool)
         domain_boundary[0, :] = True   # Bottom
         domain_boundary[-1, :] = True  # Top
         domain_boundary[:, 0] = True   # Left
         domain_boundary[:, -1] = True  # Right
-        
+
         # Combined boundary for CFD
         self.cfd_boundary = self.interface_mask | (domain_boundary & (self.mask == 1))
-        
+
         # Convert to JAX arrays
         self.mask_jax = jnp.array(self.mask, dtype=jnp.float64)
         self.interface_jax = jnp.array(self.interface_mask, dtype=bool)
@@ -514,7 +518,7 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
         self.u_pinn_jax = jnp.array(self.u_pinn)
         self.v_pinn_jax = jnp.array(self.v_pinn)
         self.p_pinn_jax = jnp.array(self.p_pinn)
-        
+
         print(f"CFD region: {np.sum(self.mask)} cells ({100*np.sum(self.mask)/(N*N):.1f}%)")
         print(f"PINN region: {N*N - np.sum(self.mask)} cells ({100*(N*N - np.sum(self.mask))/(N*N):.1f}%)")
         print(f"Interface cells: {np.sum(self.interface_mask)}")
