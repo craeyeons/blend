@@ -579,6 +579,8 @@ class RouterTrainer:
         bc_mask = inputs[0, :, :, 1]
         bc_u = inputs[0, :, :, 2]
         bc_v = inputs[0, :, :, 3]
+        # Extract smeared BC error (channel 8) if present
+        smeared_bc_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(bc_mask)
 
         with tf.GradientTape() as tape:
             # Forward pass: raw logits in R
@@ -592,6 +594,10 @@ class RouterTrainer:
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
+
+            # Add smeared BC error to residual so the router is trained
+            # to reject PINN in regions downstream of bad boundaries
+            total_residual = total_residual + smeared_bc_err
 
             # Logistic loss: 1/N * sum(beta * phi(s,0) + R(x) * phi(s,1))
             # Decision boundary: router assigns CFD where R(x) > beta
