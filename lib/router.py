@@ -584,20 +584,28 @@ class RouterTrainer:
             layout_f = tf.cast(layout_mask, tf.float32)
             num_fluid = tf.reduce_sum(layout_f) + 1e-10
 
-            # Compute raw PINN residuals (unnormalized)
-            total_residual = self.residual_computer.compute_total_residual_with_bc(
+            # Compute raw PINN PDE residuals (unnormalized)
+            pde_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
 
-            # Add smeared BC error to residual so the router is trained
-            # to reject PINN in regions downstream of bad boundaries
-            total_residual = total_residual + smeared_bc_err
+            # Median-normalize PDE residual
+            pde_flat = tf.reshape(pde_residual, [-1])
+            pde_median = tf.sort(pde_flat)[tf.shape(pde_flat)[0] // 2]
+            pde_normed = pde_residual / (pde_median + 1e-10)
 
-            # Normalize combined residual by median
-            # β is interpretable: β=1.2 means "reject where error > 1.2× median error"
-            residual_flat = tf.reshape(total_residual, [-1])
-            median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
-            total_residual = total_residual / (median + 1e-10)
+            # Median-normalize smeared BC error (independently)
+            bc_flat = tf.reshape(smeared_bc_err, [-1])
+            bc_nonzero = tf.boolean_mask(bc_flat, bc_flat > 1e-10)
+            bc_median = tf.cond(
+                tf.shape(bc_nonzero)[0] > 0,
+                lambda: tf.sort(bc_nonzero)[tf.shape(bc_nonzero)[0] // 2],
+                lambda: tf.constant(1.0, dtype=bc_flat.dtype)
+            )
+            bc_normed = smeared_bc_err / (bc_median + 1e-10)
+
+            # Combined residual: both on median-normalized scale (~1)
+            total_residual = pde_normed + bc_normed
 
             # Logistic loss: 1/N * sum(beta * phi(s,0) + R(x) * phi(s,1))
             # Decision boundary: router assigns CFD where R(x) > beta
