@@ -436,12 +436,6 @@ class PINNResidualComputer:
         total = (weights.get('continuity', 1.0) * continuity +
                  weights.get('momentum', 1.0) * momentum)
 
-        # Normalize by median (robust to heavy-tailed, right-skewed residuals)
-        # β is interpretable: β=1.2 means "reject where error > 1.2× median error"
-        total_flat = tf.reshape(total, [-1])
-        median = tf.sort(total_flat)[tf.shape(total_flat)[0] // 2]
-        total = total / (median + 1e-10)
-
         return total
 
 
@@ -590,7 +584,7 @@ class RouterTrainer:
             layout_f = tf.cast(layout_mask, tf.float32)
             num_fluid = tf.reduce_sum(layout_f) + 1e-10
 
-            # Compute PINN residuals (mean-normalized, R̄ ≈ 1)
+            # Compute raw PINN residuals (unnormalized)
             total_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
@@ -598,6 +592,12 @@ class RouterTrainer:
             # Add smeared BC error to residual so the router is trained
             # to reject PINN in regions downstream of bad boundaries
             total_residual = total_residual + smeared_bc_err
+
+            # Normalize combined residual by median
+            # β is interpretable: β=1.2 means "reject where error > 1.2× median error"
+            residual_flat = tf.reshape(total_residual, [-1])
+            median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
+            total_residual = total_residual / (median + 1e-10)
 
             # Logistic loss: 1/N * sum(beta * phi(s,0) + R(x) * phi(s,1))
             # Decision boundary: router assigns CFD where R(x) > beta
@@ -794,11 +794,6 @@ def compute_smeared_bc_error(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout,
         )
 
         smeared = np.maximum(bc_error, decay * propagated) * layout
-
-    # Normalize to [0, 1]
-    max_val = smeared.max()
-    if max_val > 1e-10:
-        smeared = smeared / max_val
 
     return smeared.astype(np.float32)
 
