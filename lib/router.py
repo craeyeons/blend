@@ -6,11 +6,12 @@ flow domain should use PINN vs CFD solutions. The router is trained to minimize
 computational cost while maintaining solution accuracy.
 
 Architecture:
-    Input: 200×100×8 tensor
+    Input: 200×100×9 tensor
         - Channel 0: Layout mask (0=obstacle, 1=fluid)
         - Channel 1: Boundary condition mask
         - Channels 2-4: Boundary condition values [u, v, p]
         - Channels 5-7: PINN predictions [u, v, p] (allows CNN to learn error patterns)
+        - Channel 8: Directionally-smeared BC error (propagated along PINN velocity)
     
     Output: 200×100 tensor with values in [0, 1]
         - 0: Use PINN solution
@@ -721,15 +722,90 @@ class RouterTrainer:
         return r, mask
 
 
-def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
-                        pinn_u=None, pinn_v=None, pinn_p=None):
+def compute_smeared_bc_error(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout,
+                             n_iters=50, decay=0.95):
     """
-    Create the 8-channel input tensor for the router.
-    
-    By including PINN predictions, the CNN can learn spatial error patterns
-    without hardcoded decay assumptions. The network sees both what boundary
-    conditions are prescribed AND what PINN actually predicts.
-    
+    Compute BC error at boundaries and propagate it downstream along the
+    PINN velocity field. This gives the router a pre-computed signal that
+    regions downstream of bad PINN boundaries are also suspect.
+
+    The propagation uses a simple iterative advection: at each step, each
+    cell inherits the max of its current value and a decayed value from
+    its upstream neighbor (determined by PINN velocity direction).
+
+    Parameters:
+    -----------
+    bc_mask : np.ndarray (H, W)
+        1 where BCs are prescribed, 0 elsewhere
+    bc_u, bc_v : np.ndarray (H, W)
+        Prescribed BC velocity values
+    pinn_u, pinn_v : np.ndarray (H, W)
+        PINN predicted velocities
+    layout : np.ndarray (H, W)
+        Fluid mask (1=fluid, 0=obstacle)
+    n_iters : int
+        Number of propagation steps (controls how far error spreads)
+    decay : float
+        Decay factor per propagation step (controls how fast error fades)
+
+    Returns:
+    --------
+    smeared : np.ndarray (H, W)
+        Smeared BC error field, normalized to [0, 1]
+    """
+    # Local BC error: velocity mismatch at boundary points
+    bc_error = np.sqrt((pinn_u - bc_u)**2 + (pinn_v - bc_v)**2) * bc_mask
+    bc_error = bc_error * layout
+
+    smeared = bc_error.copy().astype(np.float64)
+    H, W = layout.shape
+
+    # Precompute flow direction at each cell (which neighbor is upstream)
+    # If u > 0 at (i,j), the upstream neighbor in x is (i, j-1)
+    # If v > 0 at (i,j), the upstream neighbor in y is (i-1, j)
+    for _ in range(n_iters):
+        propagated = np.zeros_like(smeared)
+
+        # Propagate from left (where u > 0, error flows rightward)
+        propagated[:, 1:] = np.maximum(
+            propagated[:, 1:],
+            smeared[:, :-1] * (pinn_u[:, 1:] > 0).astype(np.float64)
+        )
+        # Propagate from right (where u < 0, error flows leftward)
+        propagated[:, :-1] = np.maximum(
+            propagated[:, :-1],
+            smeared[:, 1:] * (pinn_u[:, :-1] < 0).astype(np.float64)
+        )
+        # Propagate from below (where v > 0, error flows upward)
+        propagated[1:, :] = np.maximum(
+            propagated[1:, :],
+            smeared[:-1, :] * (pinn_v[1:, :] > 0).astype(np.float64)
+        )
+        # Propagate from above (where v < 0, error flows downward)
+        propagated[:-1, :] = np.maximum(
+            propagated[:-1, :],
+            smeared[1:, :] * (pinn_v[:-1, :] < 0).astype(np.float64)
+        )
+
+        smeared = np.maximum(bc_error, decay * propagated) * layout
+
+    # Normalize to [0, 1]
+    max_val = smeared.max()
+    if max_val > 1e-10:
+        smeared = smeared / max_val
+
+    return smeared.astype(np.float32)
+
+
+def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
+                        pinn_u=None, pinn_v=None, pinn_p=None,
+                        smeared_bc_error=None):
+    """
+    Create the 9-channel input tensor for the router.
+
+    By including PINN predictions and smeared BC error, the CNN can learn
+    spatial error patterns and understand downstream error propagation.
+
     Parameters:
     -----------
     layout : np.ndarray
@@ -740,15 +816,17 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         Boundary condition values of shape (H, W)
     pinn_u, pinn_v, pinn_p : np.ndarray, optional
         PINN predictions of shape (H, W). If None, zeros are used.
-        
+    smeared_bc_error : np.ndarray, optional
+        Directionally-smeared BC error of shape (H, W). If None, zeros are used.
+
     Returns:
     --------
     inputs : np.ndarray
-        Stacked input of shape (1, H, W, 8)
-        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p]
+        Stacked input of shape (1, H, W, 9)
+        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p, smeared_bc_error]
     """
     H, W = layout.shape
-    
+
     # Default to zeros if PINN predictions not provided
     if pinn_u is None:
         pinn_u = np.zeros((H, W), dtype=np.float32)
@@ -756,7 +834,9 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         pinn_v = np.zeros((H, W), dtype=np.float32)
     if pinn_p is None:
         pinn_p = np.zeros((H, W), dtype=np.float32)
-    
+    if smeared_bc_error is None:
+        smeared_bc_error = np.zeros((H, W), dtype=np.float32)
+
     inputs = np.stack([
         layout,           # Ch 0: Layout mask
         bc_mask,          # Ch 1: BC mask
@@ -766,8 +846,9 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         pinn_u,           # Ch 5: PINN u prediction
         pinn_v,           # Ch 6: PINN v prediction
         pinn_p,           # Ch 7: PINN p prediction
+        smeared_bc_error, # Ch 8: Directionally-smeared BC error
     ], axis=-1)
-    
+
     return inputs[np.newaxis, ...]  # Add batch dimension
 
 

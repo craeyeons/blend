@@ -30,6 +30,7 @@ from matplotlib.colors import Normalize
 from lib.router import (
     RouterCNN,
     create_router_input,
+    compute_smeared_bc_error,
     create_cylinder_setup,
 )
 from cylinder_network import Network as CylinderNetwork
@@ -196,15 +197,20 @@ def main():
     pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
     pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
     
-    # Create router input (8 channels including PINN predictions)
+    # Compute smeared BC error
+    smeared_bc_err = compute_smeared_bc_error(
+        bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+
+    # Create router input (9 channels including PINN predictions)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p)
+                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
     
     # Load router
     print(f"Loading router from {args.router_path}...")
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     
-    # Build the model with correct input shape (8 channels)
+    # Build the model with correct input shape (9 channels)
     _ = router(inputs)
     
     # Load weights

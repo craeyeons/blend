@@ -42,6 +42,7 @@ from lib.router import (
     RouterCNN,
     PINNResidualComputer,
     create_router_input,
+    compute_smeared_bc_error,
     create_cylinder_setup,
     plot_router_output,
     plot_training_history
@@ -98,9 +99,14 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
     pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
 
-    # Create router input (8 channels)
+    # Compute smeared BC error
+    smeared_bc_err = compute_smeared_bc_error(
+        bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+
+    # Create router input (9 channels)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p)
+                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
 
     # Pre-compute PINN residuals (frozen, constant across training)
     residual_computer = PINNResidualComputer(

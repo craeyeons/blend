@@ -35,6 +35,7 @@ from matplotlib.colors import Normalize
 from lib.router import (
     RouterCNN,
     create_router_input,
+    compute_smeared_bc_error,
     create_cylinder_setup,
     plot_router_output
 )
@@ -148,7 +149,7 @@ def main():
         inlet_velocity=args.inlet_velocity
     )
     
-    # Compute PINN predictions for router input (8 channels)
+    # Compute PINN predictions for router input (9 channels)
     print("  Computing PINN predictions for router input...")
     xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
     pinn_uvp = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
@@ -156,9 +157,14 @@ def main():
     pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
     pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
     
-    # Create router input (8 channels including PINN predictions)
+    # Compute smeared BC error
+    smeared_bc_err = compute_smeared_bc_error(
+        bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+
+    # Create router input (9 channels including PINN predictions)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p)
+                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
     
     # Load router
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)

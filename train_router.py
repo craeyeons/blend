@@ -31,6 +31,7 @@ from lib.router import (
     RouterTrainer,
     create_router_input,
     create_cylinder_setup,
+    compute_smeared_bc_error,
     plot_router_output,
     plot_training_history
 )
@@ -190,11 +191,19 @@ def main():
     print(f"  PINN u range: [{pinn_u.min():.4f}, {pinn_u.max():.4f}]")
     print(f"  PINN v range: [{pinn_v.min():.4f}, {pinn_v.max():.4f}]")
     print(f"  PINN p range: [{pinn_p.min():.4f}, {pinn_p.max():.4f}]")
-    
-    # Create router input tensor (now 8 channels with PINN predictions)
+
+    # Compute directionally-smeared BC error
+    print("\n[Step 2c] Computing smeared BC error...")
+    smeared_bc_err = compute_smeared_bc_error(
+        bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+    print(f"  Smeared BC error range: [{smeared_bc_err.min():.4f}, {smeared_bc_err.max():.4f}]")
+    print(f"  Nonzero fraction: {np.mean(smeared_bc_err > 0.01)*100:.1f}%")
+
+    # Create router input tensor (9 channels with PINN predictions + smeared BC error)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p)
-    print(f"  Router input shape: {inputs.shape} (8 channels incl. PINN predictions)")
+                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
+    print(f"  Router input shape: {inputs.shape} (9 channels incl. PINN predictions + smeared BC error)")
     
     # =========================================================================
     # Step 3: Initialize router

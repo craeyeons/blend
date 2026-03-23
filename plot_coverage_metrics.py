@@ -41,6 +41,7 @@ from lib.router import (
     RouterCNN,
     PINNResidualComputer,
     create_router_input,
+    compute_smeared_bc_error,
     create_cylinder_setup,
 )
 from lib.cylinder_flow import CylinderFlowSimulation, CylinderFlowHybridSimulation
@@ -1183,9 +1184,14 @@ def main():
     if args.router_weights and os.path.exists(args.router_weights):
         print(f"  Loading router weights from {args.router_weights}")
         
+        # Compute smeared BC error
+        smeared_bc_err = compute_smeared_bc_error(
+            bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
+        )
+
         # Create router input tensor
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                      u_pinn, v_pinn, p_pinn)
+                                      u_pinn, v_pinn, p_pinn, smeared_bc_err)
         print(f"  Router input shape: {inputs.shape}")
         
         # Initialize router CNN
