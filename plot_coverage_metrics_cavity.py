@@ -38,7 +38,8 @@ if gpus:
 from lib.router import (
     RouterCNN,
     create_router_input,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     create_cavity_setup,
 )
 from lib.cavity_flow import CavityFlowSimulation, CavityFlowHybridSimulation
@@ -822,9 +823,14 @@ def main():
     # =========================================================================
     print("\n[Step 4] Loading router...")
 
-    # Compute BC error (used for router input and residual field)
-    smeared_bc_err = compute_smeared_bc_error(
+    # Compute error transport field (used for router input and residual field)
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
+    )
+    error_transport = solve_error_transport(
+        u_pinn, v_pinn, bc_error_local, layout, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
     )
 
     if args.router_weights is None:
@@ -846,7 +852,7 @@ def main():
         pinn_p = psi_p[:, 1].reshape(X.shape).astype(np.float32) * layout
         
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                     pinn_u, pinn_v, pinn_p, smeared_bc_err)
+                                     pinn_u, pinn_v, pinn_p, error_transport)
         
         router = RouterCNN(base_filters=args.base_filters)
         _ = router(inputs)
@@ -888,7 +894,7 @@ def main():
     
     residual_field = compute_residual_field(pinn_model, X, Y, layout,
                                            nu=args.nu, rho=args.rho,
-                                           bc_error=smeared_bc_err)
+                                           bc_error=error_transport)
     
     results = compute_expected_losses(residual_field, router_output, layout, args.beta)
     

@@ -30,7 +30,8 @@ from matplotlib.colors import Normalize
 from lib.router import (
     RouterCNN,
     create_router_input,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     create_cavity_setup,
 )
 from lib.network import Network as CavityNetwork
@@ -149,7 +150,8 @@ def main():
     parser.add_argument('--y-min', type=float, default=0.0)
     parser.add_argument('--y-max', type=float, default=1.0)
     parser.add_argument('--lid-velocity', type=float, default=1.0)
-    
+    parser.add_argument('--nu', type=float, default=0.01)
+
     # Router parameters
     parser.add_argument('--temperature', type=float, default=0.5,
                         help='Sigmoid temperature for router (should match training)')
@@ -197,14 +199,19 @@ def main():
     pinn_v = v_flat.reshape(X.shape).astype(np.float32) * layout
     pinn_p = psi_p[:, 1].reshape(X.shape).astype(np.float32) * layout
     
-    # Compute smeared BC error
-    smeared_bc_err = compute_smeared_bc_error(
+    # Compute BC error field and solve error transport
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+    error_transport = solve_error_transport(
+        pinn_u, pinn_v, bc_error_local, layout, nu=args.nu,
+        x_domain=x_domain,
+        y_domain=y_domain,
     )
 
     # Create router input (9 channels including PINN predictions)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
+                                  pinn_u, pinn_v, pinn_p, error_transport)
     
     # Load router
     print(f"Loading router from {args.router_path}...")

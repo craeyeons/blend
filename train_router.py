@@ -31,7 +31,8 @@ from lib.router import (
     RouterTrainer,
     create_router_input,
     create_cylinder_setup,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     plot_router_output,
     plot_training_history
 )
@@ -192,18 +193,24 @@ def main():
     print(f"  PINN v range: [{pinn_v.min():.4f}, {pinn_v.max():.4f}]")
     print(f"  PINN p range: [{pinn_p.min():.4f}, {pinn_p.max():.4f}]")
 
-    # Compute directionally-smeared BC error
-    print("\n[Step 2c] Computing smeared BC error...")
-    smeared_bc_err = compute_smeared_bc_error(
+    # Compute BC error and solve error transport equation
+    print("\n[Step 2c] Computing error transport field...")
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
     )
-    print(f"  Smeared BC error range: [{smeared_bc_err.min():.4f}, {smeared_bc_err.max():.4f}]")
-    print(f"  Nonzero fraction: {np.mean(smeared_bc_err > 0.01)*100:.1f}%")
+    print(f"  Local BC error range: [{bc_error_local.min():.4f}, {bc_error_local.max():.4f}]")
+    error_transport = solve_error_transport(
+        pinn_u, pinn_v, bc_error_local, layout, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
+    print(f"  Error transport range: [{error_transport.min():.4f}, {error_transport.max():.4f}]")
+    print(f"  Nonzero fraction: {np.mean(error_transport > 0.01)*100:.1f}%")
 
-    # Create router input tensor (9 channels with PINN predictions + smeared BC error)
+    # Create router input tensor (9 channels with PINN predictions + error transport)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
-    print(f"  Router input shape: {inputs.shape} (9 channels incl. PINN predictions + smeared BC error)")
+                                  pinn_u, pinn_v, pinn_p, error_transport)
+    print(f"  Router input shape: {inputs.shape} (9 channels incl. PINN predictions + error transport)")
     
     # =========================================================================
     # Step 3: Initialize router

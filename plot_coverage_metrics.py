@@ -41,7 +41,8 @@ from lib.router import (
     RouterCNN,
     PINNResidualComputer,
     create_router_input,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     create_cylinder_setup,
 )
 from lib.cylinder_flow import CylinderFlowSimulation, CylinderFlowHybridSimulation
@@ -1177,9 +1178,14 @@ def main():
     # =========================================================================
     print("\n[Step 4] Getting router predictions...")
 
-    # Compute BC error (used for router input and residual field)
-    smeared_bc_err = compute_smeared_bc_error(
+    # Compute error transport field (used for router input and residual field)
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
+    )
+    error_transport = solve_error_transport(
+        u_pinn, v_pinn, bc_error_local, layout, nu=1.0/args.Re,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
     )
 
     if args.router_weights and os.path.exists(args.router_weights):
@@ -1187,7 +1193,7 @@ def main():
 
         # Create router input tensor
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                      u_pinn, v_pinn, p_pinn, smeared_bc_err)
+                                      u_pinn, v_pinn, p_pinn, error_transport)
         print(f"  Router input shape: {inputs.shape}")
         
         # Initialize router CNN
@@ -1250,7 +1256,7 @@ def main():
     residual_field = residual_field * layout
 
     # Sum PDE residual + BC error, then median-normalize (matches training)
-    residual_field = residual_field + smeared_bc_err
+    residual_field = residual_field + error_transport
     fluid_residuals = residual_field[layout > 0]
     median_residual = np.median(fluid_residuals)
     if median_residual > 1e-10:

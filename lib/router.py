@@ -755,6 +755,74 @@ def compute_bc_error_field(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout):
 compute_smeared_bc_error = compute_bc_error_field
 
 
+def solve_error_transport(pinn_u, pinn_v, bc_error, layout, nu,
+                          x_domain, y_domain, n_iters=100):
+    """
+    Solve steady-state error transport equation:
+        u·∇e = ν∇²e
+    with Dirichlet BC: e = bc_error at boundary points.
+
+    Propagates BC errors through the domain using the PINN velocity field
+    and physical diffusion. The decay is determined by the physics
+    (Re, velocity field), not prescribed.
+
+    Parameters
+    ----------
+    pinn_u, pinn_v : np.ndarray (Ny, Nx)
+        PINN velocity field (advection).
+    bc_error : np.ndarray (Ny, Nx)
+        Local BC error (Dirichlet values at boundary points).
+    layout : np.ndarray (Ny, Nx)
+        Fluid mask (1=fluid, 0=solid).
+    nu : float
+        Kinematic viscosity.
+    x_domain, y_domain : tuple (min, max)
+        Physical domain extents.
+    n_iters : int
+        Jacobi iterations (default 100).
+
+    Returns
+    -------
+    e : np.ndarray (Ny, Nx)
+        Transported error field (float32).
+    """
+    Ny, Nx = layout.shape
+    dx = (x_domain[1] - x_domain[0]) / max(Nx - 1, 1)
+    dy = (y_domain[1] - y_domain[0]) / max(Ny - 1, 1)
+
+    # Upwind decomposition
+    u_pos = np.maximum(pinn_u, 0.0)
+    u_neg = np.minimum(pinn_u, 0.0)
+    v_pos = np.maximum(pinn_v, 0.0)
+    v_neg = np.minimum(pinn_v, 0.0)
+
+    # Discretisation coefficients (all non-negative → unconditionally stable)
+    a_W = u_pos / dx + nu / dx**2          # west  (j-1)
+    a_E = -u_neg / dx + nu / dx**2         # east  (j+1)
+    a_S = v_pos / dy + nu / dy**2          # south (i-1)
+    a_N = -v_neg / dy + nu / dy**2         # north (i+1)
+    a_P = a_W + a_E + a_S + a_N            # centre
+
+    bc_src = bc_error > 0                   # source-point mask
+    e = bc_error.copy().astype(np.float64)
+
+    for _ in range(n_iters):
+        # Neighbour values (zero-padded at domain edges)
+        e_W = np.zeros_like(e);  e_W[:, 1:]  = e[:, :-1]
+        e_E = np.zeros_like(e);  e_E[:, :-1] = e[:, 1:]
+        e_S = np.zeros_like(e);  e_S[1:, :]  = e[:-1, :]
+        e_N = np.zeros_like(e);  e_N[:-1, :] = e[1:, :]
+
+        e_new = (a_W * e_W + a_E * e_E + a_S * e_S + a_N * e_N) / (a_P + 1e-10)
+
+        # Dirichlet at BC-error points, zero in obstacles
+        e_new = np.where(bc_src, bc_error, e_new)
+        e_new = np.maximum(e_new * layout, 0.0)
+        e = e_new
+
+    return e.astype(np.float32)
+
+
 def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
                         pinn_u=None, pinn_v=None, pinn_p=None,
                         smeared_bc_error=None):

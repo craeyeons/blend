@@ -32,7 +32,8 @@ if gpus:
 from lib.router import (
     RouterCNN,
     create_router_input,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     create_cavity_setup,
     plot_router_output,
     plot_training_history
@@ -550,14 +551,19 @@ def main():
     print(f"  PINN v range: [{pinn_v.min():.4f}, {pinn_v.max():.4f}]")
     print(f"  PINN p range: [{pinn_p.min():.4f}, {pinn_p.max():.4f}]")
     
-    # Compute smeared BC error
-    smeared_bc_err = compute_smeared_bc_error(
+    # Compute BC error field and solve error transport
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+    error_transport = solve_error_transport(
+        pinn_u, pinn_v, bc_error_local, layout, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
     )
 
     # Create router input tensor
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, smeared_bc_err)
+                                  pinn_u, pinn_v, pinn_p, error_transport)
     print(f"  Router input shape: {inputs.shape}")
     
     # =========================================================================

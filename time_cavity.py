@@ -27,7 +27,8 @@ if gpus:
 from lib.router import (
     RouterCNN,
     create_router_input,
-    compute_smeared_bc_error,
+    compute_bc_error_field,
+    solve_error_transport,
     create_cavity_setup,
 )
 from lib.cavity_flow import CavityFlowSimulation, CavityFlowHybridSimulation
@@ -170,11 +171,16 @@ def main():
     pinn_v = v_flat.reshape(X.shape).astype(np.float32) * layout
     pinn_p = psi_p[:, 1].reshape(X.shape).astype(np.float32) * layout
 
-    smeared_bc_err = compute_smeared_bc_error(
+    bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
     )
+    error_transport = solve_error_transport(
+        pinn_u, pinn_v, bc_error_local, layout, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                 pinn_u, pinn_v, pinn_p, smeared_bc_err)
+                                 pinn_u, pinn_v, pinn_p, error_transport)
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     _ = router(inputs)
     router.load_weights(args.router_weights)
