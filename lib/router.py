@@ -589,23 +589,11 @@ class RouterTrainer:
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
 
-            # Median-normalize PDE residual
-            pde_flat = tf.reshape(pde_residual, [-1])
-            pde_median = tf.sort(pde_flat)[tf.shape(pde_flat)[0] // 2]
-            pde_normed = pde_residual / (pde_median + 1e-10)
-
-            # Median-normalize smeared BC error (independently)
-            bc_flat = tf.reshape(smeared_bc_err, [-1])
-            bc_nonzero = tf.boolean_mask(bc_flat, bc_flat > 1e-10)
-            bc_median = tf.cond(
-                tf.shape(bc_nonzero)[0] > 0,
-                lambda: tf.sort(bc_nonzero)[tf.shape(bc_nonzero)[0] // 2],
-                lambda: tf.constant(1.0, dtype=bc_flat.dtype)
-            )
-            bc_normed = smeared_bc_err / (bc_median + 1e-10)
-
-            # Combined residual: both on median-normalized scale (~1)
-            total_residual = pde_normed + bc_normed
+            # Sum raw PDE residual and BC error, then median-normalize
+            raw_residual = pde_residual + smeared_bc_err
+            residual_flat = tf.reshape(raw_residual, [-1])
+            residual_median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
+            total_residual = raw_residual / (residual_median + 1e-10)
 
             # Logistic loss: 1/N * sum(beta * phi(s,0) + R(x) * phi(s,1))
             # Decision boundary: router assigns CFD where R(x) > beta
@@ -736,16 +724,12 @@ class RouterTrainer:
         return r, mask
 
 
-def compute_smeared_bc_error(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout,
-                             n_iters=50, decay=0.95):
+def compute_bc_error_field(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout):
     """
-    Compute BC error at boundaries and propagate it downstream along the
-    PINN velocity field. This gives the router a pre-computed signal that
-    regions downstream of bad PINN boundaries are also suspect.
+    Compute local BC error at boundary points.
 
-    The propagation uses a simple iterative advection: at each step, each
-    cell inherits the max of its current value and a decayed value from
-    its upstream neighbor (determined by PINN velocity direction).
+    This measures how well the PINN satisfies the prescribed boundary
+    conditions. Nonzero only at boundary locations.
 
     Parameters:
     -----------
@@ -757,53 +741,18 @@ def compute_smeared_bc_error(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout,
         PINN predicted velocities
     layout : np.ndarray (H, W)
         Fluid mask (1=fluid, 0=obstacle)
-    n_iters : int
-        Number of propagation steps (controls how far error spreads)
-    decay : float
-        Decay factor per propagation step (controls how fast error fades)
 
     Returns:
     --------
-    smeared : np.ndarray (H, W)
-        Smeared BC error field, normalized to [0, 1]
+    bc_error : np.ndarray (H, W)
+        Local BC error field (nonzero only at boundary points)
     """
-    # Local BC error: velocity mismatch at boundary points
     bc_error = np.sqrt((pinn_u - bc_u)**2 + (pinn_v - bc_v)**2) * bc_mask
-    bc_error = bc_error * layout
+    return (bc_error * layout).astype(np.float32)
 
-    smeared = bc_error.copy().astype(np.float64)
-    H, W = layout.shape
 
-    # Precompute flow direction at each cell (which neighbor is upstream)
-    # If u > 0 at (i,j), the upstream neighbor in x is (i, j-1)
-    # If v > 0 at (i,j), the upstream neighbor in y is (i-1, j)
-    for _ in range(n_iters):
-        propagated = np.zeros_like(smeared)
-
-        # Propagate from left (where u > 0, error flows rightward)
-        propagated[:, 1:] = np.maximum(
-            propagated[:, 1:],
-            smeared[:, :-1] * (pinn_u[:, 1:] > 0).astype(np.float64)
-        )
-        # Propagate from right (where u < 0, error flows leftward)
-        propagated[:, :-1] = np.maximum(
-            propagated[:, :-1],
-            smeared[:, 1:] * (pinn_u[:, :-1] < 0).astype(np.float64)
-        )
-        # Propagate from below (where v > 0, error flows upward)
-        propagated[1:, :] = np.maximum(
-            propagated[1:, :],
-            smeared[:-1, :] * (pinn_v[1:, :] > 0).astype(np.float64)
-        )
-        # Propagate from above (where v < 0, error flows downward)
-        propagated[:-1, :] = np.maximum(
-            propagated[:-1, :],
-            smeared[1:, :] * (pinn_v[:-1, :] < 0).astype(np.float64)
-        )
-
-        smeared = np.maximum(bc_error, decay * propagated) * layout
-
-    return smeared.astype(np.float32)
+# Keep old name as alias for backwards compatibility
+compute_smeared_bc_error = compute_bc_error_field
 
 
 def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,

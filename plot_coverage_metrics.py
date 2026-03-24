@@ -669,16 +669,16 @@ def compute_expected_losses(residual_field, router_output, layout, beta):
     }
 
 
-def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
+def plot_coverage_curve(coverage, rmse_scores, results, beta, save_path=None):
     """
-    Plot R² vs coverage curve.
-    
+    Plot RMSE vs coverage curve.
+
     Parameters:
     -----------
     coverage : ndarray
         Fraction sent to CFD (x-axis)
-    accuracy : ndarray
-        R² at each coverage level (y-axis)
+    rmse_scores : ndarray
+        RMSE at each coverage level (y-axis)
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -687,43 +687,41 @@ def plot_coverage_curve(coverage, accuracy, results, beta, save_path=None):
         Path to save the figure
     """
     fig, ax = plt.subplots(figsize=(10, 7))
-    
-    # Main coverage curve (R² vs Coverage)
-    ax.plot(coverage * 100, accuracy, 'k-', linewidth=2.5, label='R² (PINN prediction quality)')
-    
+
+    # Main coverage curve (RMSE vs Coverage)
+    ax.plot(coverage * 100, rmse_scores, 'k-', linewidth=2.5, label='RMSE (PINN vs CFD)')
+
     # Mark key points
-    ax.plot(0, accuracy[0], 'o', color='purple', markersize=12, zorder=5, label=f'All PINN: R²={accuracy[0]:.4f}')
-    ax.plot(100, accuracy[-1], 'o', color='teal', markersize=12, zorder=5, label=f'All CFD: R²={accuracy[-1]:.4f}')
-    
-    # Horizontal reference line at R²=1 (perfect)
-    ax.axhline(y=1.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5, label='Perfect (R²=1)')
-    
+    ax.plot(0, rmse_scores[0], 'o', color='purple', markersize=12, zorder=5, label=f'All PINN: RMSE={rmse_scores[0]:.4f}')
+    ax.plot(100, rmse_scores[-1], 'o', color='teal', markersize=12, zorder=5, label=f'All CFD: RMSE={rmse_scores[-1]:.4f}')
+
+    # Horizontal reference line at RMSE=0 (perfect)
+    ax.axhline(y=0.0, color='green', linestyle='--', linewidth=1.5, alpha=0.5, label='Perfect (RMSE=0)')
+
     # Labels
     ax.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
-    ax.set_ylabel('R² (coefficient of determination)', fontsize=14)
-    
+    ax.set_ylabel('RMSE', fontsize=14)
+
     # Set axis limits
     ax.set_xlim(-5, 105)
-    y_min = min(0, np.min(accuracy) - 0.1)
-    y_max = 1.1
-    ax.set_ylim(y_min, y_max)
-    
+    ax.set_ylim(bottom=0)
+
     # Remove top and right spines for cleaner look
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    
-    ax.set_title('Coverage vs R² (PINN Prediction Quality)', fontsize=14)
-    ax.legend(loc='lower right', fontsize=10)
+
+    ax.set_title('Coverage vs RMSE (PINN Prediction Quality)', fontsize=14)
+    ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
+
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
-    
+
     plt.close(fig)
-    
+
     return fig
 
 
@@ -903,7 +901,7 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
     }
 
 
-def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, router_output, layout,
+def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, router_output, layout,
                           lambda_tv=0.01, lambda_entropy=0.1, save_path=None):
     """
     Create a combined figure: Router Loss vs Coverage + Loss breakdown.
@@ -912,8 +910,8 @@ def plot_combined_metrics(coverage, accuracy, results, beta, residual_field, rou
     -----------
     coverage : ndarray
         Fraction sent to CFD
-    accuracy : ndarray
-        R² at each coverage level (unused in this plot, kept for compatibility)
+    rmse_scores : ndarray
+        RMSE at each coverage level (unused in this plot, kept for compatibility)
     results : dict
         Results from compute_expected_losses
     beta : float
@@ -1178,14 +1176,14 @@ def main():
     # Step 4: Load router and perform inference
     # =========================================================================
     print("\n[Step 4] Getting router predictions...")
-    
+
+    # Compute BC error (used for router input and residual field)
+    smeared_bc_err = compute_smeared_bc_error(
+        bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
+    )
+
     if args.router_weights and os.path.exists(args.router_weights):
         print(f"  Loading router weights from {args.router_weights}")
-        
-        # Compute smeared BC error
-        smeared_bc_err = compute_smeared_bc_error(
-            bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
-        )
 
         # Create router input tensor
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
@@ -1251,15 +1249,16 @@ def main():
     # Mask out obstacle regions
     residual_field = residual_field * layout
 
-    # Median-normalize residual (same as training path) so β is comparable
+    # Sum PDE residual + BC error, then median-normalize (matches training)
+    residual_field = residual_field + smeared_bc_err
     fluid_residuals = residual_field[layout > 0]
     median_residual = np.median(fluid_residuals)
     if median_residual > 1e-10:
         residual_field = residual_field / median_residual
 
-    print(f"  Median physics residual (raw): {median_residual:.6f}")
-    print(f"  Mean physics residual (normalized): {np.mean(residual_field[layout > 0]):.6f}")
-    print(f"  Max physics residual (normalized): {np.max(residual_field):.6f}")
+    print(f"  Median residual (raw PDE+BC): {median_residual:.6f}")
+    print(f"  Mean residual (normalized): {np.mean(residual_field[layout > 0]):.6f}")
+    print(f"  Max residual (normalized): {np.max(residual_field):.6f}")
     
     # Also compute L2 error field for reference (coverage curve uses this)
     print("\n[Step 5b] Computing L2 error field (for R² curve)...")
@@ -1283,13 +1282,11 @@ def main():
     cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
     
     coverage, mse_scores, r2_scores = compute_coverage_curve(pinn_vel_mag, cfd_vel_mag, router_output, layout)
-    accuracy = r2_scores  # Keep variable name for compatibility with plotting
-    
+    rmse_scores = np.sqrt(mse_scores)
+
     print(f"  Coverage range: [{coverage[0]:.4f}, {coverage[-1]:.4f}]")
-    print(f"  MSE at 0% coverage (all PINN): {mse_scores[0]:.6f}")
-    print(f"  MSE at 100% coverage (all CFD): {mse_scores[-1]:.6f}")
-    print(f"  R² at 0% coverage (all PINN): {r2_scores[0]:.6f}")
-    print(f"  R² at 100% coverage (all CFD): {r2_scores[-1]:.6f}")
+    print(f"  RMSE at 0% coverage (all PINN): {rmse_scores[0]:.6f}")
+    print(f"  RMSE at 100% coverage (all CFD): {rmse_scores[-1]:.6f}")
     
     # =========================================================================
     # Step 7: Compute expected losses (using physics residuals)
@@ -1345,13 +1342,11 @@ def main():
     print(f"  Hybrid u range: [{u_hybrid[layout > 0].min():.4f}, {u_hybrid[layout > 0].max():.4f}]")
     print(f"  Hybrid v range: [{v_hybrid[layout > 0].min():.4f}, {v_hybrid[layout > 0].max():.4f}]")
 
-    # Compute R² of hybrid solution vs CFD (velocity magnitude)
+    # Compute RMSE of hybrid solution vs CFD (velocity magnitude)
     hybrid_vel_mag = np.sqrt(u_hybrid**2 + v_hybrid**2)
     fluid_mask = layout > 0
-    mse_hybrid = np.mean((hybrid_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2)
-    var_cfd = np.var(cfd_vel_mag[fluid_mask])
-    r2_hybrid = 1 - mse_hybrid / var_cfd if var_cfd > 1e-10 else 1.0
-    print(f"  Hybrid R² (vs CFD): {r2_hybrid:.6f}")
+    rmse_hybrid = np.sqrt(np.mean((hybrid_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+    print(f"  Hybrid RMSE (vs CFD): {rmse_hybrid:.6f}")
 
     # Plot hybrid solution
     plot_hybrid_solution(
@@ -1370,15 +1365,15 @@ def main():
     
     # Combined metrics plot (left: loss vs coverage, right: loss breakdown)
     plot_combined_metrics(
-        coverage, accuracy, results, args.beta,
+        coverage, rmse_scores, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
         lambda_tv=args.lambda_tv,
         save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
     )
-    
+
     # Individual plots
     plot_coverage_curve(
-        coverage, accuracy, results, args.beta,
+        coverage, rmse_scores, results, args.beta,
         save_path=os.path.join(args.output_dir, 'coverage_curve.png')
     )
     
@@ -1386,7 +1381,7 @@ def main():
     results_path = os.path.join(args.output_dir, 'metrics_results.npz')
     np.savez(results_path,
              coverage=coverage,
-             accuracy=accuracy,
+             rmse_scores=rmse_scores,
              router_output=router_output,
              error_field=error_field,
              residual_field=residual_field,
@@ -1415,7 +1410,8 @@ def main():
     print(f"  OPTIMAL LOSS:          {full_loss_optimal['optimal_loss']:.6f}")
     print(f"  OPTIMAL COVERAGE:      {full_loss_optimal['optimal_coverage']*100:.2f}%")
     print(f"  ----------------------------------------")
-    print(f"  Hybrid R² (vs CFD):    {r2_hybrid:.6f}")
+    print(f"  PINN RMSE (all PINN):  {rmse_scores[0]:.6f}")
+    print(f"  Hybrid RMSE (vs CFD): {rmse_hybrid:.6f}")
     print(f"  Hybrid CFD coverage:   {actual_coverage*100:.2f}%")
     print(f"  Hybrid solve time:     {hybrid_solve_time:.2f}s")
     print("=" * 60)
