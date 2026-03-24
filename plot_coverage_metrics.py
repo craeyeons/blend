@@ -80,8 +80,6 @@ def load_pinn_solution(pinn_model, X, Y, layout):
     u_pinn = pinn_uvp[:, 0].reshape(X.shape).astype(np.float32)
     v_pinn = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32)
     p_pinn = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32)
-    # Shift PINN pressure so p(0,0)=0 to match CFD reference
-    p_pinn = p_pinn - p_pinn[0, 0]
 
     # Mask out obstacle regions
     u_pinn = u_pinn * layout
@@ -1323,8 +1321,8 @@ def main():
     # =========================================================================
     # Step 7c: Compute actual hybrid solution using threshold
     # =========================================================================
-    optimal_threshold = args.threshold
-    print(f"\n[Step 7c] Computing hybrid solution with threshold={optimal_threshold:.6f}...")
+    optimal_threshold = full_loss_optimal['optimal_threshold']
+    print(f"\n[Step 7c] Computing hybrid solution with optimal threshold={optimal_threshold:.6f}...")
     print("  Running hybrid PINN-CFD simulation (CFD in high-confidence regions, PINN elsewhere)...")
     
     u_hybrid, v_hybrid, p_hybrid, cfd_mask, hybrid_solve_time = compute_hybrid_solution(
@@ -1399,15 +1397,20 @@ def main():
     
     # Print summary box
     print("\n" + "=" * 60)
-    print("           OPTIMAL RESULTS (Full Training Loss)")
+    print("           RESULTS SUMMARY")
     print("=" * 60)
-    print(f"  β (CFD cost):        {args.beta}")
+    print(f"  β (CFD cost):          {args.beta}")
     print(f"  ----------------------------------------")
-    print(f"  OPTIMAL THRESHOLD:   {full_loss_optimal['optimal_threshold']:.6f}")
-    print(f"  OPTIMAL LOSS:        {full_loss_optimal['optimal_loss']:.6f}")
-    print(f"  OPTIMAL COVERAGE:    {full_loss_optimal['optimal_coverage']*100:.2f}%")
+    print(f"  PINN Only Loss:        {results['loss_pinn_only']:.6f}")
+    print(f"  CFD Only Loss:         {results['loss_cfd_only']:.6f} (= β)")
     print(f"  ----------------------------------------")
-    print(f"  (This is the star point in coverage_metrics.png)")
+    print(f"  OPTIMAL THRESHOLD:     {full_loss_optimal['optimal_threshold']:.6f}")
+    print(f"  OPTIMAL LOSS:          {full_loss_optimal['optimal_loss']:.6f}")
+    print(f"  OPTIMAL COVERAGE:      {full_loss_optimal['optimal_coverage']*100:.2f}%")
+    print(f"  ----------------------------------------")
+    print(f"  Hybrid R² (vs CFD):    {r2_hybrid:.6f}")
+    print(f"  Hybrid CFD coverage:   {actual_coverage*100:.2f}%")
+    print(f"  Hybrid solve time:     {hybrid_solve_time:.2f}s")
     print("=" * 60)
     
     # Print timing information

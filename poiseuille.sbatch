@@ -102,7 +102,6 @@ python plot_coverage_metrics.py \
     --save-cfd ./cfd_poiseuille_solution.npz \
     --beta 1.1 \
     --cylinder-y 0.5 \
-    --cylinder-radius 0 \
-    --threshold 0
+    --cylinder-radius 0
 
 echo "=== Job completed ==="

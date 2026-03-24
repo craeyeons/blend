@@ -98,7 +98,6 @@ python plot_coverage_metrics.py \
     --compute-cfd \
     --save-cfd ./cfd_mid_cylinder_solution.npz \
     --beta 1.1 \
-    --cylinder-y 0.5 \
-    --threshold 0
+    --cylinder-y 0.5
 
 echo "=== Job completed ==="

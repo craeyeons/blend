@@ -56,7 +56,6 @@ python plot_coverage_metrics_cavity.py \
     --save-cfd ./cfd_cavity_solution.npz \
     --beta 1.1 \
     --N 100 \
-    --output-dir ./metrics_output_cavity \
-    --threshold 0
+    --output-dir ./metrics_output_cavity
 
 echo "=== Metrics Generation done ==="

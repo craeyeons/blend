@@ -913,8 +913,8 @@ def main():
     # =========================================================================
     # Step 7c: Compute hybrid solution
     # =========================================================================
-    optimal_threshold = args.threshold
-    print(f"\n[Step 7c] Computing hybrid solution with threshold={optimal_threshold:.6f}...")
+    optimal_threshold = full_loss_optimal['optimal_threshold']
+    print(f"\n[Step 7c] Computing hybrid solution with optimal threshold={optimal_threshold:.6f}...")
     
     u_hybrid, v_hybrid, p_hybrid, cfd_mask, hybrid_solve_time = compute_hybrid_solution(
         pinn_model, router_output, layout, optimal_threshold, args
@@ -981,16 +981,20 @@ def main():
     
     # Print summary
     print("\n" + "=" * 60)
-    print("           OPTIMAL RESULTS (Cavity Flow)")
+    print("           RESULTS SUMMARY (Cavity Flow)")
     print("=" * 60)
-    print(f"  β (CFD cost):        {args.beta}")
+    print(f"  β (CFD cost):          {args.beta}")
     print(f"  ----------------------------------------")
-    print(f"  OPTIMAL THRESHOLD:   {full_loss_optimal['optimal_threshold']:.6f}")
-    print(f"  OPTIMAL COVERAGE:    {full_loss_optimal['optimal_coverage']*100:.2f}%")
-    print("=" * 60)
-    
-    print("\n" + "=" * 60)
-    print("METRICS COMPUTATION COMPLETE")
+    print(f"  PINN Only Loss:        {results['loss_pinn_only']:.6f}")
+    print(f"  CFD Only Loss:         {results['loss_cfd_only']:.6f} (= β)")
+    print(f"  ----------------------------------------")
+    print(f"  OPTIMAL THRESHOLD:     {full_loss_optimal['optimal_threshold']:.6f}")
+    print(f"  OPTIMAL LOSS:          {full_loss_optimal['optimal_loss']:.6f}")
+    print(f"  OPTIMAL COVERAGE:      {full_loss_optimal['optimal_coverage']*100:.2f}%")
+    print(f"  ----------------------------------------")
+    print(f"  Hybrid R² (vs CFD):    {r2_hybrid:.6f}")
+    print(f"  Hybrid CFD coverage:   {actual_coverage*100:.2f}%")
+    print(f"  Hybrid solve time:     {hybrid_solve_time:.2f}s")
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
 
