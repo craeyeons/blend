@@ -1247,12 +1247,19 @@ def main():
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
     residual_field = residual_field_tf.numpy()
-    
+
     # Mask out obstacle regions
     residual_field = residual_field * layout
-    
-    print(f"  Mean physics residual (fluid): {np.mean(residual_field[layout > 0]):.6f}")
-    print(f"  Max physics residual: {np.max(residual_field):.6f}")
+
+    # Median-normalize residual (same as training path) so β is comparable
+    fluid_residuals = residual_field[layout > 0]
+    median_residual = np.median(fluid_residuals)
+    if median_residual > 1e-10:
+        residual_field = residual_field / median_residual
+
+    print(f"  Median physics residual (raw): {median_residual:.6f}")
+    print(f"  Mean physics residual (normalized): {np.mean(residual_field[layout > 0]):.6f}")
+    print(f"  Max physics residual (normalized): {np.max(residual_field):.6f}")
     
     # Also compute L2 error field for reference (coverage curve uses this)
     print("\n[Step 5b] Computing L2 error field (for R² curve)...")
