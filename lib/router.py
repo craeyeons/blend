@@ -457,6 +457,7 @@ class RouterTrainer:
                  beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
                  grad_clip_norm=1.0,
+                 residual_source='combined',
                  residual_weights=None,
                  nu=0.01, rho=1.0,
                  x_domain=(0, 2), y_domain=(0, 1),
@@ -480,6 +481,10 @@ class RouterTrainer:
         grad_clip_norm : float
             Maximum gradient norm for clipping (stabilizes training).
             Set to None to disable. Recommended: 1.0-5.0.
+        residual_source : str
+            Source term used as R(x) in logistic loss.
+            Options: 'combined' (PDE + ETE), 'pde' (PDE only), 'ete' (ETE only).
+            Default: 'combined'.
         residual_weights : dict
             Weights for: continuity, momentum
         nu : float
@@ -500,6 +505,13 @@ class RouterTrainer:
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
+        self.residual_source = residual_source
+
+        if self.residual_source not in {'combined', 'pde', 'ete'}:
+            raise ValueError(
+                f"Invalid residual_source='{self.residual_source}'. "
+                "Use one of: 'combined', 'pde', 'ete'."
+            )
         
         # Default residual weights (PDE residuals only)
         self.residual_weights = residual_weights or {
@@ -589,8 +601,14 @@ class RouterTrainer:
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
 
-            # Sum raw PDE residual and BC error, then median-normalize
-            raw_residual = pde_residual + smeared_bc_err
+            # Choose residual source, then median-normalize
+            if self.residual_source == 'combined':
+                raw_residual = pde_residual + smeared_bc_err
+            elif self.residual_source == 'pde':
+                raw_residual = pde_residual
+            else:  # self.residual_source == 'ete'
+                raw_residual = smeared_bc_err
+
             residual_flat = tf.reshape(raw_residual, [-1])
             residual_median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
             total_residual = raw_residual / (residual_median + 1e-10)
