@@ -36,7 +36,8 @@ from lib.router import (
     solve_error_transport,
     create_cavity_setup,
     plot_router_output,
-    plot_training_history
+    plot_training_history,
+    plot_coverage_evolution,
 )
 from lib.network import Network as CavityNetwork
 
@@ -705,6 +706,25 @@ def main():
     # Plot training history
     history_plot_path = os.path.join(args.output_dir, 'training_history.png')
     plot_training_history(history, save_path=history_plot_path)
+
+    # Plot coverage evolution at fixed deciles (0%, 10%, ..., 100%)
+    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.png')
+    coverage_metrics, _ = plot_coverage_evolution(
+        r, layout,
+        save_path=coverage_plot_path,
+        title='Coverage Evolution (Cavity Router)'
+    )
+    coverage_data_path = os.path.join(args.output_dir, 'coverage_evolution.npz')
+    np.savez(coverage_data_path,
+             target_coverage=coverage_metrics['target_coverage'],
+             threshold=coverage_metrics['threshold'],
+             actual_coverage=coverage_metrics['actual_coverage'])
+
+    print("  Coverage evolution (target -> achieved, threshold):")
+    for tc, ac, th in zip(coverage_metrics['target_coverage'],
+                          coverage_metrics['actual_coverage'],
+                          coverage_metrics['threshold']):
+        print(f"    {tc*100:5.1f}% -> {ac*100:5.1f}%   (thr={th:.6f})")
     
     print("\n" + "=" * 60)
     print("TRAINING COMPLETE")
@@ -715,6 +735,7 @@ def main():
     print(f"  - training_history.npz: Loss history")
     print(f"  - router_output.png: Visualization")
     print(f"  - training_history.png: Loss curves")
+    print(f"  - coverage_evolution.png/.npz: 0%-100% coverage deciles")
     
     return router, trainer, history
 

@@ -31,6 +31,7 @@ from lib.router import (
     compute_bc_error_field,
     plot_router_output,
     plot_training_history,
+    plot_coverage_evolution,
 )
 
 
@@ -277,6 +278,23 @@ def main():
                        show_hole=show_hole)
     plot_training_history(history,
                           save_path=os.path.join(args.output_dir, 'training_history.png'))
+
+    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.png')
+    coverage_metrics, _ = plot_coverage_evolution(
+        r, layout,
+        save_path=coverage_plot_path,
+        title=f'Coverage Evolution ({args.problem})'
+    )
+    np.savez(os.path.join(args.output_dir, 'coverage_evolution.npz'),
+             target_coverage=coverage_metrics['target_coverage'],
+             threshold=coverage_metrics['threshold'],
+             actual_coverage=coverage_metrics['actual_coverage'])
+
+    print("  Coverage evolution (target -> achieved, threshold):")
+    for tc, ac, th in zip(coverage_metrics['target_coverage'],
+                          coverage_metrics['actual_coverage'],
+                          coverage_metrics['threshold']):
+        print(f"    {tc*100:5.1f}% -> {ac*100:5.1f}%   (thr={th:.6f})")
 
     print("\n" + "=" * 60)
     print("DONE")

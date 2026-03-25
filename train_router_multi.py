@@ -46,7 +46,8 @@ from lib.router import (
     solve_error_transport,
     create_cylinder_setup,
     plot_router_output,
-    plot_training_history
+    plot_training_history,
+    plot_coverage_evolution,
 )
 from cylinder_network import Network as CylinderNetwork
 
@@ -461,7 +462,7 @@ def main():
     history_plot_path = os.path.join(args.output_dir, 'training_history.png')
     plot_training_history(history, save_path=history_plot_path)
 
-    # Plot router output for each training config
+    # Plot router output + coverage evolution for each training config
     for i, d in enumerate(train_data):
         result = evaluate_on_config(router, d, args.threshold)
         cx, cy = d['cylinder_center']
@@ -474,7 +475,18 @@ def main():
             show_circle=(cx, cy, cr)
         )
 
-    # Plot router output for each test config
+        cov_plot_path = os.path.join(args.output_dir, f'coverage_train_{i}.png')
+        cov_metrics, _ = plot_coverage_evolution(
+            result['router_output'], d['layout_np'],
+            save_path=cov_plot_path,
+            title=f'Coverage Evolution - Train {i+1}'
+        )
+        np.savez(os.path.join(args.output_dir, f'coverage_train_{i}.npz'),
+                 target_coverage=cov_metrics['target_coverage'],
+                 threshold=cov_metrics['threshold'],
+                 actual_coverage=cov_metrics['actual_coverage'])
+
+    # Plot router output + coverage evolution for each test config
     for i, d in enumerate(test_data):
         result = evaluate_on_config(router, d, args.threshold)
         cx, cy = d['cylinder_center']
@@ -486,6 +498,17 @@ def main():
             save_path=save_path,
             show_circle=(cx, cy, cr)
         )
+
+        cov_plot_path = os.path.join(args.output_dir, f'coverage_test_{i}.png')
+        cov_metrics, _ = plot_coverage_evolution(
+            result['router_output'], d['layout_np'],
+            save_path=cov_plot_path,
+            title=f'Coverage Evolution - TEST {i+1}'
+        )
+        np.savez(os.path.join(args.output_dir, f'coverage_test_{i}.npz'),
+                 target_coverage=cov_metrics['target_coverage'],
+                 threshold=cov_metrics['threshold'],
+                 actual_coverage=cov_metrics['actual_coverage'])
 
         # Save test predictions
         pred_path = os.path.join(args.output_dir, f'predictions_test_{i}.npz')
@@ -502,8 +525,10 @@ def main():
     print(f"  - router.weights.h5: Trained router model")
     print(f"  - training_history.npz/png: Loss history")
     print(f"  - router_train_*.png: Router output on training configs")
+    print(f"  - coverage_train_*.png/.npz: 0%-100% coverage deciles (train)")
     if test_data:
         print(f"  - router_test_*.png: Router output on TEST configs")
+        print(f"  - coverage_test_*.png/.npz: 0%-100% coverage deciles (test)")
         print(f"  - predictions_test_*.npz: Test predictions")
 
     return router, history

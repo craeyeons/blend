@@ -446,6 +446,97 @@ def plot_router_output(r, X, Y, layout, title='Router Output',
     return fig
 
 
+def plot_coverage_evolution(r, layout, save_path=None, title='Coverage Evolution (0%-100%)'):
+    """
+    Plot router threshold evolution at fixed FDM coverage deciles.
+
+    Parameters:
+    -----------
+    r : np.ndarray
+        Router output logits of shape (H, W)
+    layout : np.ndarray
+        Layout mask (1=material, 0=void)
+    save_path : str, optional
+        Path to save figure
+    title : str
+        Figure title
+
+    Returns:
+    --------
+    metrics : dict
+        Dictionary with target_coverage, threshold, actual_coverage arrays
+    fig : matplotlib.figure.Figure
+        Generated figure
+    """
+    material_mask = layout > 0
+    material_logits = r[material_mask]
+
+    if material_logits.size == 0:
+        target_cov = np.linspace(0.0, 1.0, 11)
+        thresholds = np.zeros_like(target_cov)
+        actual_cov = np.zeros_like(target_cov)
+    else:
+        sorted_logits = np.sort(material_logits)[::-1]
+        n_material = len(sorted_logits)
+
+        target_cov = np.linspace(0.0, 1.0, 11)
+        thresholds = []
+        actual_cov = []
+
+        for cov in target_cov:
+            if cov <= 0.0:
+                threshold = sorted_logits[0] + 1e-6
+            elif cov >= 1.0:
+                threshold = sorted_logits[-1] - 1e-6
+            else:
+                n_fdm = int(cov * n_material)
+                n_fdm = max(1, min(n_fdm, n_material))
+                threshold = sorted_logits[n_fdm - 1]
+
+            achieved = np.mean(material_logits >= threshold)
+            thresholds.append(float(threshold))
+            actual_cov.append(float(achieved))
+
+        thresholds = np.array(thresholds)
+        actual_cov = np.array(actual_cov)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    ax = axes[0]
+    ax.plot(target_cov * 100.0, thresholds, 'o-', linewidth=2, markersize=5)
+    ax.set_xlabel('Target FDM Coverage (%)')
+    ax.set_ylabel('Router Threshold')
+    ax.set_title('Threshold @ Coverage Deciles')
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(target_cov * 100.0, actual_cov * 100.0, 'o-', linewidth=2, markersize=5,
+            label='Achieved')
+    ax.plot([0, 100], [0, 100], '--', linewidth=1.5, label='Ideal')
+    ax.set_xlabel('Target FDM Coverage (%)')
+    ax.set_ylabel('Achieved FDM Coverage (%)')
+    ax.set_title('Coverage Tracking')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    plt.suptitle(title, fontsize=12)
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved coverage evolution to {save_path}")
+
+    plt.show()
+
+    metrics = {
+        'target_coverage': target_cov,
+        'threshold': thresholds,
+        'actual_coverage': actual_cov,
+    }
+    return metrics, fig
+
+
 def plot_training_history(history, save_path=None):
     """Plot training loss history."""
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
