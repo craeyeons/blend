@@ -225,6 +225,7 @@ class RouterTrainer:
     def __init__(self, router, pinn_model,
                  beta=0.1, lambda_tv=0.01,
                  grad_clip_norm=1.0,
+                 residual_source='combined',
                  residual_weights=None,
                  E=1.0, nu=0.3):
         self.router = router
@@ -232,6 +233,14 @@ class RouterTrainer:
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
+        self.residual_source = residual_source
+
+        if self.residual_source not in {'combined', 'pde', 'ete'}:
+            raise ValueError(
+                f"Invalid residual_source='{self.residual_source}'. "
+                "Use one of: 'combined', 'pde', 'ete'."
+            )
+
         self.residual_weights = residual_weights or {'eq_x': 1.0, 'eq_y': 1.0}
 
         self.residual_computer = PINNResidualComputer(pinn_model, E, nu)
@@ -261,7 +270,13 @@ class RouterTrainer:
                 X, Y, self.residual_weights
             )
 
-            raw_residual = pde_residual + bc_error
+            # Choose residual source
+            if self.residual_source == 'combined':
+                raw_residual = pde_residual + bc_error
+            elif self.residual_source == 'pde':
+                raw_residual = pde_residual
+            else:  # 'ete'
+                raw_residual = bc_error
             residual_flat = tf.reshape(raw_residual, [-1])
             residual_median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
             total_residual = raw_residual / (residual_median + 1e-10)

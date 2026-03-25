@@ -234,7 +234,7 @@ class CavityPINNResidualComputer:
         return bc_error
     
     def compute_total_residual_with_bc(self, X, Y, bc_mask, bc_u, bc_v, weights=None):
-        """Compute total PDE residual, normalized by median."""
+        """Compute total PDE residual (un-normalized, matching cylinder API)."""
         if weights is None:
             weights = {
                 'continuity': 1.0,
@@ -249,11 +249,6 @@ class CavityPINNResidualComputer:
         total = (weights.get('continuity', 1.0) * continuity +
                  weights.get('momentum', 1.0) * momentum)
 
-        # Normalize by median (robust to heavy-tailed, right-skewed residuals)
-        total_flat = tf.reshape(total, [-1])
-        median = tf.sort(total_flat)[tf.shape(total_flat)[0] // 2]
-        total = total / (median + 1e-10)
-
         return total
 
 
@@ -264,28 +259,36 @@ class CavityRouterTrainer:
     
     def __init__(self, router, pinn_model, beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
-                 grad_clip_norm=None, residual_weights=None,
+                 grad_clip_norm=None, residual_source='combined',
+                 residual_weights=None,
                  nu=0.01, rho=1.0, x_domain=(0, 1), y_domain=(0, 1)):
         self.router = router
         self.pinn_model = pinn_model
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
-        
+        self.residual_source = residual_source
+
+        if self.residual_source not in {'combined', 'pde', 'ete'}:
+            raise ValueError(
+                f"Invalid residual_source='{self.residual_source}'. "
+                "Use one of: 'combined', 'pde', 'ete'."
+            )
+
         if residual_weights is None:
             residual_weights = {
                 'continuity': 1.0,
                 'momentum': 1.0,
             }
         self.residual_weights = residual_weights
-        
+
         self.residual_computer = CavityPINNResidualComputer(
             pinn_model=pinn_model,
             nu=nu, rho=rho,
             x_domain=x_domain,
             y_domain=y_domain
         )
-        
+
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
     
     def compute_loss(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v):
@@ -301,11 +304,27 @@ class CavityRouterTrainer:
         X_tf = tf.cast(X, tf.float32)
         Y_tf = tf.cast(Y, tf.float32)
 
-        # Compute physics residual
-        residual = self.residual_computer.compute_total_residual_with_bc(
+        # Compute PDE residual
+        pde_residual = self.residual_computer.compute_total_residual_with_bc(
             X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf,
             weights=self.residual_weights
         )
+
+        # Extract ETE (error transport) from input channel 8
+        smeared_bc_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(layout_mask_tf)
+
+        # Choose residual source (matching train_router.py / RouterTrainer)
+        if self.residual_source == 'combined':
+            raw_residual = pde_residual + smeared_bc_err
+        elif self.residual_source == 'pde':
+            raw_residual = pde_residual
+        else:  # 'ete'
+            raw_residual = smeared_bc_err
+
+        # Median-normalize
+        residual_flat = tf.reshape(raw_residual, [-1])
+        residual_median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
+        residual = raw_residual / (residual_median + 1e-10)
 
         residual_fluid = residual * layout_mask_tf
         n_fluid = tf.reduce_sum(layout_mask_tf) + 1e-10
@@ -438,6 +457,9 @@ def main():
                         help='Weight for continuity residual')
     parser.add_argument('--weight-momentum', type=float, default=1.0,
                         help='Weight for momentum residual')
+    parser.add_argument('--residual-source', type=str, default='combined',
+                        choices=['combined', 'pde', 'ete'],
+                        help="Residual source for router loss: 'combined' (PDE+ETE), 'pde', or 'ete'")
     # Domain parameters (cavity is square)
     parser.add_argument('--N', type=int, default=100,
                         help='Grid size (N x N)')
@@ -595,6 +617,7 @@ def main():
         beta=args.beta,
         lambda_tv=args.lambda_tv,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
+        residual_source=args.residual_source,
         residual_weights=residual_weights,
         nu=args.nu,
         rho=args.rho,
@@ -607,6 +630,7 @@ def main():
     print(f"  λ_tv (TV reg): {args.lambda_tv}")
     print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
+    print(f"  Residual source: {args.residual_source}")
     
     # =========================================================================
     # Step 5: Train router

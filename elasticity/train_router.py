@@ -57,6 +57,9 @@ def main():
     # Residual weights
     parser.add_argument('--weight-eq-x', type=float, default=1.0)
     parser.add_argument('--weight-eq-y', type=float, default=1.0)
+    parser.add_argument('--residual-source', type=str, default='combined',
+                        choices=['combined', 'pde', 'ete'],
+                        help="Residual source for router loss: 'combined' (PDE+BC error), 'pde', or 'ete'")
 
     # Grid
     parser.add_argument('--nx', type=int, default=200)
@@ -209,12 +212,14 @@ def main():
         beta=args.beta,
         lambda_tv=args.lambda_tv,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
+        residual_source=args.residual_source,
         residual_weights=residual_weights,
         E=args.E,
         nu=args.nu,
     )
     trainer.optimizer.learning_rate.assign(args.lr)
     print(f"  beta={args.beta}, lambda_tv={args.lambda_tv}, lr={args.lr}")
+    print(f"  Residual source: {args.residual_source}")
 
     # Step 5: Train
     print("\n[Step 5] Training...")

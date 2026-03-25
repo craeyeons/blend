@@ -65,7 +65,8 @@ def load_pinn_model(model_path):
     return model
 
 
-def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
+def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights,
+                   residual_source='combined'):
     """
     Prepare a single domain configuration: load PINN, create domain setup,
     compute PINN predictions, and pre-compute residuals.
@@ -130,14 +131,23 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
     bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
 
-    total_residual = residual_computer.compute_total_residual_with_bc(
+    pde_residual = residual_computer.compute_total_residual_with_bc(
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
 
+    # Choose residual source (matching train_router.py / RouterTrainer)
+    ete_tf = tf.constant(error_transport, dtype=tf.float32)
+    if residual_source == 'combined':
+        raw_residual = pde_residual + ete_tf
+    elif residual_source == 'pde':
+        raw_residual = pde_residual
+    else:  # 'ete'
+        raw_residual = ete_tf
+
     # Normalize by median (robust to heavy-tailed, right-skewed residuals)
-    residual_flat = tf.reshape(total_residual, [-1])
+    residual_flat = tf.reshape(raw_residual, [-1])
     median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
-    total_residual_norm = total_residual / (median + 1e-10)
+    total_residual_norm = raw_residual / (median + 1e-10)
 
     fluid_points = np.sum(layout)
     print(f"    Fluid points: {fluid_points:.0f}/{layout.size} ({100*np.mean(layout):.1f}%)")
@@ -271,6 +281,9 @@ def main():
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0)
     parser.add_argument('--weight-momentum', type=float, default=1.0)
+    parser.add_argument('--residual-source', type=str, default='combined',
+                        choices=['combined', 'pde', 'ete'],
+                        help="Residual source for router loss: 'combined' (PDE+ETE), 'pde', or 'ete'")
     # Domain parameters (shared across all configs)
     parser.add_argument('--nx', type=int, default=200)
     parser.add_argument('--ny', type=int, default=100)
@@ -319,12 +332,14 @@ def main():
     # =========================================================================
     # Prepare all configs (load PINNs, compute residuals)
     # =========================================================================
+    print(f"\n  Residual source: {args.residual_source}")
     print("\n[Step 1] Preparing training configurations...")
     train_data = []
     for i, cfg in enumerate(train_cfgs):
         print(f"\n  Config {i+1}/{len(train_cfgs)}:")
         data = prepare_config(cfg, args.nx, args.ny, x_domain, y_domain,
-                              args.nu, args.rho, residual_weights)
+                              args.nu, args.rho, residual_weights,
+                              residual_source=args.residual_source)
         train_data.append(data)
 
     test_data = []
@@ -333,7 +348,8 @@ def main():
         for i, cfg in enumerate(test_cfgs):
             print(f"\n  Config {i+1}/{len(test_cfgs)}:")
             data = prepare_config(cfg, args.nx, args.ny, x_domain, y_domain,
-                                  args.nu, args.rho, residual_weights)
+                                  args.nu, args.rho, residual_weights,
+                                  residual_source=args.residual_source)
             test_data.append(data)
 
     # =========================================================================
