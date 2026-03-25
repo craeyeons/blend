@@ -513,13 +513,20 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
     # Shared colour limits from CFD
     fluid = layout > 0
     vel_min, vel_max = vel_cfd[fluid].min(), vel_cfd[fluid].max()
-    p_min, p_max = p_cfd[fluid].min(), p_cfd[fluid].max()
+
+    # Pressure has gauge freedom; align all fields to a common reference
+    # before comparing so color differences reflect structure, not offset.
+    p_pinn_cmp = p_pinn - np.median(p_pinn[fluid])
+    p_hybrid_cmp = p_hybrid - np.median(p_hybrid[fluid])
+    p_cfd_cmp = p_cfd - np.median(p_cfd[fluid])
+    p_min = min(p_pinn_cmp[fluid].min(), p_hybrid_cmp[fluid].min(), p_cfd_cmp[fluid].min())
+    p_max = max(p_pinn_cmp[fluid].max(), p_hybrid_cmp[fluid].max(), p_cfd_cmp[fluid].max())
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 8))
 
     titles_top = ['PINN', 'Hybrid', 'CFD']
     vel_fields = [vel_pinn, vel_hybrid, vel_cfd]
-    p_fields = [p_pinn, p_hybrid, p_cfd]
+    p_fields = [p_pinn_cmp, p_hybrid_cmp, p_cfd_cmp]
 
     for j, (title, vel, p) in enumerate(zip(titles_top, vel_fields, p_fields)):
         # Velocity magnitude (top row)
