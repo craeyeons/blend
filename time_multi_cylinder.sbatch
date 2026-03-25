@@ -34,7 +34,6 @@ python time_cylinder.py \
     --cylinder-y 0.4 \
     --cylinder-x 0.6 \
     --cylinder-radius 0.13 \
-    --threshold 0 \
     --n-runs 3
 
 echo "=== Job completed ==="
