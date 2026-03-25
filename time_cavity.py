@@ -3,7 +3,8 @@
 Time CFD and hybrid solvers for cavity flow.
 
 Only times sim.solve() calls. Router/PINN loading is excluded.
-Runs multiple trials and reports mean +/- std.
+Runs multiple trials for the optimal threshold, plus a single-run
+coverage sweep to produce a coverage-vs-RMSE-and-time plot.
 """
 
 import argparse
@@ -23,6 +24,12 @@ if gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
     except RuntimeError:
         pass
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import scienceplots
+plt.style.use(['science', 'no-latex'])
 
 from lib.router import (
     RouterCNN,
@@ -47,9 +54,8 @@ def compute_uv_from_psi(network, xy):
     return u, v
 
 
-def find_optimal_threshold(residual_field, router_output, layout, beta,
-                           lambda_tv=0.01, lambda_entropy=0.1, n_points=200):
-    """Find optimal threshold from training loss curve."""
+def find_optimal_threshold(residual_field, router_output, layout, beta, n_points=200):
+    """Find optimal threshold from target loss curve (no TV)."""
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
     logits = router_output[fluid_mask]
@@ -69,8 +75,7 @@ def find_optimal_threshold(residual_field, router_output, layout, beta,
             residual_loss = (1 - cov) * np.mean(sorted_residuals[n_cfd:])
         else:
             residual_loss = 0.0
-        tv_approx = lambda_tv * 4 * cov * (1 - cov)
-        loss[i] = cfd_cost + residual_loss + tv_approx
+        loss[i] = cfd_cost + residual_loss
 
     optimal_idx = np.argmin(loss)
     optimal_coverage = coverage[optimal_idx]
@@ -86,7 +91,21 @@ def find_optimal_threshold(residual_field, router_output, layout, beta,
     return optimal_threshold, optimal_coverage
 
 
-def compute_residual_field(pinn_model, X, Y, layout, nu=0.01, rho=1.0):
+def threshold_for_coverage(router_output, layout, target_cov):
+    """Return the threshold that achieves approximately target_cov CFD coverage."""
+    fluid_logits = router_output[layout > 0]
+    n_fluid = len(fluid_logits)
+    sorted_logits = np.sort(fluid_logits)[::-1]
+    n_cfd = int(target_cov * n_fluid)
+    n_cfd = max(0, min(n_cfd, n_fluid - 1))
+    if n_cfd == 0:
+        return sorted_logits[0] + 1.0
+    return sorted_logits[n_cfd - 1]
+
+
+def compute_residual_field(pinn_model, X, Y, layout, nu=0.01, rho=1.0,
+                           bc_error=None):
+    """Compute physics residual field, adding BC error before median-normalizing."""
     from train_router_cavity import CavityPINNResidualComputer
 
     residual_computer = CavityPINNResidualComputer(
@@ -100,17 +119,20 @@ def compute_residual_field(pinn_model, X, Y, layout, nu=0.01, rho=1.0):
     continuity, momentum = residual_computer.compute_residuals(X_tf, Y_tf)
     residual_field = (np.array(continuity) + np.array(momentum)) * layout
 
-    # Median normalization (robust to heavy-tailed residuals)
+    if bc_error is not None:
+        residual_field = residual_field + bc_error
+
     fluid_vals = residual_field[layout > 0]
     median = np.median(fluid_vals)
-    residual_field = residual_field / (median + 1e-10)
-    return residual_field * layout
+    residual_field = residual_field / (median + 1e-10) * layout
+    return residual_field
 
 
 def main():
     parser = argparse.ArgumentParser(description='Time CFD and hybrid solvers (cavity)')
     parser.add_argument('--pinn-path', type=str, default='./models/pinn_cavity_flow.h5')
     parser.add_argument('--router-weights', required=True)
+    parser.add_argument('--output-dir', type=str, default='./timing_output')
     parser.add_argument('--N', type=int, default=100)
     parser.add_argument('--x-min', type=float, default=0.0)
     parser.add_argument('--x-max', type=float, default=1.0)
@@ -124,13 +146,14 @@ def main():
     parser.add_argument('--temperature', type=float, default=0.5)
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--lambda-tv', type=float, default=0.01)
-    parser.add_argument('--threshold', type=float, default=0.0,
-                        help='Manual threshold for router decision (default: 0.0)')
     parser.add_argument('--nu', type=float, default=0.01)
     parser.add_argument('--rho', type=float, default=1.0)
     parser.add_argument('--n-runs', type=int, default=3)
+    parser.add_argument('--n-coverages', type=int, default=10,
+                        help='Number of coverage levels for the sweep (each run once)')
     args = parser.parse_args()
 
+    os.makedirs(args.output_dir, exist_ok=True)
     N_RUNS = args.n_runs
 
     # ================================================================
@@ -162,7 +185,7 @@ def main():
     )
     pinn_model.load_weights(args.pinn_path)
 
-    # Router output
+    # PINN predictions
     xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
     u_flat, v_flat = compute_uv_from_psi(pinn_model, xy_flat)
     psi_p = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
@@ -171,6 +194,7 @@ def main():
     pinn_v = v_flat.reshape(X.shape).astype(np.float32) * layout
     pinn_p = psi_p[:, 1].reshape(X.shape).astype(np.float32) * layout
 
+    # Router input + inference
     bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
     )
@@ -186,19 +210,27 @@ def main():
     router.load_weights(args.router_weights)
     router_output = router(inputs, training=False).numpy().squeeze()
 
-    # Use manual threshold
-    threshold = args.threshold
-    cfd_mask = (router_output >= threshold).astype(np.int32) * layout.astype(np.int32)
-    actual_coverage = np.sum(cfd_mask) / np.sum(layout)
+    # Compute residual field for optimal threshold
+    print("Computing residual field for optimal threshold...")
+    residual_field = compute_residual_field(
+        pinn_model, X, Y, layout, nu=args.nu, rho=args.rho,
+        bc_error=error_transport
+    )
 
-    print(f"  Threshold: {threshold:.6f}")
+    optimal_threshold, optimal_coverage = find_optimal_threshold(
+        residual_field, router_output, layout, args.beta
+    )
+    cfd_mask_opt = (router_output >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)
+    actual_coverage = np.sum(cfd_mask_opt) / np.sum(layout)
+
+    print(f"  Optimal threshold: {optimal_threshold:.6f}")
     print(f"  CFD coverage:      {actual_coverage * 100:.2f}%")
     print()
 
     # ================================================================
     # WARMUP (JIT compilation, not counted)
     # ================================================================
-    print("--- Warmup: CFD solve (JIT compile) ---")
+    print("--- Warmup: CFD solve ---")
     with contextlib.redirect_stdout(io.StringIO()):
         CavityFlowSimulation(
             Re=args.Re, N=args.N,
@@ -206,19 +238,18 @@ def main():
         ).solve()
     print("  done")
 
-    print("--- Warmup: Hybrid solve (JIT compile) ---")
+    print("--- Warmup: Hybrid solve ---")
     with contextlib.redirect_stdout(io.StringIO()):
         CavityFlowHybridSimulation(
             network=pinn_model, uv_func=compute_uv_from_psi,
-            mask=cfd_mask,
+            mask=cfd_mask_opt,
             Re=args.Re, N=args.N,
             max_iter=args.max_iter, tol=args.tol,
         ).solve()
-    print("  done")
-    print()
+    print("  done\n")
 
     # ================================================================
-    # TIME CFD
+    # TIME CFD (ground truth)
     # ================================================================
     cfd_times = []
     for i in range(N_RUNS):
@@ -228,20 +259,26 @@ def main():
         )
         with contextlib.redirect_stdout(io.StringIO()):
             t0 = time.perf_counter()
-            sim.solve()
+            u_cfd, v_cfd, p_cfd = sim.solve()
             t1 = time.perf_counter()
-        elapsed = t1 - t0
-        cfd_times.append(elapsed)
-        print(f"  CFD  run {i + 1}/{N_RUNS}: {elapsed:.4f} s")
+        cfd_times.append(t1 - t0)
+        print(f"  CFD  run {i + 1}/{N_RUNS}: {cfd_times[-1]:.4f} s")
+
+    # Keep last CFD solution as ground truth
+    u_cfd = np.array(u_cfd)
+    v_cfd = np.array(v_cfd)
+    p_cfd = np.array(p_cfd)
+    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
+    fluid_mask = layout > 0
 
     # ================================================================
-    # TIME HYBRID
+    # TIME HYBRID (optimal threshold, repeated)
     # ================================================================
     hybrid_times = []
     for i in range(N_RUNS):
         sim = CavityFlowHybridSimulation(
             network=pinn_model, uv_func=compute_uv_from_psi,
-            mask=cfd_mask,
+            mask=cfd_mask_opt,
             Re=args.Re, N=args.N,
             max_iter=args.max_iter, tol=args.tol,
         )
@@ -249,9 +286,96 @@ def main():
             t0 = time.perf_counter()
             sim.solve()
             t1 = time.perf_counter()
+        hybrid_times.append(t1 - t0)
+        print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f} s")
+
+    # ================================================================
+    # COVERAGE SWEEP (single run each)
+    # ================================================================
+    print(f"\n--- Coverage sweep ({args.n_coverages} levels, 1 run each) ---")
+    target_coverages = np.linspace(0, 1, args.n_coverages + 2)[1:-1]  # exclude 0% and 100%
+
+    sweep_cov = [0.0]  # PINN-only
+    sweep_time = [0.0]
+    pinn_vel_mag = np.sqrt(pinn_u**2 + pinn_v**2)
+    rmse_pinn = np.sqrt(np.mean((pinn_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+    sweep_rmse = [rmse_pinn]
+
+    for target_cov in target_coverages:
+        thresh = threshold_for_coverage(router_output, layout, target_cov)
+        mask = (router_output >= thresh).astype(np.int32) * layout.astype(np.int32)
+        cov = np.sum(mask) / np.sum(layout)
+
+        sim = CavityFlowHybridSimulation(
+            network=pinn_model, uv_func=compute_uv_from_psi,
+            mask=mask,
+            Re=args.Re, N=args.N,
+            max_iter=args.max_iter, tol=args.tol,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            t0 = time.perf_counter()
+            uh, vh, ph = sim.solve()
+            t1 = time.perf_counter()
         elapsed = t1 - t0
-        hybrid_times.append(elapsed)
-        print(f"  Hybrid run {i + 1}/{N_RUNS}: {elapsed:.4f} s")
+
+        uh, vh = np.array(uh), np.array(vh)
+        hyb_vel = np.sqrt(uh**2 + vh**2)
+        rmse = np.sqrt(np.mean((hyb_vel[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+
+        sweep_cov.append(cov)
+        sweep_time.append(elapsed)
+        sweep_rmse.append(rmse)
+        print(f"  cov={cov*100:5.1f}%  time={elapsed:.4f}s  RMSE={rmse:.6f}")
+
+    # CFD-only (100% coverage)
+    sweep_cov.append(1.0)
+    sweep_time.append(np.mean(cfd_times))
+    sweep_rmse.append(0.0)
+
+    sweep_cov = np.array(sweep_cov)
+    sweep_time = np.array(sweep_time)
+    sweep_rmse = np.array(sweep_rmse)
+
+    # ================================================================
+    # PLOT: Coverage vs RMSE & Time
+    # ================================================================
+    fig, ax1 = plt.subplots(figsize=(8, 5))
+
+    color_rmse = 'tab:blue'
+    color_time = 'tab:red'
+
+    ax1.set_xlabel('Coverage (% CFD)')
+    ax1.set_ylabel('RMSE (vs CFD)', color=color_rmse)
+    ax1.plot(sweep_cov * 100, sweep_rmse, 'o-', color=color_rmse, linewidth=2, markersize=6,
+             label='RMSE')
+    ax1.tick_params(axis='y', labelcolor=color_rmse)
+    ax1.set_xlim(-5, 105)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Solve Time (s)', color=color_time)
+    ax2.plot(sweep_cov * 100, sweep_time, 's-', color=color_time, linewidth=2, markersize=6,
+             label='Time')
+    ax2.tick_params(axis='y', labelcolor=color_time)
+
+    # Mark optimal point
+    ax1.axvline(x=actual_coverage * 100, color='green', linestyle='--', linewidth=1.5,
+                alpha=0.7, label=f'Optimal ({actual_coverage*100:.0f}%)')
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='center right', fontsize=9)
+
+    ax1.set_title(f'Coverage vs RMSE & Solve Time — Cavity (Re={args.Re})')
+    fig.tight_layout()
+
+    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.png')
+    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"\n  Saved plot to {plot_path}")
+
+    # Save sweep data
+    np.savez(os.path.join(args.output_dir, 'timing_sweep.npz'),
+             coverage=sweep_cov, time=sweep_time, rmse=sweep_rmse)
 
     # ================================================================
     # RESULTS
@@ -270,7 +394,7 @@ def main():
     print(f"  Hybrid  : {hyb_mean:.4f} +/- {hyb_std:.4f} s  {hybrid_times}")
     print(f"  Speedup : {speedup:.2f}x")
     print(f"  Coverage: {actual_coverage * 100:.2f}%")
-    print(f"  Threshold: {threshold:.6f}")
+    print(f"  Threshold: {optimal_threshold:.6f}")
     print("=" * 60)
 
 

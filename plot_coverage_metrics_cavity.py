@@ -338,6 +338,61 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     return fig
 
 
+def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
+                             u_cfd, v_cfd, p_cfd,
+                             u_hybrid, v_hybrid, p_hybrid,
+                             X, Y, layout, cfd_mask,
+                             save_path=None):
+    """
+    Side-by-side comparison of PINN, Hybrid, and CFD solutions.
+    Shows velocity magnitude and pressure for each.
+    """
+    from matplotlib.colors import Normalize
+
+    vel_pinn = np.sqrt(u_pinn**2 + v_pinn**2)
+    vel_hybrid = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    vel_cfd = np.sqrt(u_cfd**2 + v_cfd**2)
+
+    fluid = layout > 0
+    vel_min, vel_max = vel_cfd[fluid].min(), vel_cfd[fluid].max()
+    p_min, p_max = p_cfd[fluid].min(), p_cfd[fluid].max()
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+
+    titles = ['PINN', 'Hybrid', 'CFD']
+    vel_fields = [vel_pinn, vel_hybrid, vel_cfd]
+    p_fields = [p_pinn, p_hybrid, p_cfd]
+
+    for j, (title, vel, p) in enumerate(zip(titles, vel_fields, p_fields)):
+        ax = axes[0, j]
+        data = np.ma.masked_where(layout == 0, vel)
+        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
+                         norm=Normalize(vmin=vel_min, vmax=vel_max))
+        plt.colorbar(cf, ax=ax, label='|u|')
+        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                   colors='lime', linewidths=1.5, linestyles='--')
+        ax.set_aspect('equal')
+        ax.set_title(f'{title} — Velocity Magnitude')
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+
+        ax = axes[1, j]
+        data = np.ma.masked_where(layout == 0, p)
+        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
+                         norm=Normalize(vmin=p_min, vmax=p_max))
+        plt.colorbar(cf, ax=ax, label='p')
+        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                   colors='lime', linewidths=1.5, linestyles='--')
+        ax.set_aspect('equal')
+        ax.set_title(f'{title} — Pressure')
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved solution comparison to {save_path}")
+    plt.close(fig)
+
+
 def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
     """
     Compute MSE and R² of PINN points as a function of CFD coverage.
@@ -495,9 +550,7 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
             residual_loss = (1 - cov) * np.mean(sorted_residuals[n_cfd:])
         else:
             residual_loss = 0.0
-        tv_approx = lambda_tv * 4 * cov * (1 - cov)
-
-        loss[i] = cfd_cost + residual_loss + tv_approx
+        loss[i] = cfd_cost + residual_loss
 
     # Find optimal
     optimal_idx = np.argmin(loss)
@@ -590,38 +643,64 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta,
         lambda_tv=lambda_tv
     )
 
-    actual_coverage = actual_loss_info['actual_coverage']
-
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
     # Left plot: Loss vs Coverage
-    ax1.plot(loss_coverage * 100, loss_values, 'b-', linewidth=2.5, label='Reference Loss')
+    ax1.plot(loss_coverage * 100, loss_values, 'b-', linewidth=2.5, label='Loss Curve')
 
+    # Mark endpoints
+    ax1.plot(0, loss_values[0], 'o', color='purple', markersize=12, zorder=5)
+    ax1.plot(100, loss_values[-1], 'o', color='teal', markersize=12, zorder=5)
+
+    # Mark optimal point
     opt_cov = full_loss_optimal['optimal_coverage']
     opt_loss = full_loss_optimal['optimal_loss']
-    ax1.scatter([opt_cov * 100], [opt_loss], s=200, c='red', marker='*',
-                zorder=10, label=f'Optimal: cov={opt_cov*100:.1f}%, loss={opt_loss:.4f}')
+    ax1.plot(opt_cov * 100, opt_loss, '*', color='green', markersize=18, zorder=6,
+             markeredgecolor='black', markeredgewidth=1)
 
-    ax1.axvline(x=actual_coverage * 100, color='green', linestyle='--', linewidth=2,
-                label=f'Router Output: {actual_coverage*100:.1f}%')
+    # Reference lines
+    ax1.axhline(y=loss_values[0], color='purple', linestyle='--', linewidth=1.5, alpha=0.5, label=f'All PINN: {loss_values[0]:.4f}')
+    ax1.axhline(y=loss_values[-1], color='teal', linestyle='--', linewidth=1.5, alpha=0.5, label=f'All CFD: {loss_values[-1]:.4f}')
 
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
     ax1.set_ylabel('Training Loss', fontsize=14)
     ax1.set_xlim(-5, 105)
+    y_min = np.min(loss_values) - 0.1
+    y_max = max(loss_values[0], loss_values[-1]) + 0.15
+    ax1.set_ylim(y_min, y_max)
     ax1.set_title(f'Loss vs Coverage (β = {beta})', fontsize=16, fontweight='bold')
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
     ax1.grid(True, alpha=0.3)
+
+    # Annotations
+    ax1.annotate(f'All PINN\n{loss_values[0]:.4f}', xy=(0, loss_values[0]),
+                xytext=(8, loss_values[0] + 0.03),
+                fontsize=9, color='purple', ha='left', va='bottom', fontweight='bold')
+    ax1.annotate(f'All CFD\n{loss_values[-1]:.4f}', xy=(100, loss_values[-1]),
+                xytext=(92, loss_values[-1] + 0.03),
+                fontsize=9, color='teal', ha='right', va='bottom', fontweight='bold')
+    ax1.annotate(f'Opt: {opt_cov*100:.0f}%\n{opt_loss:.4f}',
+                xy=(opt_cov * 100, opt_loss),
+                xytext=(opt_cov * 100 + 8, opt_loss - 0.08),
+                fontsize=9, color='green', ha='left', va='top', fontweight='bold',
+                arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
     ax1.legend(loc='upper right', fontsize=8)
 
-    # Right plot: Loss breakdown
-    components = ['Logistic\nLoss', 'TV\nLoss', 'TOTAL']
-    values = [
-        actual_loss_info['logistic_loss'],
-        actual_loss_info['tv_loss'],
-        actual_loss_info['actual_total_loss']
-    ]
-    colors = ['steelblue', 'gold', 'red']
+    # Right plot: Optimal point loss breakdown
+    fluid_mask = layout > 0
+    residuals = residual_field[fluid_mask]
+    sorted_idx = np.argsort(router_output[fluid_mask])[::-1]
+    sorted_residuals = residuals[sorted_idx]
+    n_fluid = len(residuals)
+    n_cfd_opt = int(opt_cov * n_fluid)
+    n_pinn_opt = n_fluid - n_cfd_opt
+
+    opt_cfd_cost = beta * opt_cov
+    opt_residual_cost = (1 - opt_cov) * np.mean(sorted_residuals[n_cfd_opt:]) if n_pinn_opt > 0 else 0.0
+    components = ['CFD Cost\n(β·cov)', 'Residual\nCost', 'TOTAL']
+    values = [opt_cfd_cost, opt_residual_cost, opt_loss]
+    colors = ['steelblue', 'coral', 'green']
 
     bars = ax2.bar(components, values, color=colors, edgecolor='black', linewidth=1.5)
 
@@ -634,9 +713,10 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta,
 
     ax2.axhline(y=0, color='black', linewidth=0.5)
     ax2.set_ylabel('Loss Value', fontsize=14)
-    ax2.set_title('Router Loss Breakdown', fontsize=16, fontweight='bold')
+    ax2.set_title(f'Loss Breakdown at Optimal ({opt_cov*100:.0f}% CFD)', fontsize=16, fontweight='bold')
 
-    info = f"Router Coverage: {actual_coverage*100:.1f}%\n"
+    info = f"Optimal Coverage: {opt_cov*100:.1f}%\n"
+    info += f"---\n"
     info += f"β={beta}, λ_TV={lambda_tv}"
     ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=9,
              va='top', ha='right', bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
@@ -950,7 +1030,16 @@ def main():
         coverage=actual_coverage,
         save_path=os.path.join(args.output_dir, 'hybrid_solution.png')
     )
-    
+
+    # Side-by-side comparison: PINN vs Hybrid vs CFD
+    plot_solution_comparison(
+        u_pinn, v_pinn, p_pinn,
+        u_cfd, v_cfd, p_cfd,
+        u_hybrid, v_hybrid, p_hybrid,
+        X, Y, layout, cfd_mask,
+        save_path=os.path.join(args.output_dir, 'solution_comparison.png')
+    )
+
     # =========================================================================
     # Step 8: Generate plots
     # =========================================================================

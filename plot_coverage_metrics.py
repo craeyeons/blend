@@ -492,6 +492,71 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     return fig
 
 
+def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
+                             u_cfd, v_cfd, p_cfd,
+                             u_hybrid, v_hybrid, p_hybrid,
+                             X, Y, layout, cfd_mask,
+                             cylinder_center, cylinder_radius,
+                             save_path=None):
+    """
+    Side-by-side comparison of PINN, Hybrid, and CFD solutions.
+    Shows velocity magnitude and pressure for each.
+    """
+    from matplotlib.colors import Normalize
+
+    cx, cy = cylinder_center
+
+    vel_pinn = np.sqrt(u_pinn**2 + v_pinn**2)
+    vel_hybrid = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    vel_cfd = np.sqrt(u_cfd**2 + v_cfd**2)
+
+    # Shared colour limits from CFD
+    fluid = layout > 0
+    vel_min, vel_max = vel_cfd[fluid].min(), vel_cfd[fluid].max()
+    p_min, p_max = p_cfd[fluid].min(), p_cfd[fluid].max()
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+
+    titles_top = ['PINN', 'Hybrid', 'CFD']
+    vel_fields = [vel_pinn, vel_hybrid, vel_cfd]
+    p_fields = [p_pinn, p_hybrid, p_cfd]
+
+    for j, (title, vel, p) in enumerate(zip(titles_top, vel_fields, p_fields)):
+        # Velocity magnitude (top row)
+        ax = axes[0, j]
+        data = np.ma.masked_where(layout == 0, vel)
+        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
+                         norm=Normalize(vmin=vel_min, vmax=vel_max))
+        plt.colorbar(cf, ax=ax, label='|u|')
+        circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+        ax.add_patch(circle)
+        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                   colors='lime', linewidths=1.5, linestyles='--')
+        ax.set_aspect('equal')
+        ax.set_title(f'{title} — Velocity Magnitude')
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+
+        # Pressure (bottom row)
+        ax = axes[1, j]
+        data = np.ma.masked_where(layout == 0, p)
+        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
+                         norm=Normalize(vmin=p_min, vmax=p_max))
+        plt.colorbar(cf, ax=ax, label='p')
+        circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+        ax.add_patch(circle)
+        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                   colors='lime', linewidths=1.5, linestyles='--')
+        ax.set_aspect('equal')
+        ax.set_title(f'{title} — Pressure')
+        ax.set_xlabel('x'); ax.set_ylabel('y')
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved solution comparison to {save_path}")
+    plt.close(fig)
+
+
 def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points=100):
     """
     Compute MSE and R² of PINN points as a function of CFD coverage.
@@ -854,10 +919,7 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
         else:
             residual_loss = 0.0
 
-        # TV approximation (parabola peaking at 50% coverage)
-        tv_approx = lambda_tv * 4 * cov * (1 - cov)
-
-        loss[i] = cfd_cost + residual_loss + tv_approx
+        loss[i] = cfd_cost + residual_loss
 
     # ===== Compute ACTUAL router logistic loss =====
     s = logits
@@ -938,7 +1000,7 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
         lambda_tv=lambda_tv
     )
 
-    ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5, label='Reference Loss')
+    ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5, label='Loss Curve')
 
     # Mark key points
     ax1.plot(0, loss_curve[0], 'o', color='purple', markersize=12, zorder=5)
@@ -950,15 +1012,6 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
     opt_loss = loss_curve[min_idx]
     ax1.plot(opt_coverage * 100, opt_loss, '*', color='green', markersize=18, zorder=6,
              markeredgecolor='black', markeredgewidth=1)
-
-    # Mark ACTUAL router operating point
-    # Coverage = fraction of fluid points with positive logit
-    fluid_logits = router_output[layout > 0]
-    actual_coverage = np.mean(fluid_logits > 0)
-    actual_total_loss = actual_loss_info['actual_total_loss']
-
-    ax1.plot(actual_coverage * 100, actual_total_loss, 'D', color='red', markersize=14, zorder=7,
-             markeredgecolor='black', markeredgewidth=1.5, label=f'Router: {actual_total_loss:.4f}')
 
     # Reference lines
     ax1.axhline(y=loss_curve[0], color='purple', linestyle='--', linewidth=1.5, alpha=0.5, label=f'All PINN: {loss_curve[0]:.4f}')
@@ -982,8 +1035,8 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
                 fontsize=9, color='green', ha='left', va='top', fontweight='bold',
                 arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
 
-    y_min = min(np.min(loss_curve) - 0.1, actual_total_loss - 0.1)
-    y_max = max(loss_curve[0], loss_curve[-1], actual_total_loss) + 0.15
+    y_min = np.min(loss_curve) - 0.1
+    y_max = max(loss_curve[0], loss_curve[-1]) + 0.15
     ax1.set_xlim(-5, 105)
     ax1.set_ylim(y_min, y_max)
     ax1.spines['top'].set_visible(False)
@@ -991,14 +1044,21 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
     ax1.grid(True, alpha=0.3)
     ax1.legend(loc='upper right', fontsize=8)
 
-    # ===== Right plot: Loss breakdown =====
-    components = ['Logistic\nLoss', 'TV\nLoss', 'TOTAL']
-    values = [
-        actual_loss_info['logistic_loss'],
-        actual_loss_info['tv_loss'],
-        actual_loss_info['actual_total_loss']
-    ]
-    colors = ['steelblue', 'gold', 'red']
+    # ===== Right plot: Optimal point loss breakdown =====
+    # Decompose the loss at the optimal coverage into its components
+    fluid_mask = layout > 0
+    residuals = residual_field[fluid_mask]
+    sorted_idx = np.argsort(router_output[fluid_mask])[::-1]
+    sorted_residuals = residuals[sorted_idx]
+    n_fluid = len(residuals)
+    n_cfd_opt = int(opt_coverage * n_fluid)
+    n_pinn_opt = n_fluid - n_cfd_opt
+
+    opt_cfd_cost = beta * opt_coverage
+    opt_residual_cost = (1 - opt_coverage) * np.mean(sorted_residuals[n_cfd_opt:]) if n_pinn_opt > 0 else 0.0
+    components = ['CFD Cost\n(β·cov)', 'Residual\nCost', 'TOTAL']
+    values = [opt_cfd_cost, opt_residual_cost, opt_loss]
+    colors = ['steelblue', 'coral', 'green']
 
     bars = ax2.bar(components, values, color=colors, edgecolor='black', linewidth=1.5)
 
@@ -1011,10 +1071,10 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
 
     ax2.axhline(y=0, color='black', linewidth=0.5)
     ax2.set_ylabel('Loss Value', fontsize=14)
-    ax2.set_title('Router Loss Breakdown', fontsize=16, fontweight='bold')
+    ax2.set_title(f'Loss Breakdown at Optimal ({opt_coverage*100:.0f}% CFD)', fontsize=16, fontweight='bold')
 
     # Info box
-    info = f"Router Coverage: {actual_coverage*100:.1f}%\n"
+    info = f"Optimal Coverage: {opt_coverage*100:.1f}%\n"
     info += f"---\n"
     info += f"β={beta}, λ_TV={lambda_tv}"
     ax2.text(0.98, 0.98, info, transform=ax2.transAxes, fontsize=9,
@@ -1363,7 +1423,18 @@ def main():
         coverage=actual_coverage,
         save_path=os.path.join(args.output_dir, 'hybrid_solution.png')
     )
-    
+
+    # Side-by-side comparison: PINN vs Hybrid vs CFD
+    plot_solution_comparison(
+        u_pinn, v_pinn, p_pinn,
+        u_cfd, v_cfd, p_cfd,
+        u_hybrid, v_hybrid, p_hybrid,
+        X, Y, layout, cfd_mask,
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        save_path=os.path.join(args.output_dir, 'solution_comparison.png')
+    )
+
     # =========================================================================
     # Step 8: Generate plots
     # =========================================================================
