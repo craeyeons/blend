@@ -120,6 +120,24 @@ def make_hybrid_sim(args, pinn_model, cfd_mask):
     )
 
 
+def compute_router_output_and_ete(router, layout, bc_mask, bc_u, bc_v, bc_p,
+                                  pinn_u, pinn_v, pinn_p,
+                                  x_min, x_max, y_min, y_max, nu):
+    """Compute router output together with channel-8 error transport field."""
+    bc_error_local = compute_bc_error_field(
+        bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
+    )
+    error_transport = solve_error_transport(
+        pinn_u, pinn_v, bc_error_local, layout, nu=nu,
+        x_domain=(x_min, x_max),
+        y_domain=(y_min, y_max),
+    )
+    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
+                                 pinn_u, pinn_v, pinn_p, error_transport)
+    router_output = router(inputs, training=False)[0, :, :, 0].numpy()
+    return router_output, error_transport
+
+
 def main():
     parser = argparse.ArgumentParser(description='Time CFD and hybrid solvers (cylinder)')
     parser.add_argument('--pinn-path', required=True)
@@ -204,7 +222,11 @@ def main():
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     _ = router(inputs)
     router.load_weights(args.router_weights)
-    router_output = router(inputs, training=False)[0, :, :, 0].numpy()
+    router_output, error_transport = compute_router_output_and_ete(
+        router, layout, bc_mask, bc_u, bc_v, bc_p,
+        pinn_u, pinn_v, pinn_p,
+        args.x_min, args.x_max, args.y_min, args.y_max, nu,
+    )
 
     # Compute residual field for optimal threshold
     print("Computing residual field for optimal threshold...")
@@ -272,9 +294,15 @@ def main():
     # ================================================================
     hybrid_times = []
     for i in range(N_RUNS):
-        sim = make_hybrid_sim(args, pinn_model, cfd_mask_opt)
         with contextlib.redirect_stdout(io.StringIO()):
             t0 = time.perf_counter()
+            router_output_timed, _ = compute_router_output_and_ete(
+                router, layout, bc_mask, bc_u, bc_v, bc_p,
+                pinn_u, pinn_v, pinn_p,
+                args.x_min, args.x_max, args.y_min, args.y_max, nu,
+            )
+            cfd_mask_timed = (router_output_timed >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)
+            sim = make_hybrid_sim(args, pinn_model, cfd_mask_timed)
             sim.solve()
             t1 = time.perf_counter()
         hybrid_times.append(t1 - t0)
@@ -293,16 +321,20 @@ def main():
     sweep_rmse = [rmse_pinn]
 
     for target_cov in target_coverages:
-        thresh = threshold_for_coverage(router_output, layout, target_cov)
-        mask = (router_output >= thresh).astype(np.int32) * layout.astype(np.int32)
-        cov = np.sum(mask) / np.sum(layout)
-
-        sim = make_hybrid_sim(args, pinn_model, mask)
         with contextlib.redirect_stdout(io.StringIO()):
             t0 = time.perf_counter()
+            router_output_timed, _ = compute_router_output_and_ete(
+                router, layout, bc_mask, bc_u, bc_v, bc_p,
+                pinn_u, pinn_v, pinn_p,
+                args.x_min, args.x_max, args.y_min, args.y_max, nu,
+            )
+            thresh = threshold_for_coverage(router_output_timed, layout, target_cov)
+            mask = (router_output_timed >= thresh).astype(np.int32) * layout.astype(np.int32)
+            sim = make_hybrid_sim(args, pinn_model, mask)
             uh, vh, ph = sim.solve()
             t1 = time.perf_counter()
         elapsed = t1 - t0
+        cov = np.sum(mask) / np.sum(layout)
 
         uh, vh = np.array(uh), np.array(vh)
         hyb_vel = np.sqrt(uh**2 + vh**2)
