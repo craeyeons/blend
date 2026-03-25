@@ -485,6 +485,58 @@ def main():
                  target_coverage=cov_metrics['target_coverage'],
                  threshold=cov_metrics['threshold'],
                  actual_coverage=cov_metrics['actual_coverage'])
+        
+        # Generate grid visualization for this training config
+        fig, axes = plt.subplots(2, 6, figsize=(18, 6))
+        axes = axes.flatten()
+        decile_coverages = np.linspace(0.0, 1.0, 11)
+        for j, cov in enumerate(decile_coverages):
+            ax = axes[j]
+            r_out = result['router_output']
+            layout = d['layout_np']
+            # Find threshold for this coverage
+            if cov <= 0.0:
+                threshold = r_out.max() + 1.0
+            elif cov >= 1.0:
+                threshold = r_out.min() - 1.0
+            else:
+                fluid_logits = r_out[layout > 0]
+                sorted_logits = np.sort(fluid_logits)[::-1]
+                n_fluid = len(sorted_logits)
+                n_cfd = int(cov * n_fluid)
+                n_cfd = max(1, min(n_cfd, n_fluid))
+                threshold = sorted_logits[n_cfd - 1]
+            
+            # Create mask and visualization
+            combined = np.zeros_like(r_out)
+            combined[layout == 0] = 0
+            combined[(layout == 1) & (r_out < threshold)] = 1
+            combined[(layout == 1) & (r_out >= threshold)] = 2
+            
+            ax.contourf(d['X'], d['Y'], combined, levels=[-0.5, 0.5, 1.5, 2.5],
+                        colors=['gray', 'blue', 'red'], alpha=0.7)
+            circle = plt.Circle(d['cylinder_center'], d['cylinder_radius'],
+                               color='gray', fill=True)
+            ax.add_patch(circle)
+            ax.set_aspect('equal')
+            actual_cov = np.sum((r_out >= threshold) & (layout > 0)) / np.sum(layout > 0) * 100
+            ax.set_title(f'{cov*100:.0f}% (actual: {actual_cov:.0f}%)', fontsize=10)
+            ax.set_xticks([])
+            ax.set_yticks([])
+        
+        axes[-1].axis('off')
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='gray', label='Obstacle'),
+            Patch(facecolor='blue', alpha=0.7, label='PINN'),
+            Patch(facecolor='red', alpha=0.7, label='CFD')
+        ]
+        fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
+        plt.suptitle(f'Coverage Grid - Train {i+1}: {d["label"]}', fontsize=12)
+        plt.tight_layout()
+        grid_path = os.path.join(args.output_dir, f'coverage_train_{i}_grid.png')
+        plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+        plt.close()
 
     # Plot router output + coverage evolution for each test config
     for i, d in enumerate(test_data):
@@ -509,6 +561,58 @@ def main():
                  target_coverage=cov_metrics['target_coverage'],
                  threshold=cov_metrics['threshold'],
                  actual_coverage=cov_metrics['actual_coverage'])
+        
+        # Generate grid visualization for this test config
+        fig, axes = plt.subplots(2, 6, figsize=(18, 6))
+        axes = axes.flatten()
+        decile_coverages = np.linspace(0.0, 1.0, 11)
+        for j, cov in enumerate(decile_coverages):
+            ax = axes[j]
+            r_out = result['router_output']
+            layout = d['layout_np']
+            # Find threshold for this coverage
+            if cov <= 0.0:
+                threshold = r_out.max() + 1.0
+            elif cov >= 1.0:
+                threshold = r_out.min() - 1.0
+            else:
+                fluid_logits = r_out[layout > 0]
+                sorted_logits = np.sort(fluid_logits)[::-1]
+                n_fluid = len(sorted_logits)
+                n_cfd = int(cov * n_fluid)
+                n_cfd = max(1, min(n_cfd, n_fluid))
+                threshold = sorted_logits[n_cfd - 1]
+            
+            # Create mask and visualization
+            combined = np.zeros_like(r_out)
+            combined[layout == 0] = 0
+            combined[(layout == 1) & (r_out < threshold)] = 1
+            combined[(layout == 1) & (r_out >= threshold)] = 2
+            
+            ax.contourf(d['X'], d['Y'], combined, levels=[-0.5, 0.5, 1.5, 2.5],
+                        colors=['gray', 'blue', 'red'], alpha=0.7)
+            circle = plt.Circle(d['cylinder_center'], d['cylinder_radius'],
+                               color='gray', fill=True)
+            ax.add_patch(circle)
+            ax.set_aspect('equal')
+            actual_cov = np.sum((r_out >= threshold) & (layout > 0)) / np.sum(layout > 0) * 100
+            ax.set_title(f'{cov*100:.0f}% (actual: {actual_cov:.0f}%)', fontsize=10)
+            ax.set_xticks([])
+            ax.set_yticks([])
+        
+        axes[-1].axis('off')
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='gray', label='Obstacle'),
+            Patch(facecolor='blue', alpha=0.7, label='PINN'),
+            Patch(facecolor='red', alpha=0.7, label='CFD')
+        ]
+        fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
+        plt.suptitle(f'Coverage Grid - TEST {i+1}: {d["label"]}', fontsize=12)
+        plt.tight_layout()
+        grid_path = os.path.join(args.output_dir, f'coverage_test_{i}_grid.png')
+        plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+        plt.close()
 
         # Save test predictions
         pred_path = os.path.join(args.output_dir, f'predictions_test_{i}.npz')

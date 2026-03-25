@@ -16,6 +16,7 @@ import argparse
 import os
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from datetime import datetime
 
 # Configure TensorFlow GPU memory growth to avoid cuDNN issues
@@ -725,6 +726,53 @@ def main():
                           coverage_metrics['actual_coverage'],
                           coverage_metrics['threshold']):
         print(f"    {tc*100:5.1f}% -> {ac*100:5.1f}%   (thr={th:.6f})")
+    
+    # Generate grid visualization of mask evolution at each decile
+    fig, axes = plt.subplots(2, 6, figsize=(18, 6))
+    axes = axes.flatten()
+    decile_coverages = np.linspace(0.0, 1.0, 11)
+    for i, cov in enumerate(decile_coverages):
+        ax = axes[i]
+        # Find threshold for this coverage
+        if cov <= 0.0:
+            threshold = r.max() + 1.0
+        elif cov >= 1.0:
+            threshold = r.min() - 1.0
+        else:
+            fluid_logits = r[layout > 0]
+            sorted_logits = np.sort(fluid_logits)[::-1]
+            n_fluid = len(sorted_logits)
+            n_cfd = int(cov * n_fluid)
+            n_cfd = max(1, min(n_cfd, n_fluid))
+            threshold = sorted_logits[n_cfd - 1]
+        
+        # Create mask and visualization
+        mask = (r >= threshold).astype(np.float32)
+        combined = np.zeros_like(r)
+        combined[(layout == 1) & (r < threshold)] = 1
+        combined[(layout == 1) & (r >= threshold)] = 2
+        
+        ax.contourf(X, Y, combined, levels=[0.5, 1.5, 2.5],
+                    colors=['blue', 'red'], alpha=0.7)
+        ax.set_aspect('equal')
+        actual_cov = np.sum((r >= threshold) & (layout > 0)) / np.sum(layout > 0) * 100
+        ax.set_title(f'{cov*100:.0f}% (actual: {actual_cov:.0f}%)', fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    
+    axes[-1].axis('off')
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='blue', alpha=0.7, label='PINN'),
+        Patch(facecolor='red', alpha=0.7, label='CFD')
+    ]
+    fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
+    plt.suptitle(f'Coverage Evolution - Cavity (\u03b2={args.beta})', fontsize=12)
+    plt.tight_layout()
+    grid_path = os.path.join(args.output_dir, 'coverage_grid.png')
+    plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved coverage grid to {grid_path}")
     
     print("\n" + "=" * 60)
     print("TRAINING COMPLETE")
