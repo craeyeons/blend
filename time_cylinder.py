@@ -161,8 +161,6 @@ def main():
     parser.add_argument('--beta', type=float, default=1)
     parser.add_argument('--lambda-tv', type=float, default=0.01)
     parser.add_argument('--n-runs', type=int, default=3)
-    parser.add_argument('--n-coverages', type=int, default=10,
-                        help='Number of coverage levels for the sweep (each run once)')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -311,8 +309,8 @@ def main():
     # ================================================================
     # COVERAGE SWEEP (single run each)
     # ================================================================
-    print(f"\n--- Coverage sweep ({args.n_coverages} levels, 1 run each) ---")
-    target_coverages = np.linspace(0, 1, args.n_coverages + 2)[1:-1]  # exclude 0% and 100%
+    print("\n--- Coverage sweep (0%, 10%, ..., 100%) ---")
+    target_coverages = np.arange(0.1, 1.0, 0.1)  # internal levels: 10%..90%
 
     sweep_cov = [0.0]  # start with PINN-only
     sweep_time = [0.0]  # PINN inference is ~instant relative to CFD

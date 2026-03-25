@@ -195,9 +195,6 @@ def main():
 
     # Timing
     parser.add_argument('--n-runs', type=int, default=3)
-    parser.add_argument('--n-coverages', type=int, default=10,
-                        help='Number of coverage levels for the sweep')
-
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     N_RUNS = args.n_runs
@@ -405,10 +402,10 @@ def main():
     # ================================================================
     # COVERAGE SWEEP (single run each, solve + overhead)
     # ================================================================
-    print(f"\n--- Coverage sweep ({args.n_coverages} levels, 1 run each) ---")
+    print("\n--- Coverage sweep (0%, 10%, ..., 100%) ---")
     print("  Timing includes PINN + router (channel-8 BC error) + solve")
 
-    target_coverages = np.linspace(0, 1, args.n_coverages + 2)[1:-1]
+    target_coverages = np.arange(0.1, 1.0, 0.1)  # internal levels: 10%..90%
 
     # PINN-only (0% FDM)
     t0 = time.perf_counter()
