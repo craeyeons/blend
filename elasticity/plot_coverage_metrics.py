@@ -319,14 +319,15 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
     fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
 
     for i, (row_label, fields) in enumerate(rows):
-        # Shared color mapping per row (use FDM as reference, except error row)
+        # Shared color mapping per row (same scale across all three columns)
         if row_label == 'Error':
             vals = np.concatenate([f[fluid] for f in fields[:2]])  # skip zero FDM error
             levels = _quantile_levels(vals, n_levels=28, qmin=0.0, qmax=99.5, force_zero_min=True)
             cmap = 'coolwarm'
         else:
-            ref = fields[2]  # FDM
-            levels = _quantile_levels(ref[fluid], n_levels=28, qmin=0.5, qmax=99.5)
+            # Use all three fields' combined range for shared scale
+            all_vals = np.concatenate([f[fluid] for f in fields])
+            levels = _quantile_levels(all_vals, n_levels=28, qmin=0.5, qmax=99.5)
             cmap = 'coolwarm'
 
         norm = BoundaryNorm(levels, ncolors=256, clip=True)
