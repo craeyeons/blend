@@ -46,167 +46,128 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
     bc_trac_normals : ndarray (n_trac, 2)
         Outward normals at traction points.
     """
+    def _sample_rows(arr, n):
+        if len(arr) == 0:
+            return arr
+        replace = len(arr) < n
+        idx = np.random.choice(len(arr), size=n, replace=replace)
+        return arr[idx]
+
     if problem == 'plate_with_hole':
-        x_domain = (args.x_min, args.x_max)
-        y_domain = (args.y_min, args.y_max)
-        cx, cy = args.hole_x, args.hole_y
-        R = args.hole_radius
-
-        # Sample interior points (reject those inside hole)
-        xy_all = []
-        while len(xy_all) < n_domain:
-            x = np.random.uniform(x_domain[0], x_domain[1], n_domain * 2)
-            y = np.random.uniform(y_domain[0], y_domain[1], n_domain * 2)
-            dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-            valid = dist > R
-            pts = np.stack([x[valid], y[valid]], axis=-1)
-            xy_all.append(pts)
-        xy_domain = np.concatenate(xy_all, axis=0)[:n_domain]
-
-        # Displacement BCs
-        # Use NaN for the free component in roller BCs so the loss
-        # only penalises the constrained component.
-        disp_pts = []
-        disp_vals = []
-
-        # Left edge: ux = 0, uy free (roller)
-        y_left = np.random.uniform(y_domain[0], y_domain[1], n_boundary // 4)
-        x_left = np.full_like(y_left, x_domain[0])
-        disp_pts.append(np.stack([x_left, y_left], axis=-1))
-        disp_vals.append(np.stack([np.zeros_like(y_left),
-                                   np.full_like(y_left, np.nan)], axis=-1))
-
-        # Bottom edge: uy = 0, ux free (roller)
-        x_bot = np.random.uniform(x_domain[0], x_domain[1], n_boundary // 4)
-        y_bot = np.full_like(x_bot, y_domain[0])
-        # Reject points inside hole
-        dist_bot = np.sqrt((x_bot - cx) ** 2 + (y_bot - cy) ** 2)
-        valid_bot = dist_bot > R
-        x_bot, y_bot = x_bot[valid_bot], y_bot[valid_bot]
-        disp_pts.append(np.stack([x_bot, y_bot], axis=-1))
-        disp_vals.append(np.stack([np.full_like(y_bot, np.nan),
-                                   np.zeros_like(y_bot)], axis=-1))
-
-        xy_bc_disp = np.concatenate(disp_pts, axis=0).astype(np.float32)
-        bc_disp_vals = np.concatenate(disp_vals, axis=0).astype(np.float32)
-
-        # Traction BCs
-        trac_pts = []
-        trac_vals = []
-        trac_normals = []
-
-        # Right edge: tx = applied_stress, ty = 0
-        y_right = np.random.uniform(y_domain[0], y_domain[1], n_boundary // 4)
-        x_right = np.full_like(y_right, x_domain[1])
-        trac_pts.append(np.stack([x_right, y_right], axis=-1))
-        trac_vals.append(np.stack([np.full_like(y_right, args.applied_stress),
-                                   np.zeros_like(y_right)], axis=-1))
-        trac_normals.append(np.stack([np.ones_like(y_right), np.zeros_like(y_right)], axis=-1))
-
-        # Top edge: traction-free
-        x_top = np.random.uniform(x_domain[0], x_domain[1], n_boundary // 4)
-        y_top = np.full_like(x_top, y_domain[1])
-        dist_top = np.sqrt((x_top - cx) ** 2 + (y_top - cy) ** 2)
-        valid_top = dist_top > R
-        x_top, y_top = x_top[valid_top], y_top[valid_top]
-        trac_pts.append(np.stack([x_top, y_top], axis=-1))
-        trac_vals.append(np.zeros((len(x_top), 2), dtype=np.float32))
-        trac_normals.append(np.stack([np.zeros_like(x_top), np.ones_like(x_top)], axis=-1))
-
-        # Hole surface: traction-free
-        theta = np.random.uniform(0, 2 * np.pi, n_boundary // 2)
-        x_hole = cx + R * np.cos(theta)
-        y_hole = cy + R * np.sin(theta)
-        # Keep only points inside domain
-        in_domain = ((x_hole >= x_domain[0]) & (x_hole <= x_domain[1])
-                     & (y_hole >= y_domain[0]) & (y_hole <= y_domain[1]))
-        x_hole, y_hole, theta_h = x_hole[in_domain], y_hole[in_domain], theta[in_domain]
-        trac_pts.append(np.stack([x_hole, y_hole], axis=-1))
-        trac_vals.append(np.zeros((len(x_hole), 2), dtype=np.float32))
-        # Outward normal points away from center
-        trac_normals.append(np.stack([np.cos(theta_h), np.sin(theta_h)], axis=-1))
-
-        xy_bc_trac = np.concatenate(trac_pts, axis=0).astype(np.float32)
-        bc_trac_vals = np.concatenate(trac_vals, axis=0).astype(np.float32)
-        bc_trac_normals = np.concatenate(trac_normals, axis=0).astype(np.float32)
-
+        X, Y, layout, disp_bc_mask, trac_bc_mask, bc_ux, bc_uy, bc_tx, bc_ty = \
+            create_plate_with_hole(
+                Nx=200, Ny=200,
+                x_domain=(args.x_min, args.x_max),
+                y_domain=(args.y_min, args.y_max),
+                hole_center=(args.hole_x, args.hole_y),
+                hole_radius=args.hole_radius,
+                applied_stress=args.applied_stress,
+            )
     elif problem == 'l_bracket':
-        x_domain = (args.x_min, args.x_max)
-        y_domain = (args.y_min, args.y_max)
-        corner_x, corner_y = args.corner_x, args.corner_y
-
-        # Sample interior points (reject upper-right block)
-        xy_all = []
-        while len(xy_all) < n_domain:
-            x = np.random.uniform(x_domain[0], x_domain[1], n_domain * 2)
-            y = np.random.uniform(y_domain[0], y_domain[1], n_domain * 2)
-            valid = ~((x > corner_x) & (y > corner_y))
-            pts = np.stack([x[valid], y[valid]], axis=-1)
-            xy_all.append(pts)
-        xy_domain = np.concatenate(xy_all, axis=0)[:n_domain]
-
-        # Displacement BCs: bottom edge fixed
-        disp_pts = []
-        disp_vals = []
-
-        x_bot = np.random.uniform(x_domain[0], x_domain[1], n_boundary // 2)
-        y_bot = np.full_like(x_bot, y_domain[0])
-        disp_pts.append(np.stack([x_bot, y_bot], axis=-1))
-        disp_vals.append(np.zeros((len(x_bot), 2), dtype=np.float32))
-
-        xy_bc_disp = np.concatenate(disp_pts, axis=0).astype(np.float32)
-        bc_disp_vals = np.concatenate(disp_vals, axis=0).astype(np.float32)
-
-        # Traction BCs
-        trac_pts = []
-        trac_vals = []
-        trac_normals = []
-
-        # Right edge of lower arm (x=x_max, y < corner_y): applied traction
-        y_right = np.random.uniform(y_domain[0], corner_y, n_boundary // 4)
-        x_right = np.full_like(y_right, x_domain[1])
-        trac_pts.append(np.stack([x_right, y_right], axis=-1))
-        trac_vals.append(np.stack([np.full_like(y_right, args.applied_stress),
-                                   np.zeros_like(y_right)], axis=-1))
-        trac_normals.append(np.stack([np.ones_like(y_right), np.zeros_like(y_right)], axis=-1))
-
-        # Left edge: traction-free
-        y_left = np.random.uniform(y_domain[0], y_domain[1], n_boundary // 6)
-        x_left = np.full_like(y_left, x_domain[0])
-        trac_pts.append(np.stack([x_left, y_left], axis=-1))
-        trac_vals.append(np.zeros((len(y_left), 2), dtype=np.float32))
-        trac_normals.append(np.stack([-np.ones_like(y_left), np.zeros_like(y_left)], axis=-1))
-
-        # Top edge (y=y_max, x < corner_x): traction-free
-        x_top = np.random.uniform(x_domain[0], corner_x, n_boundary // 6)
-        y_top = np.full_like(x_top, y_domain[1])
-        trac_pts.append(np.stack([x_top, y_top], axis=-1))
-        trac_vals.append(np.zeros((len(x_top), 2), dtype=np.float32))
-        trac_normals.append(np.stack([np.zeros_like(x_top), np.ones_like(x_top)], axis=-1))
-
-        # Re-entrant corner edges: horizontal inner edge (y=corner_y, x > corner_x)
-        x_inner_h = np.random.uniform(corner_x, x_domain[1], n_boundary // 8)
-        y_inner_h = np.full_like(x_inner_h, corner_y)
-        trac_pts.append(np.stack([x_inner_h, y_inner_h], axis=-1))
-        trac_vals.append(np.zeros((len(x_inner_h), 2), dtype=np.float32))
-        trac_normals.append(np.stack([np.zeros_like(x_inner_h), np.ones_like(x_inner_h)], axis=-1))
-
-        # Vertical inner edge (x=corner_x, y > corner_y)
-        y_inner_v = np.random.uniform(corner_y, y_domain[1], n_boundary // 8)
-        x_inner_v = np.full_like(y_inner_v, corner_x)
-        trac_pts.append(np.stack([x_inner_v, y_inner_v], axis=-1))
-        trac_vals.append(np.zeros((len(y_inner_v), 2), dtype=np.float32))
-        trac_normals.append(np.stack([np.ones_like(y_inner_v), np.zeros_like(y_inner_v)], axis=-1))
-
-        xy_bc_trac = np.concatenate(trac_pts, axis=0).astype(np.float32)
-        bc_trac_vals = np.concatenate(trac_vals, axis=0).astype(np.float32)
-        bc_trac_normals = np.concatenate(trac_normals, axis=0).astype(np.float32)
-
+        X, Y, layout, disp_bc_mask, trac_bc_mask, bc_ux, bc_uy, bc_tx, bc_ty = \
+            create_l_bracket(
+                Nx=200, Ny=200,
+                x_domain=(args.x_min, args.x_max),
+                y_domain=(args.y_min, args.y_max),
+                corner_x=args.corner_x,
+                corner_y=args.corner_y,
+                applied_stress=args.applied_stress,
+            )
     else:
         raise ValueError(f"Unknown problem: {problem}")
 
-    return (xy_domain.astype(np.float32), xy_bc_disp, bc_disp_vals,
-            xy_bc_trac, bc_trac_vals, bc_trac_normals)
+    # PDE collocation points: sample from interior material points
+    interior_mask = (layout > 0) & (disp_bc_mask == 0) & (trac_bc_mask == 0)
+    iy, ix = np.where(interior_mask)
+    xy_interior = np.stack([X[iy, ix], Y[iy, ix]], axis=-1).astype(np.float32)
+    xy_domain = _sample_rows(xy_interior, n_domain).astype(np.float32)
+
+    # Displacement BC points/values from the exact same masks used by FDM
+    dy_disp, dx_disp = np.where((layout > 0) & (disp_bc_mask > 0))
+    xy_disp_all = np.stack([X[dy_disp, dx_disp], Y[dy_disp, dx_disp]], axis=-1).astype(np.float32)
+    bc_disp_all = np.stack([bc_ux[dy_disp, dx_disp], bc_uy[dy_disp, dx_disp]], axis=-1).astype(np.float32)
+
+    if len(xy_disp_all) > 0:
+        replace = len(xy_disp_all) < max(1, n_boundary)
+        idx_disp = np.random.choice(len(xy_disp_all), size=max(1, n_boundary), replace=replace)
+        xy_bc_disp = xy_disp_all[idx_disp].astype(np.float32)
+        bc_disp_vals = bc_disp_all[idx_disp].astype(np.float32)
+    else:
+        xy_bc_disp = np.zeros((0, 2), dtype=np.float32)
+        bc_disp_vals = np.zeros((0, 2), dtype=np.float32)
+
+    # Traction BC points/values from the exact same masks used by FDM
+    dy_trac, dx_trac = np.where((layout > 0) & (trac_bc_mask > 0))
+    xy_trac_all = np.stack([X[dy_trac, dx_trac], Y[dy_trac, dx_trac]], axis=-1).astype(np.float32)
+    bc_trac_all = np.stack([bc_tx[dy_trac, dx_trac], bc_ty[dy_trac, dx_trac]], axis=-1).astype(np.float32)
+
+    if len(xy_trac_all) > 0:
+        replace = len(xy_trac_all) < max(1, n_boundary)
+        idx_trac = np.random.choice(len(xy_trac_all), size=max(1, n_boundary), replace=replace)
+        xy_bc_trac = xy_trac_all[idx_trac].astype(np.float32)
+        bc_trac_vals = bc_trac_all[idx_trac].astype(np.float32)
+    else:
+        xy_bc_trac = np.zeros((0, 2), dtype=np.float32)
+        bc_trac_vals = np.zeros((0, 2), dtype=np.float32)
+
+    # Approximate outward normals on sampled traction points
+    eps_x = (X[0, 1] - X[0, 0]) * 0.6
+    eps_y = (Y[1, 0] - Y[0, 0]) * 0.6
+    normals = np.zeros_like(xy_bc_trac, dtype=np.float32)
+
+    if problem == 'plate_with_hole' and len(xy_bc_trac) > 0:
+        x = xy_bc_trac[:, 0]
+        y = xy_bc_trac[:, 1]
+        x_min, x_max = args.x_min, args.x_max
+        y_min, y_max = args.y_min, args.y_max
+        cx, cy = args.hole_x, args.hole_y
+        R = args.hole_radius
+
+        on_right = np.abs(x - x_max) < eps_x
+        on_top = np.abs(y - y_max) < eps_y
+        dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+        on_hole = np.abs(dist - R) < max(eps_x, eps_y) * 1.5
+
+        normals[on_right, 0] = 1.0
+        normals[on_top, 1] = 1.0
+        hole_idx = on_hole & (~on_right) & (~on_top)
+        if np.any(hole_idx):
+            vx = x[hole_idx] - cx
+            vy = y[hole_idx] - cy
+            vn = np.sqrt(vx ** 2 + vy ** 2) + 1e-12
+            normals[hole_idx, 0] = vx / vn
+            normals[hole_idx, 1] = vy / vn
+
+        # fallback for any unclassified points
+        unclassified = np.linalg.norm(normals, axis=1) < 1e-8
+        normals[unclassified, 1] = 1.0
+
+    elif problem == 'l_bracket' and len(xy_bc_trac) > 0:
+        x = xy_bc_trac[:, 0]
+        y = xy_bc_trac[:, 1]
+        x_min, x_max = args.x_min, args.x_max
+        y_max = args.y_max
+        cx, cy = args.corner_x, args.corner_y
+
+        on_right_lower = (np.abs(x - x_max) < eps_x) & (y <= cy + eps_y)
+        on_left = np.abs(x - x_min) < eps_x
+        on_top = (np.abs(y - y_max) < eps_y) & (x <= cx + eps_x)
+        on_inner_h = (np.abs(y - cy) < eps_y) & (x >= cx - eps_x)
+        on_inner_v = (np.abs(x - cx) < eps_x) & (y >= cy - eps_y)
+
+        normals[on_right_lower, 0] = 1.0
+        normals[on_left, 0] = -1.0
+        normals[on_top, 1] = 1.0
+        normals[on_inner_h, 1] = 1.0
+        normals[on_inner_v, 0] = 1.0
+
+        unclassified = np.linalg.norm(normals, axis=1) < 1e-8
+        normals[unclassified, 1] = 1.0
+
+    bc_trac_normals = normals.astype(np.float32)
+
+    return (xy_domain.astype(np.float32), xy_bc_disp.astype(np.float32), bc_disp_vals.astype(np.float32),
+            xy_bc_trac.astype(np.float32), bc_trac_vals.astype(np.float32), bc_trac_normals.astype(np.float32))
 
 
 class ElasticityPINNTrainer:
