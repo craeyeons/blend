@@ -496,8 +496,22 @@ def main():
     print("[5] Building hybrid solution...")
     opt_t = results['optimal_threshold']
     cfd_mask = (r >= opt_t).astype(np.int32) * layout.astype(np.int32)
-    ux_hybrid = np.where(cfd_mask, ux_fdm, ux_pinn) * layout
-    uy_hybrid = np.where(cfd_mask, uy_fdm, uy_pinn) * layout
+
+    hybrid_solver = ElasticitySolver(
+        E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+        Nx=args.nx, Ny=args.ny,
+        max_iter=args.max_iter, tol=args.tol,
+    )
+    t0 = time.time()
+    ux_hybrid, uy_hybrid, _, _, _ = hybrid_solver.solve(
+        layout, dbc, bux, buy,
+        tbc, btx, bty,
+        fdm_mask=cfd_mask,
+        initial_ux=ux_pinn, initial_uy=uy_pinn,
+    )
+    timings['hybrid_solve_s'] = time.time() - t0
 
     plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
                               ux_hybrid, uy_hybrid, X, Y, layout, cfd_mask,
@@ -508,10 +522,10 @@ def main():
     err_pinn = compute_l2_error_field(ux_pinn, uy_pinn, ux_fdm, uy_fdm, layout)
     err_hybrid = compute_l2_error_field(ux_hybrid, uy_hybrid, ux_fdm, uy_fdm, layout)
 
-    # Hybrid total = PINN inference + router inference + FDM solve
+    # Hybrid total = PINN inference + router inference + hybrid FDM solve
     timings['hybrid_total_s'] = (timings.get('pinn_inference_s', 0)
                                   + timings.get('router_inference_s', 0)
-                                  + timings.get('fdm_solve_s', 0))
+                                  + timings.get('hybrid_solve_s', 0))
 
     fluid = layout > 0
     metrics = {

@@ -113,7 +113,11 @@ class ElasticitySolver:
 
         # Hybrid mode: pin PINN values in non-FDM regions
         if fdm_mask is not None:
-            fdm_mask_j = jnp.array(fdm_mask, dtype=jnp.float64)
+            fdm_mask_j = jnp.array(fdm_mask, dtype=jnp.float64) * layout_j
+            # Always solve physically constrained boundary nodes with FDM,
+            # regardless of router selection.
+            bc_forced_mask = (disp_mask_j > 0) | (trac_mask_j > 0)
+            fdm_mask_j = jnp.where(bc_forced_mask, 1.0, fdm_mask_j)
             init_ux_j = jnp.array(initial_ux, dtype=jnp.float64) * layout_j
             init_uy_j = jnp.array(initial_uy, dtype=jnp.float64) * layout_j
         else:
@@ -204,7 +208,7 @@ class ElasticitySolver:
             )
 
             # Hybrid: pin PINN values in non-FDM regions
-            keep_computed = (fdm_mask_j > 0) | (disp_mask_j > 0)
+            keep_computed = fdm_mask_j > 0
             ux_new = jnp.where(keep_computed, ux_new, init_ux_j)
             uy_new = jnp.where(keep_computed, uy_new, init_uy_j)
 
