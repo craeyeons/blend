@@ -39,7 +39,9 @@ echo "=== Training PINN: plate_with_hole ==="
 python train_pinn.py \
     --problem plate_with_hole \
     --epochs 10000 \
-    --lr 1e-3 \
+    --lr 3e-4 \
+    --grad-clip 1.0 \
+    --w-disp 5.0 \
     --n-domain 10000 \
     --n-boundary 2000
 

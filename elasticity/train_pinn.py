@@ -187,7 +187,8 @@ class ElasticityPINNTrainer:
     """
 
     def __init__(self, model, E=1.0, nu=0.3, lr=1e-3, epochs=10000,
-                 w_pde=1.0, w_disp=10.0, w_trac=1.0):
+                 w_pde=1.0, w_disp=10.0, w_trac=1.0,
+                 grad_clip_norm=1.0):
         self.model = model
         self.E = E
         self.nu = nu
@@ -197,6 +198,7 @@ class ElasticityPINNTrainer:
         self.w_pde = w_pde
         self.w_disp = w_disp
         self.w_trac = w_trac
+        self.grad_clip_norm = grad_clip_norm
 
         lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
             initial_learning_rate=lr,
@@ -204,7 +206,7 @@ class ElasticityPINNTrainer:
             alpha=1e-2,  # final lr = lr * 1e-2
         )
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-        self.history = {'total': [], 'pde': [], 'disp_bc': [], 'trac_bc': []}
+        self.history = {'total': [], 'pde': [], 'disp_bc': [], 'trac_bc': [], 'grad_norm': []}
 
     @tf.function
     def train_step(self, xy_domain, xy_disp, disp_vals,
@@ -222,9 +224,22 @@ class ElasticityPINNTrainer:
             total = self.w_pde * pde_loss + self.w_disp * disp_loss + self.w_trac * trac_loss
 
         grads = tape.gradient(total, self.model.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
-        return total, pde_loss, disp_loss, trac_loss
+        safe_grads = []
+        for grad, var in zip(grads, self.model.trainable_variables):
+            if grad is None:
+                safe_grads.append(tf.zeros_like(var))
+            else:
+                safe_grads.append(tf.where(tf.math.is_finite(grad), grad, tf.zeros_like(grad)))
+
+        if self.grad_clip_norm is not None:
+            safe_grads, grad_norm = tf.clip_by_global_norm(safe_grads, self.grad_clip_norm)
+        else:
+            grad_norm = tf.linalg.global_norm(safe_grads)
+
+        self.optimizer.apply_gradients(zip(safe_grads, self.model.trainable_variables))
+
+        return total, pde_loss, disp_loss, trac_loss, grad_norm
 
     def _pde_loss(self, xy):
         """Compute equilibrium residual loss."""
@@ -327,7 +342,7 @@ class ElasticityPINNTrainer:
         bc_trac_normals = tf.constant(bc_trac_normals, dtype=tf.float32)
 
         for epoch in range(epochs):
-            total, pde, disp, trac = self.train_step(
+            total, pde, disp, trac, grad_norm = self.train_step(
                 xy_domain, xy_bc_disp, bc_disp_vals,
                 xy_bc_trac, bc_trac_vals, bc_trac_normals
             )
@@ -336,13 +351,15 @@ class ElasticityPINNTrainer:
             self.history['pde'].append(float(pde))
             self.history['disp_bc'].append(float(disp))
             self.history['trac_bc'].append(float(trac))
+            self.history['grad_norm'].append(float(grad_norm))
 
             if (epoch + 1) % print_every == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
                       f"Total: {total:.6e}, "
                       f"PDE: {pde:.6e}, "
                       f"Disp BC: {disp:.6e}, "
-                      f"Trac BC: {trac:.6e}")
+                      f"Trac BC: {trac:.6e}, "
+                      f"|g|: {grad_norm:.6e}")
 
         return self.history
 
@@ -354,7 +371,9 @@ def main():
     parser.add_argument('--problem', type=str, default='plate_with_hole',
                         choices=['plate_with_hole', 'l_bracket'])
     parser.add_argument('--epochs', type=int, default=10000)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=3e-4)
+    parser.add_argument('--grad-clip', type=float, default=1.0,
+                        help='Global norm clipping for PINN gradients; <=0 disables clipping')
     parser.add_argument('--n-domain', type=int, default=10000)
     parser.add_argument('--n-boundary', type=int, default=2000)
     parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
@@ -419,6 +438,7 @@ def main():
     trainer = ElasticityPINNTrainer(
         model, E=args.E, nu=args.nu, lr=args.lr, epochs=args.epochs,
         w_pde=args.w_pde, w_disp=args.w_disp, w_trac=args.w_trac,
+        grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
     )
 
     print("\nTraining...")
