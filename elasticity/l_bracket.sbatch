@@ -69,9 +69,9 @@ python plot_router_thresholds.py \
     --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
     --pinn-path ./models/pinn_l_bracket.weights.h5 \
     --output-dir ./threshold_plots_lbracket \
-    --threshold-start 0.1 \
-    --threshold-end 0.9 \
-    --num-thresholds 9
+    --threshold-start -0.5 \
+    --threshold-end 0.5 \
+    --num-thresholds 11
 
 # --- Step 5: Coverage metrics ---
 echo "=== Coverage Metrics ==="

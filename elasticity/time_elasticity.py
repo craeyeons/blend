@@ -39,6 +39,7 @@ from lib.router import (
     PINNResidualComputer,
     create_router_input,
     compute_bc_error_field,
+    solve_error_transport,
 )
 
 
@@ -73,12 +74,17 @@ def pinn_predict(pinn_model, X, Y, layout, E=1.0, nu=0.3):
 
 
 def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
-                   disp_bc_mask, bc_ux, bc_uy, trac_bc_mask, threshold=0.0):
+                   disp_bc_mask, bc_ux, bc_uy, trac_bc_mask, threshold=0.0,
+                   E=1.0, nu=0.3, x_domain=(0.0, 2.0), y_domain=(0.0, 2.0)):
     """Run router inference and return output + mask."""
     bc_error = compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy, pinn_ux, pinn_uy, layout)
+    error_transport = solve_error_transport(
+        bc_error, layout, E=E, nu=nu,
+        x_domain=x_domain, y_domain=y_domain,
+    )
     inputs = create_router_input(
         layout, disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
-        pinn_ux, pinn_uy, pinn_vm, bc_error,
+        pinn_ux, pinn_uy, pinn_vm, error_transport,
     )
     router_output = router(tf.constant(inputs, dtype=tf.float32),
                            training=False).numpy().squeeze()
@@ -241,9 +247,14 @@ def main():
     # Router
     bc_error = compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy,
                                       pinn_ux, pinn_uy, layout)
+    error_transport = solve_error_transport(
+        bc_error, layout, E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
     inputs = create_router_input(
         layout, disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
-        pinn_ux, pinn_uy, pinn_vm, bc_error,
+        pinn_ux, pinn_uy, pinn_vm, error_transport,
     )
     router = RouterCNN(base_filters=args.base_filters)
     _ = router(tf.constant(inputs, dtype=tf.float32))
@@ -356,6 +367,9 @@ def main():
             router, h_pinn_ux, h_pinn_uy, h_pinn_vm, layout,
             disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
             threshold=optimal_threshold,
+            E=args.E, nu=args.nu,
+            x_domain=(args.x_min, args.x_max),
+            y_domain=(args.y_min, args.y_max),
         )
         t_router_end = time.perf_counter()
 

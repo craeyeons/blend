@@ -48,6 +48,7 @@ from lib.router import (
     PINNResidualComputer,
     create_router_input,
     compute_bc_error_field,
+    solve_error_transport,
 )
 
 
@@ -452,8 +453,13 @@ def main():
     sxy_p = 2 * C66 * exy
     pinn_vm = np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy_p ** 2).astype(np.float32) * layout
 
+    error_transport = solve_error_transport(
+        bc_error, layout, E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
     inputs = create_router_input(layout, dbc, bux, buy, tbc,
-                                  ux_pinn, uy_pinn, pinn_vm, bc_error)
+                                  ux_pinn, uy_pinn, pinn_vm, error_transport)
     _ = router(inputs)
     router.load_weights(args.router_path)
 

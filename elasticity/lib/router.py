@@ -356,6 +356,70 @@ def compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy, pinn_ux, pinn_uy, layout)
     return (bc_error * layout).astype(np.float32)
 
 
+def solve_error_transport(bc_error, layout, E=1.0, nu=0.3,
+                          x_domain=(0.0, 2.0), y_domain=(0.0, 2.0),
+                          n_iters=200):
+    """
+    Solve steady-state error diffusion for elasticity (ETE equivalent).
+
+    Propagates BC error into the domain interior via diffusion:
+        kappa * nabla^2(e) = 0
+    with Dirichlet BC: e = bc_error at boundary points where bc_error > 0.
+
+    Unlike the fluid ETE which uses advection (u.grad(e) = nu*laplacian(e)),
+    elasticity has no velocity field, so error propagates through elastic
+    stiffness as pure diffusion.
+
+    Parameters
+    ----------
+    bc_error : np.ndarray (Ny, Nx)
+        Local BC error (nonzero at displacement boundary points).
+    layout : np.ndarray (Ny, Nx)
+        Material mask (1=material, 0=void).
+    E, nu : float
+        Material properties (used for anisotropic diffusion coefficients).
+    x_domain, y_domain : tuple (min, max)
+        Physical domain extents.
+    n_iters : int
+        Jacobi iterations.
+
+    Returns
+    -------
+    e : np.ndarray (Ny, Nx)
+        Transported error field (float32).
+    """
+    Ny, Nx = layout.shape
+    dx = (x_domain[1] - x_domain[0]) / max(Nx - 1, 1)
+    dy = (y_domain[1] - y_domain[0]) / max(Ny - 1, 1)
+
+    # Anisotropic diffusion from elastic stiffness
+    C11 = E / (1.0 - nu ** 2)
+    C66 = E / (2.0 * (1.0 + nu))
+    kx = C11 / dx ** 2
+    ky = C66 / dy ** 2
+
+    a_P = 2.0 * kx + 2.0 * ky
+
+    bc_src = bc_error > 0  # source-point mask
+    e = bc_error.copy().astype(np.float64)
+
+    for _ in range(n_iters):
+        # Neighbour values (zero-padded at domain edges)
+        e_W = np.zeros_like(e); e_W[:, 1:] = e[:, :-1]
+        e_E = np.zeros_like(e); e_E[:, :-1] = e[:, 1:]
+        e_S = np.zeros_like(e); e_S[1:, :] = e[:-1, :]
+        e_N = np.zeros_like(e); e_N[:-1, :] = e[1:, :]
+
+        e_new = (kx * (e_W + e_E) + ky * (e_S + e_N)) / (a_P + 1e-10)
+
+        # Pin Dirichlet values at BC-error points, zero in void
+        e_new = np.where(bc_src, bc_error, e_new)
+        e_new = np.maximum(e_new * layout, 0.0)
+        e = e_new
+
+    return e.astype(np.float32)
+
+
 def create_router_input(layout, disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
                          pinn_ux=None, pinn_uy=None, pinn_vm=None,
                          bc_error=None):

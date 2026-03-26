@@ -29,6 +29,7 @@ from lib.router import (
     RouterTrainer,
     create_router_input,
     compute_bc_error_field,
+    solve_error_transport,
     plot_router_output,
     plot_training_history,
     plot_coverage_evolution,
@@ -188,15 +189,22 @@ def main():
     print(f"  PINN uy range: [{pinn_uy.min():.4f}, {pinn_uy.max():.4f}]")
     print(f"  PINN VM range: [{pinn_vm.min():.4f}, {pinn_vm.max():.4f}]")
 
-    # Step 2c: BC error
-    print("\n[Step 2c] Computing BC error field...")
+    # Step 2c: BC error and error transport (ETE equivalent)
+    print("\n[Step 2c] Computing error transport field...")
     bc_error = compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy, pinn_ux, pinn_uy, layout)
+    error_transport = solve_error_transport(
+        bc_error, layout, E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
     print(f"  BC error range: [{bc_error.min():.4f}, {bc_error.max():.4f}]")
+    print(f"  Error transport range: [{error_transport.min():.4f}, {error_transport.max():.4f}]")
+    print(f"  Nonzero fraction: {np.mean(error_transport > 0.01)*100:.1f}%")
 
-    # Create router input
+    # Create router input (channel 8 = transported error, not raw bc_error)
     inputs = create_router_input(
         layout, disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
-        pinn_ux, pinn_uy, pinn_vm, bc_error,
+        pinn_ux, pinn_uy, pinn_vm, error_transport,
     )
     print(f"  Router input shape: {inputs.shape}")
 

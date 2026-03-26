@@ -35,6 +35,7 @@ from lib.router import (
     RouterCNN,
     create_router_input,
     compute_bc_error_field,
+    solve_error_transport,
 )
 
 
@@ -168,9 +169,14 @@ def main():
     pinn_vm = np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy_p ** 2).astype(np.float32) * layout
 
     bc_error = compute_bc_error_field(dbc, bux, buy, pinn_ux, pinn_uy, layout)
+    error_transport = solve_error_transport(
+        bc_error, layout, E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+    )
 
     inputs = create_router_input(layout, dbc, bux, buy, tbc,
-                                  pinn_ux, pinn_uy, pinn_vm, bc_error)
+                                  pinn_ux, pinn_uy, pinn_vm, error_transport)
 
     # Router
     print("Loading router...")
