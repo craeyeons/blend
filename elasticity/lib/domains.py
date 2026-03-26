@@ -111,7 +111,7 @@ def create_l_bracket(Nx=200, Ny=200,
 
     Boundary conditions:
         - Bottom edge (y=0): fully fixed (ux=0, uy=0)
-        - Right edge of lower arm (x=x_max, y < corner_y): traction tx = applied_stress
+        - Top edge of upper arm (y=y_max, x < corner_x): traction tx = -applied_stress (pull left)
         - All other outer edges and re-entrant corner: traction-free
 
     Parameters
@@ -152,18 +152,18 @@ def create_l_bracket(Nx=200, Ny=200,
     bc_ux[0, :] = 0.0
     bc_uy[0, :] = 0.0
 
-    # Right edge of lower arm (x=x_max, y < corner_y): applied traction
+    # Right edge of lower arm (x=x_max, y < corner_y): traction-free
     lower_arm_right = (np.abs(X - x_max) < (x[1] - x[0]) / 2) & (Y <= corner_y)
     trac_bc_mask[lower_arm_right & (layout > 0)] = 1.0
-    bc_tx[lower_arm_right & (layout > 0)] = applied_stress
 
     # Left edge: traction-free
     left_edge = np.abs(X - x_min) < (x[1] - x[0]) / 2
     trac_bc_mask[left_edge & (layout > 0)] = 1.0
 
-    # Top edge of upper arm (y=y_max, x < corner_x): traction-free
+    # Top edge of upper arm (y=y_max, x < corner_x): pull left
     top_edge = (np.abs(Y - y_max) < (y[1] - y[0]) / 2) & (X <= corner_x)
     trac_bc_mask[top_edge & (layout > 0)] = 1.0
+    bc_tx[top_edge & (layout > 0)] = -applied_stress
 
     # Inner edges of L (re-entrant corner region): traction-free
     # Horizontal inner edge: y ~ corner_y, x > corner_x

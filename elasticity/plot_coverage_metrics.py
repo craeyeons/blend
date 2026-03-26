@@ -269,26 +269,57 @@ def plot_expected_loss(results, beta, save_path=None):
 def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
                               ux_hybrid, uy_hybrid, X, Y, layout,
                               cfd_mask, show_hole=None, save_path=None):
-    """Side-by-side: PINN / Hybrid / FDM displacement magnitude."""
+    """Side-by-side grid: PINN / Hybrid / FDM for ux, uy, |u|, and error."""
+    fluid = layout > 0
+
     mag_p = np.sqrt(ux_pinn ** 2 + uy_pinn ** 2)
     mag_h = np.sqrt(ux_hybrid ** 2 + uy_hybrid ** 2)
     mag_f = np.sqrt(ux_fdm ** 2 + uy_fdm ** 2)
 
-    fluid = layout > 0
-    vmin = mag_f[fluid].min()
-    vmax = mag_f[fluid].max()
+    err_p = np.sqrt((ux_pinn - ux_fdm) ** 2 + (uy_pinn - uy_fdm) ** 2)
+    err_h = np.sqrt((ux_hybrid - ux_fdm) ** 2 + (uy_hybrid - uy_fdm) ** 2)
+    err_fdm = np.zeros_like(mag_f)
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    for ax, (mag, title) in zip(axes, [(mag_p, 'PINN'), (mag_h, 'Hybrid'), (mag_f, 'FDM')]):
-        masked = np.ma.masked_where(layout == 0, mag)
-        cf = ax.contourf(X, Y, masked, levels=50, cmap='coolwarm',
-                         norm=Normalize(vmin=vmin, vmax=vmax))
-        plt.colorbar(cf, ax=ax, label='|u|')
-        if show_hole:
-            ax.add_patch(plt.Circle(show_hole[:2], show_hole[2], color='gray', fill=True))
-        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
-                   colors='lime', linewidths=1.5, linestyles='--')
-        ax.set_aspect('equal'); ax.set_title(title)
+    # rows: ux, uy, |u|, error;  cols: PINN, Hybrid, FDM
+    rows = [
+        ('$u_x$',    [ux_pinn, ux_hybrid, ux_fdm]),
+        ('$u_y$',    [uy_pinn, uy_hybrid, uy_fdm]),
+        ('$|u|$',    [mag_p, mag_h, mag_f]),
+        ('Error',    [err_p, err_h, err_fdm]),
+    ]
+    col_titles = ['PINN', 'Hybrid', 'FDM']
+
+    nrows, ncols = len(rows), 3
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
+
+    for i, (row_label, fields) in enumerate(rows):
+        # Shared color range per row (use FDM as reference, except error row)
+        if row_label == 'Error':
+            vals = np.concatenate([f[fluid] for f in fields[:2]])  # skip zero FDM error
+            vmin = 0.0
+            vmax = np.percentile(vals, 99) if len(vals) > 0 else 1.0
+        else:
+            ref = fields[2]  # FDM
+            vmin, vmax = ref[fluid].min(), ref[fluid].max()
+
+        for j, (field, col_title) in enumerate(zip(fields, col_titles)):
+            ax = axes[i, j]
+            masked = np.ma.masked_where(layout == 0, field)
+            cf = ax.contourf(X, Y, masked, levels=50, cmap='coolwarm',
+                             norm=Normalize(vmin=vmin, vmax=vmax))
+            plt.colorbar(cf, ax=ax)
+            if show_hole:
+                ax.add_patch(plt.Circle(show_hole[:2], show_hole[2],
+                                        color='gray', fill=True))
+            ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                       colors='lime', linewidths=1.5, linestyles='--')
+            ax.set_aspect('equal')
+            if i == 0:
+                ax.set_title(col_title, fontsize=14, fontweight='bold')
+            if j == 0:
+                ax.set_ylabel(row_label, fontsize=13, fontweight='bold')
+
+    fig.suptitle('Solution Comparison', fontsize=16, fontweight='bold', y=1.01)
     plt.tight_layout()
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
