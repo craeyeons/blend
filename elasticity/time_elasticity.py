@@ -88,11 +88,11 @@ def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
     )
     router_output = router(tf.constant(inputs, dtype=tf.float32),
                            training=False).numpy().squeeze()
-    mask = (router_output > threshold).astype(np.int32) * layout.astype(np.int32)
+    mask = (router_output >= threshold).astype(np.int32) * layout.astype(np.int32)
     return router_output, mask
 
 
-def find_optimal_threshold(residual_field, router_output, layout, beta, n_points=200):
+def find_optimal_threshold(residual_field, router_output, layout, beta, n_points=500):
     """Find optimal threshold by sweeping thresholds on router logits."""
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
@@ -102,7 +102,7 @@ def find_optimal_threshold(residual_field, router_output, layout, beta, n_points
 
     lo, hi = float(logits.min()), float(logits.max())
     margin = max(0.1, (hi - lo) * 0.05)
-    thresholds = np.linspace(lo - margin, hi + margin, max(n_points, 500))
+    thresholds = np.linspace(lo - margin, hi + margin, n_points)
 
     best_loss = float('inf')
     best_cov = 0.0
@@ -121,21 +121,16 @@ def find_optimal_threshold(residual_field, router_output, layout, beta, n_points
     return best_t, best_cov
 
 
-def compute_residual_field(pinn_model, X, Y, layout, E=1.0, nu=0.3, bc_error=None):
-    """Compute physics residual field with median normalization."""
+def compute_residual_field(pinn_model, X, Y, layout, E=1.0, nu=0.3):
+    """Compute residual field following metrics script normalization."""
     residual_computer = PINNResidualComputer(pinn_model, E, nu)
     X_tf = tf.constant(X, dtype=tf.float32)
     Y_tf = tf.constant(Y, dtype=tf.float32)
 
-    eq_x, eq_y = residual_computer.compute_residuals(X_tf, Y_tf)
-    residual_field = (np.array(eq_x) + np.array(eq_y)) * layout
-
-    if bc_error is not None:
-        residual_field = residual_field + bc_error
-
-    fluid_vals = residual_field[layout > 0]
-    median = np.median(fluid_vals)
-    residual_field = residual_field / (median + 1e-10) * layout
+    residual_field = residual_computer.compute_total_residual(X_tf, Y_tf).numpy()
+    res_flat = residual_field.flatten()
+    median = np.sort(res_flat)[len(res_flat) // 2]
+    residual_field = residual_field / (median + 1e-10)
     return residual_field
 
 
@@ -257,13 +252,13 @@ def main():
     # Residual field for optimal threshold
     print("Computing residual field for optimal threshold...")
     residual_field = compute_residual_field(
-        pinn_model, X, Y, layout, E=args.E, nu=args.nu, bc_error=bc_error
+        pinn_model, X, Y, layout, E=args.E, nu=args.nu
     )
 
     optimal_threshold, optimal_coverage = find_optimal_threshold(
         residual_field, router_output, layout, args.beta
     )
-    fdm_mask_opt = (router_output > optimal_threshold).astype(np.int32) \
+    fdm_mask_opt = (router_output >= optimal_threshold).astype(np.int32) \
         * layout.astype(np.int32)
     actual_coverage = np.sum(fdm_mask_opt) / np.sum(layout)
 
