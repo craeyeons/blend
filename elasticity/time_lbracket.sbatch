@@ -30,7 +30,7 @@ echo "=== Timing: L-Bracket Elasticity ==="
 python time_elasticity.py \
     --problem l_bracket \
     --pinn-path ./models/pinn_l_bracket.weights.h5 \
-    --router-weights ./router_output_lbracket/router.weights.h5 \
+    --router-weights ./router_output/l_bracket/beta_1.1/router.weights.h5 \
     --beta 1.1 \
     --nx 200 \
     --ny 200 \

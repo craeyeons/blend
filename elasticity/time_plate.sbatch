@@ -30,7 +30,7 @@ echo "=== Timing: Plate with Hole Elasticity ==="
 python time_elasticity.py \
     --problem plate_with_hole \
     --pinn-path ./models/pinn_plate_with_hole.weights.h5 \
-    --router-weights ./router_output_plate/router.weights.h5 \
+    --router-weights ./router_output/plate_with_hole/beta_1.1/router.weights.h5 \
     --beta 1.1 \
     --nx 200 \
     --ny 200 \
