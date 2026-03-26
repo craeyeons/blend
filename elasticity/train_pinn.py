@@ -186,7 +186,7 @@ class ElasticityPINNTrainer:
         sigma_xy = C66 * (dux/dy + duy/dx)
     """
 
-    def __init__(self, model, E=1.0, nu=0.3, lr=1e-3,
+    def __init__(self, model, E=1.0, nu=0.3, lr=1e-3, epochs=10000,
                  w_pde=1.0, w_disp=10.0, w_trac=1.0):
         self.model = model
         self.E = E
@@ -198,7 +198,12 @@ class ElasticityPINNTrainer:
         self.w_disp = w_disp
         self.w_trac = w_trac
 
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+        lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=lr,
+            decay_steps=epochs,
+            alpha=1e-2,  # final lr = lr * 1e-2
+        )
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
         self.history = {'total': [], 'pde': [], 'disp_bc': [], 'trac_bc': []}
 
     @tf.function
@@ -352,14 +357,14 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--n-domain', type=int, default=10000)
     parser.add_argument('--n-boundary', type=int, default=2000)
-    parser.add_argument('--layers', type=int, nargs='+', default=[64, 64, 64, 64])
+    parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--activation', type=str, default='tanh')
     parser.add_argument('--output-dir', type=str, default='./models')
 
     # Material properties
     parser.add_argument('--E', type=float, default=1.0, help='Youngs modulus')
     parser.add_argument('--nu', type=float, default=0.3, help='Poissons ratio')
-    parser.add_argument('--applied-stress', type=float, default=1.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0)
 
     # Domain parameters (plate with hole)
     parser.add_argument('--x-min', type=float, default=-2.0)
@@ -377,7 +382,7 @@ def main():
     # Loss weights
     parser.add_argument('--w-pde', type=float, default=1.0)
     parser.add_argument('--w-disp', type=float, default=10.0)
-    parser.add_argument('--w-trac', type=float, default=1.0)
+    parser.add_argument('--w-trac', type=float, default=10.0)
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -392,12 +397,14 @@ def main():
         args.y_min = 0.0
 
     # Build model
+    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
     network = Network()
     model = network.build(
         num_inputs=2,
         layers=args.layers,
         activation=args.activation,
         num_outputs=2,
+        input_range=input_range,
     )
     model.summary()
 
@@ -410,7 +417,7 @@ def main():
 
     # Train
     trainer = ElasticityPINNTrainer(
-        model, E=args.E, nu=args.nu, lr=args.lr,
+        model, E=args.E, nu=args.nu, lr=args.lr, epochs=args.epochs,
         w_pde=args.w_pde, w_disp=args.w_disp, w_trac=args.w_trac,
     )
 

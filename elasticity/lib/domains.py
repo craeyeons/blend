@@ -101,7 +101,7 @@ def create_plate_with_hole(Nx=200, Ny=200,
 def create_l_bracket(Nx=200, Ny=200,
                      x_domain=(0.0, 2.0), y_domain=(0.0, 2.0),
                      corner_x=1.0, corner_y=1.0,
-                     applied_stress=1.0):
+                     applied_stress=10.0):
     """
     L-shaped bracket under load.
 

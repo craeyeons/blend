@@ -75,7 +75,7 @@ def main():
     parser.add_argument('--hole-x', type=float, default=0.0)
     parser.add_argument('--hole-y', type=float, default=0.0)
     parser.add_argument('--hole-radius', type=float, default=0.5)
-    parser.add_argument('--applied-stress', type=float, default=1.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0)
 
     # L-bracket
     parser.add_argument('--corner-x', type=float, default=1.0)
@@ -86,6 +86,7 @@ def main():
     parser.add_argument('--nu', type=float, default=0.3)
 
     # Router
+    parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--base-filters', type=int, default=32)
     parser.add_argument('--threshold', type=float, default=0.0)
 
@@ -110,8 +111,10 @@ def main():
     # Step 1: Load PINN
     print("\n[Step 1] Loading PINN model...")
     network = Network()
-    pinn_model = network.build(num_inputs=2, layers=[64, 64, 64, 64],
-                               activation='tanh', num_outputs=2)
+    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+    pinn_model = network.build(num_inputs=2, layers=args.layers,
+                               activation='tanh', num_outputs=2,
+                               input_range=input_range)
     try:
         pinn_model.load_weights(args.model_path)
         print(f"  Loaded: {args.model_path}")
@@ -302,6 +305,7 @@ def main():
         print(f"    {tc*100:5.1f}% -> {ac*100:5.1f}%   (thr={th:.6f})")
 
     # Generate grid visualization of mask evolution at each decile
+    import matplotlib.pyplot as plt
     fig, axes = plt.subplots(2, 6, figsize=(18, 6))
     axes = axes.flatten()
     decile_coverages = np.linspace(0.0, 1.0, 11)

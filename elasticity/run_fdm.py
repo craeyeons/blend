@@ -29,7 +29,7 @@ def main():
     # Material
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
-    parser.add_argument('--applied-stress', type=float, default=1.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0)
 
     # Plate with hole
     parser.add_argument('--x-min', type=float, default=-2.0)

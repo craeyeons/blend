@@ -104,11 +104,12 @@ def main():
     parser.add_argument('--hole-x', type=float, default=0.0)
     parser.add_argument('--hole-y', type=float, default=0.0)
     parser.add_argument('--hole-radius', type=float, default=0.5)
-    parser.add_argument('--applied-stress', type=float, default=1.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0)
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
+    parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--base-filters', type=int, default=32)
 
     args = parser.parse_args()
@@ -137,8 +138,10 @@ def main():
     # PINN
     print("Loading PINN...")
     network = Network()
-    pinn_model = network.build(num_inputs=2, layers=[64, 64, 64, 64],
-                               activation='tanh', num_outputs=2)
+    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+    pinn_model = network.build(num_inputs=2, layers=args.layers,
+                               activation='tanh', num_outputs=2,
+                               input_range=input_range)
     pinn_model.load_weights(args.pinn_path)
 
     xy = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)

@@ -298,14 +298,16 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
             vals = np.concatenate([f[fluid] for f in fields[:2]])  # skip zero FDM error
             vmin = 0.0
             vmax = np.percentile(vals, 99) if len(vals) > 0 else 1.0
+            cmap = 'hot_r'
         else:
             ref = fields[2]  # FDM
             vmin, vmax = ref[fluid].min(), ref[fluid].max()
+            cmap = 'rainbow'
 
         for j, (field, col_title) in enumerate(zip(fields, col_titles)):
             ax = axes[i, j]
             masked = np.ma.masked_where(layout == 0, field)
-            cf = ax.contourf(X, Y, masked, levels=50, cmap='coolwarm',
+            cf = ax.contourf(X, Y, masked, levels=50, cmap=cmap,
                              norm=Normalize(vmin=vmin, vmax=vmax))
             plt.colorbar(cf, ax=ax)
             if show_hole:
@@ -356,13 +358,14 @@ def main():
     parser.add_argument('--hole-x', type=float, default=0.0)
     parser.add_argument('--hole-y', type=float, default=0.0)
     parser.add_argument('--hole-radius', type=float, default=0.5)
-    parser.add_argument('--applied-stress', type=float, default=1.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0)
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
     parser.add_argument('--max-iter', type=int, default=200000)
     parser.add_argument('--tol', type=float, default=1e-8)
+    parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--base-filters', type=int, default=32)
 
     args = parser.parse_args()
@@ -392,8 +395,10 @@ def main():
     # --- PINN ---
     print("[1] Loading PINN...")
     network = Network()
-    pinn_model = network.build(num_inputs=2, layers=[64, 64, 64, 64],
-                               activation='tanh', num_outputs=2)
+    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+    pinn_model = network.build(num_inputs=2, layers=args.layers,
+                               activation='tanh', num_outputs=2,
+                               input_range=input_range)
     pinn_model.load_weights(args.pinn_path)
 
     t0 = time.time()
