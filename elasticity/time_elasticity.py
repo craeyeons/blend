@@ -93,40 +93,32 @@ def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
 
 
 def find_optimal_threshold(residual_field, router_output, layout, beta, n_points=200):
-    """Find optimal threshold from target loss curve (no TV)."""
+    """Find optimal threshold by sweeping thresholds on router logits."""
     fluid_mask = layout > 0
     residuals = residual_field[fluid_mask]
     logits = router_output[fluid_mask]
-    n_fluid = len(residuals)
+    if logits.size == 0:
+        return 0.0, 0.0
 
-    sorted_idx = np.argsort(logits)[::-1]
-    sorted_residuals = residuals[sorted_idx]
-    sorted_logits = logits[sorted_idx]
+    lo, hi = float(logits.min()), float(logits.max())
+    margin = max(0.1, (hi - lo) * 0.05)
+    thresholds = np.linspace(lo - margin, hi + margin, max(n_points, 500))
 
-    coverage = np.linspace(0, 1, n_points)
-    loss = np.zeros(n_points)
+    best_loss = float('inf')
+    best_cov = 0.0
+    best_t = 0.0
 
-    for i, cov in enumerate(coverage):
-        n_fdm = int(cov * n_fluid)
-        fdm_cost = beta * cov
-        if n_fluid - n_fdm > 0:
-            residual_loss = (1 - cov) * np.mean(sorted_residuals[n_fdm:])
-        else:
-            residual_loss = 0.0
-        loss[i] = fdm_cost + residual_loss
+    for t in thresholds:
+        m = logits > t
+        cov = np.mean(m)
+        pinn_res = np.mean(residuals[~m]) if (~m).sum() > 0 else 0.0
+        loss = beta * cov + (1 - cov) * pinn_res
+        if loss < best_loss:
+            best_loss = loss
+            best_cov = cov
+            best_t = float(t)
 
-    optimal_idx = np.argmin(loss)
-    optimal_coverage = coverage[optimal_idx]
-    n_fdm_optimal = int(optimal_coverage * n_fluid)
-
-    if 0 < n_fdm_optimal < n_fluid:
-        optimal_threshold = sorted_logits[n_fdm_optimal - 1]
-    elif n_fdm_optimal == 0:
-        optimal_threshold = sorted_logits[0] + 0.001 if n_fluid > 0 else 1.0
-    else:
-        optimal_threshold = sorted_logits[-1] - 0.001 if n_fluid > 0 else 0.0
-
-    return optimal_threshold, optimal_coverage
+    return best_t, best_cov
 
 
 def compute_residual_field(pinn_model, X, Y, layout, E=1.0, nu=0.3, bc_error=None):
@@ -276,6 +268,7 @@ def main():
     actual_coverage = np.sum(fdm_mask_opt) / np.sum(layout)
 
     print(f"  Optimal threshold: {optimal_threshold:.6f}")
+    print(f"  Optimal coverage:  {optimal_coverage * 100:.2f}%")
     print(f"  FDM coverage:      {actual_coverage * 100:.2f}%")
     print()
 
