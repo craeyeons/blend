@@ -37,7 +37,7 @@ try:
     plt.style.use(['science', 'no-latex'])
 except ImportError:
     pass
-from matplotlib.colors import Normalize
+from matplotlib.colors import BoundaryNorm
 import matplotlib.patches as mpatches
 
 from lib.network import Network
@@ -273,6 +273,31 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
     """Side-by-side grid: PINN / Hybrid / FDM for ux, uy, |u|, and error."""
     fluid = layout > 0
 
+    def _quantile_levels(values, n_levels=25, qmin=1.0, qmax=99.0, force_zero_min=False):
+        vals = values[np.isfinite(values)]
+        if vals.size == 0:
+            return np.linspace(0.0, 1.0, n_levels)
+
+        lo = np.percentile(vals, qmin)
+        hi = np.percentile(vals, qmax)
+        if force_zero_min:
+            lo = 0.0
+
+        if not np.isfinite(lo) or not np.isfinite(hi) or np.isclose(lo, hi):
+            lo = float(np.min(vals)) if np.isfinite(np.min(vals)) else 0.0
+            hi = float(np.max(vals)) if np.isfinite(np.max(vals)) else 1.0
+            if np.isclose(lo, hi):
+                hi = lo + 1e-12
+
+        clipped = np.clip(vals, lo, hi)
+        levels = np.quantile(clipped, np.linspace(0.0, 1.0, n_levels))
+        levels = np.unique(levels)
+
+        if levels.size < 5:
+            levels = np.linspace(lo, hi, n_levels)
+
+        return levels
+
     mag_p = np.sqrt(ux_pinn ** 2 + uy_pinn ** 2)
     mag_h = np.sqrt(ux_hybrid ** 2 + uy_hybrid ** 2)
     mag_f = np.sqrt(ux_fdm ** 2 + uy_fdm ** 2)
@@ -294,22 +319,30 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
     fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
 
     for i, (row_label, fields) in enumerate(rows):
-        # Shared color range per row (use FDM as reference, except error row)
+        # Shared color mapping per row (use FDM as reference, except error row)
         if row_label == 'Error':
             vals = np.concatenate([f[fluid] for f in fields[:2]])  # skip zero FDM error
-            vmin = 0.0
-            vmax = np.percentile(vals, 99) if len(vals) > 0 else 1.0
+            levels = _quantile_levels(vals, n_levels=28, qmin=0.0, qmax=99.5, force_zero_min=True)
             cmap = 'coolwarm'
         else:
             ref = fields[2]  # FDM
-            vmin, vmax = ref[fluid].min(), ref[fluid].max()
+            levels = _quantile_levels(ref[fluid], n_levels=28, qmin=0.5, qmax=99.5)
             cmap = 'coolwarm'
+
+        norm = BoundaryNorm(levels, ncolors=256, clip=True)
+        line_levels = levels[::max(1, len(levels) // 8)]
+        line_levels = np.unique(line_levels)
+        if line_levels.size < 2:
+            line_levels = levels
 
         for j, (field, col_title) in enumerate(zip(fields, col_titles)):
             ax = axes[i, j]
             masked = np.ma.masked_where(layout == 0, field)
-            cf = ax.contourf(X, Y, masked, levels=50, cmap=cmap,
-                             norm=Normalize(vmin=vmin, vmax=vmax))
+            cf = ax.contourf(X, Y, masked, levels=levels, cmap=cmap,
+                             norm=norm, extend='both')
+            cs = ax.contour(X, Y, masked, levels=line_levels,
+                            colors='k', linewidths=0.3, alpha=0.45)
+            ax.clabel(cs, inline=True, fontsize=6, fmt='%.2e')
             plt.colorbar(cf, ax=ax)
             if show_hole:
                 ax.add_patch(plt.Circle(show_hole[:2], show_hole[2],
