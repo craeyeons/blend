@@ -300,6 +300,19 @@ class ElasticitySolver:
         ux = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_ux_j), bc_ux_j, ux)
         uy = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_uy_j), bc_uy_j, uy)
 
+        # Apply traction BCs to the initial state as well, so hybrid
+        # initialization is boundary-consistent before the first iteration.
+        ux = jnp.where(
+            (trac_mask_j > 0) & (disp_mask_j == 0),
+            self._apply_traction_ux(ux, uy, bc_tx_j, bc_ty_j, trac_mask_j, layout_j),
+            ux
+        )
+        uy = jnp.where(
+            (trac_mask_j > 0) & (disp_mask_j == 0),
+            self._apply_traction_uy(ux, uy, bc_tx_j, bc_ty_j, trac_mask_j, layout_j),
+            uy
+        )
+
         @jit
         def compute_residual(ux_new, ux_old, uy_new, uy_old):
             diff_ux = jnp.sum((ux_new - ux_old) ** 2)
