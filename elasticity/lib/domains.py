@@ -69,13 +69,19 @@ def create_plate_with_hole(Nx=200, Ny=200,
     bc_tx = np.zeros((Ny, Nx), dtype=np.float32)
     bc_ty = np.zeros((Ny, Nx), dtype=np.float32)
 
-    # Left edge: ux = 0 (symmetry roller)
+    # Left edge: ux = 0 (roller — uy is free)
     disp_bc_mask[:, 0] = 1.0
     bc_ux[:, 0] = 0.0
+    bc_uy[:, 0] = np.nan  # free component
 
-    # Bottom edge: uy = 0 (symmetry roller)
+    # Bottom edge: uy = 0 (roller — ux is free)
     disp_bc_mask[0, :] = 1.0
     bc_uy[0, :] = 0.0
+    bc_ux[0, :] = np.nan  # free component
+
+    # Corner (0, 0): both constrained (intersection of two rollers)
+    bc_ux[0, 0] = 0.0
+    bc_uy[0, 0] = 0.0
 
     # Right edge: uniform traction tx = applied_stress
     trac_bc_mask[:, -1] = 1.0

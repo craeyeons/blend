@@ -349,8 +349,10 @@ class RouterTrainer:
 
 
 def compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy, pinn_ux, pinn_uy, layout):
-    """Compute displacement BC error at boundary points."""
-    bc_error = np.sqrt((pinn_ux - bc_ux) ** 2 + (pinn_uy - bc_uy) ** 2) * disp_bc_mask
+    """Compute displacement BC error at boundary points (NaN = free, skip)."""
+    err_ux = np.where(np.isfinite(bc_ux), (pinn_ux - bc_ux) ** 2, 0.0)
+    err_uy = np.where(np.isfinite(bc_uy), (pinn_uy - bc_uy) ** 2, 0.0)
+    bc_error = np.sqrt(err_ux + err_uy) * disp_bc_mask
     return (bc_error * layout).astype(np.float32)
 
 
@@ -384,8 +386,8 @@ def create_router_input(layout, disp_bc_mask, bc_ux, bc_uy, trac_bc_mask,
     inputs = np.stack([
         layout,
         disp_bc_mask,
-        bc_ux,
-        bc_uy,
+        np.nan_to_num(bc_ux, nan=0.0),
+        np.nan_to_num(bc_uy, nan=0.0),
         trac_bc_mask,
         pinn_ux,
         pinn_uy,

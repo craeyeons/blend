@@ -298,11 +298,11 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
             vals = np.concatenate([f[fluid] for f in fields[:2]])  # skip zero FDM error
             vmin = 0.0
             vmax = np.percentile(vals, 99) if len(vals) > 0 else 1.0
-            cmap = 'hot_r'
+            cmap = 'coolwarm'
         else:
             ref = fields[2]  # FDM
             vmin, vmax = ref[fluid].min(), ref[fluid].max()
-            cmap = 'rainbow'
+            cmap = 'coolwarm'
 
         for j, (field, col_title) in enumerate(zip(fields, col_titles)):
             ax = axes[i, j]

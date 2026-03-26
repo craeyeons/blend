@@ -180,9 +180,9 @@ class ElasticitySolver:
                  + c_cross * ux_cross[1:-1, 1:-1]) / a_P_uy
             )
 
-            # Apply displacement BCs
-            ux_new = jnp.where(disp_mask_j > 0, bc_ux_j, ux_new)
-            uy_new = jnp.where(disp_mask_j > 0, bc_uy_j, uy_new)
+            # Apply displacement BCs (NaN = free component, skip)
+            ux_new = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_ux_j), bc_ux_j, ux_new)
+            uy_new = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_uy_j), bc_uy_j, uy_new)
 
             # Apply traction BCs (Neumann): copy from interior neighbour
             # For simplicity, use zero-gradient (free surface) where traction=0
@@ -232,17 +232,25 @@ class ElasticitySolver:
         #   => uy_ghost ~ uy_interior + ty * dy / C11
         #   => ux_ghost ~ ux_interior + tx * dy / C66
 
+        def _pad_zeros(arr):
+            """Pad with zeros (void) so domain edges see void outside."""
+            return jnp.pad(arr, 1, mode='constant', constant_values=0.0)
+
         def _interior_avg(field, tmask, layout):
             """Average of interior (non-traction, non-void) neighbours."""
-            f_l = jnp.roll(field, 1, axis=1)
-            f_r = jnp.roll(field, -1, axis=1)
-            f_d = jnp.roll(field, 1, axis=0)
-            f_u = jnp.roll(field, -1, axis=0)
+            fp = _pad_zeros(field)
+            lp = _pad_zeros(layout)
+            tp = _pad_zeros(tmask)
 
-            w_l = jnp.roll(layout, 1, axis=1) * (1 - jnp.roll(tmask, 1, axis=1))
-            w_r = jnp.roll(layout, -1, axis=1) * (1 - jnp.roll(tmask, -1, axis=1))
-            w_d = jnp.roll(layout, 1, axis=0) * (1 - jnp.roll(tmask, 1, axis=0))
-            w_u = jnp.roll(layout, -1, axis=0) * (1 - jnp.roll(tmask, -1, axis=0))
+            f_l = fp[1:-1, :-2]
+            f_r = fp[1:-1, 2:]
+            f_d = fp[:-2, 1:-1]
+            f_u = fp[2:, 1:-1]
+
+            w_l = lp[1:-1, :-2] * (1 - tp[1:-1, :-2])
+            w_r = lp[1:-1, 2:] * (1 - tp[1:-1, 2:])
+            w_d = lp[:-2, 1:-1] * (1 - tp[:-2, 1:-1])
+            w_u = lp[2:, 1:-1] * (1 - tp[2:, 1:-1])
 
             count = w_l + w_r + w_d + w_u
             total = f_l * w_l + f_r * w_r + f_d * w_d + f_u * w_u
@@ -250,9 +258,9 @@ class ElasticitySolver:
 
         def _boundary_is_horizontal(tmask, layout):
             """1 where the traction face has a y-facing normal."""
-            # Horizontal boundary: void/edge above or below
-            has_void_above = (1 - jnp.roll(layout, -1, axis=0))
-            has_void_below = (1 - jnp.roll(layout, 1, axis=0))
+            lp = _pad_zeros(layout)
+            has_void_above = (1 - lp[2:, 1:-1])
+            has_void_below = (1 - lp[:-2, 1:-1])
             return jnp.clip(has_void_above + has_void_below, 0.0, 1.0)
 
         def _apply_trac_ux(ux, uy, tx, ty, tmask, layout):
@@ -284,9 +292,9 @@ class ElasticitySolver:
             ux = jnp.zeros((Ny, Nx), dtype=jnp.float64)
             uy = jnp.zeros((Ny, Nx), dtype=jnp.float64)
 
-        # Apply initial BCs
-        ux = jnp.where(disp_mask_j > 0, bc_ux_j, ux)
-        uy = jnp.where(disp_mask_j > 0, bc_uy_j, uy)
+        # Apply initial BCs (NaN = free component, skip)
+        ux = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_ux_j), bc_ux_j, ux)
+        uy = jnp.where((disp_mask_j > 0) & jnp.isfinite(bc_uy_j), bc_uy_j, uy)
 
         @jit
         def compute_residual(ux_new, ux_old, uy_new, uy_old):
