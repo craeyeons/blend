@@ -3,8 +3,7 @@
 Time CFD and hybrid solvers for cylinder flow scenarios.
 
 Only times sim.solve() calls. Router/PINN loading is excluded.
-Runs multiple trials for the optimal threshold, plus a single-run
-coverage sweep to produce a coverage-vs-RMSE-and-time plot.
+Runs multiple trials for the optimal threshold.
 """
 
 import argparse
@@ -83,18 +82,6 @@ def find_optimal_threshold(residual_field, router_output, layout, beta, n_points
         optimal_threshold = sorted_logits[-1] - 0.001 if n_fluid > 0 else 0.0
 
     return optimal_threshold, optimal_coverage
-
-
-def threshold_for_coverage(router_output, layout, target_cov):
-    """Return the threshold that achieves approximately target_cov CFD coverage."""
-    fluid_logits = router_output[layout > 0]
-    n_fluid = len(fluid_logits)
-    sorted_logits = np.sort(fluid_logits)[::-1]
-    n_cfd = int(target_cov * n_fluid)
-    n_cfd = max(0, min(n_cfd, n_fluid - 1))
-    if n_cfd == 0:
-        return sorted_logits[0] + 1.0
-    return sorted_logits[n_cfd - 1]
 
 
 def make_cfd_sim(args):
@@ -280,12 +267,10 @@ def main():
         cfd_times.append(t1 - t0)
         print(f"  CFD  run {i + 1}/{N_RUNS}: {cfd_times[-1]:.4f} s")
 
-    # Keep last CFD solution as ground truth for RMSE
+    # Keep last CFD solution as ground truth
     u_cfd = np.array(u_cfd)
     v_cfd = np.array(v_cfd)
     p_cfd = np.array(p_cfd)
-    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
-    fluid_mask = layout > 0
 
     # ================================================================
     # TIME HYBRID (optimal threshold, repeated)
@@ -305,94 +290,6 @@ def main():
             t1 = time.perf_counter()
         hybrid_times.append(t1 - t0)
         print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f} s")
-
-    # ================================================================
-    # COVERAGE SWEEP (single run each)
-    # ================================================================
-    print("\n--- Coverage sweep (0%, 10%, ..., 100%) ---")
-    target_coverages = np.arange(0.1, 1.0, 0.1)  # internal levels: 10%..90%
-
-    sweep_cov = [0.0]  # start with PINN-only
-    sweep_time = [0.0]  # PINN inference is ~instant relative to CFD
-    pinn_vel_mag = np.sqrt(pinn_u**2 + pinn_v**2)
-    rmse_pinn = np.sqrt(np.mean((pinn_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
-    sweep_rmse = [rmse_pinn]
-
-    for target_cov in target_coverages:
-        with contextlib.redirect_stdout(io.StringIO()):
-            t0 = time.perf_counter()
-            router_output_timed, _ = compute_router_output_and_ete(
-                router, layout, bc_mask, bc_u, bc_v, bc_p,
-                pinn_u, pinn_v, pinn_p,
-                args.x_min, args.x_max, args.y_min, args.y_max, nu,
-            )
-            thresh = threshold_for_coverage(router_output_timed, layout, target_cov)
-            mask = (router_output_timed >= thresh).astype(np.int32) * layout.astype(np.int32)
-            sim = make_hybrid_sim(args, pinn_model, mask)
-            uh, vh, ph = sim.solve()
-            t1 = time.perf_counter()
-        elapsed = t1 - t0
-        cov = np.sum(mask) / np.sum(layout)
-
-        uh, vh = np.array(uh), np.array(vh)
-        hyb_vel = np.sqrt(uh**2 + vh**2)
-        rmse = np.sqrt(np.mean((hyb_vel[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
-
-        sweep_cov.append(cov)
-        sweep_time.append(elapsed)
-        sweep_rmse.append(rmse)
-        print(f"  cov={cov*100:5.1f}%  time={elapsed:.4f}s  RMSE={rmse:.6f}")
-
-    # Add CFD-only (100% coverage)
-    sweep_cov.append(1.0)
-    sweep_time.append(np.mean(cfd_times))
-    sweep_rmse.append(0.0)
-
-    sweep_cov = np.array(sweep_cov)
-    sweep_time = np.array(sweep_time)
-    sweep_rmse = np.array(sweep_rmse)
-
-    # ================================================================
-    # PLOT: Coverage vs RMSE & Time
-    # ================================================================
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-
-    color_rmse = 'tab:blue'
-    color_time = 'tab:red'
-
-    ax1.set_xlabel('Coverage (% CFD)')
-    ax1.set_ylabel('RMSE (vs CFD)', color=color_rmse)
-    ax1.plot(sweep_cov * 100, sweep_rmse, 'o-', color=color_rmse, linewidth=2, markersize=6,
-             label='RMSE')
-    ax1.tick_params(axis='y', labelcolor=color_rmse)
-    ax1.set_xlim(-5, 105)
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Solve Time (s)', color=color_time)
-    ax2.plot(sweep_cov * 100, sweep_time, 's-', color=color_time, linewidth=2, markersize=6,
-             label='Time')
-    ax2.tick_params(axis='y', labelcolor=color_time)
-
-    # Mark optimal point
-    ax1.axvline(x=actual_coverage * 100, color='green', linestyle='--', linewidth=1.5,
-                alpha=0.7, label=f'Optimal ({actual_coverage*100:.0f}%)')
-
-    # Combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='center right', fontsize=9)
-
-    ax1.set_title(f'Coverage vs RMSE & Solve Time — Cylinder (Re={args.Re})')
-    fig.tight_layout()
-
-    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.png')
-    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    print(f"\n  Saved plot to {plot_path}")
-
-    # Save sweep data
-    np.savez(os.path.join(args.output_dir, 'timing_sweep.npz'),
-             coverage=sweep_cov, time=sweep_time, rmse=sweep_rmse)
 
     # ================================================================
     # RESULTS
