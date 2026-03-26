@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--ny', type=int, default=200)
     parser.add_argument('--max-iter', type=int, default=200000)
     parser.add_argument('--tol', type=float, default=1e-8)
+    parser.add_argument('--omega', type=float, default=0.2,
+                        help='Jacobi under-relaxation factor in (0,1], smaller is more stable')
     parser.add_argument('--output-dir', type=str, default='./results')
 
     # Material
@@ -84,6 +86,7 @@ def main():
         y_domain=(args.y_min, args.y_max),
         Nx=args.nx, Ny=args.ny,
         max_iter=args.max_iter, tol=args.tol,
+        relaxation=args.omega,
     )
 
     ux, uy, sxx, syy, sxy = solver.solve(

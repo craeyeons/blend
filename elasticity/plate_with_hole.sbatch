@@ -50,6 +50,7 @@ echo "=== Running FDM solver ==="
 python run_fdm.py \
     --problem plate_with_hole \
     --nx 200 --ny 200 \
+    --omega 0.2 \
     --max-iter 200000
 
 # --- Step 3: Train router ---

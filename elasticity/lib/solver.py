@@ -42,13 +42,15 @@ class ElasticitySolver:
 
     def __init__(self, E=1.0, nu=0.3,
                  x_domain=(-2.0, 2.0), y_domain=(-2.0, 2.0),
-                 Nx=200, Ny=200, max_iter=200000, tol=1e-8):
+                 Nx=200, Ny=200, max_iter=200000, tol=1e-8,
+                 relaxation=0.2):
         self.E = E
         self.nu = nu
         self.Nx = Nx
         self.Ny = Ny
         self.max_iter = max_iter
         self.tol = tol
+        self.relaxation = relaxation
 
         x_min, x_max = x_domain
         y_min, y_max = y_domain
@@ -65,7 +67,7 @@ class ElasticitySolver:
         self.C66 = E / (2.0 * (1.0 + nu))
 
         print(f"JAX devices: {jax.devices()}")
-        print(f"ElasticitySolver: {Nx}x{Ny}, E={E}, nu={nu}")
+        print(f"ElasticitySolver: {Nx}x{Ny}, E={E}, nu={nu}, omega={relaxation}")
 
     def solve(self, layout, disp_bc_mask, bc_ux, bc_uy,
               trac_bc_mask=None, bc_tx=None, bc_ty=None,
@@ -323,16 +325,32 @@ class ElasticitySolver:
         print(f"Grid: {Nx}x{Ny}, max_iter: {self.max_iter}, tol: {self.tol}")
         print("-" * 50)
 
+        prev_residual = np.inf
         for n in range(self.max_iter):
             ux_old, uy_old = ux, uy
-            ux, uy = jacobi_step(ux, uy)
+            ux_new, uy_new = jacobi_step(ux, uy)
+
+            # Under-relaxation for stability in coupled elasticity Jacobi.
+            # omega=1 is plain Jacobi; smaller omega damps divergent modes.
+            omega = jnp.asarray(self.relaxation, dtype=ux.dtype)
+            ux = (1.0 - omega) * ux_old + omega * ux_new
+            uy = (1.0 - omega) * uy_old + omega * uy_new
 
             if n % 100 == 0:
                 residual = float(compute_residual(ux, ux_old, uy, uy_old))
                 print(f"Iteration {n}, Residual: {residual:.6e}")
+
+                if not np.isfinite(residual) or (np.isfinite(prev_residual) and residual > prev_residual * 100.0):
+                    raise RuntimeError(
+                        "Elasticity solver diverged. "
+                        f"Residual jumped from {prev_residual:.6e} to {residual:.6e}. "
+                        "Try smaller --omega (e.g. 0.1) or lower applied stress."
+                    )
+
                 if residual < self.tol:
                     print(f"\nConverged at iteration {n}")
                     break
+                prev_residual = residual
         else:
             print(f"\nReached maximum iterations ({self.max_iter})")
 

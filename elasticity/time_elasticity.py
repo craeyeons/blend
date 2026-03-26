@@ -88,7 +88,7 @@ def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
     )
     router_output = router(tf.constant(inputs, dtype=tf.float32),
                            training=False).numpy().squeeze()
-    mask = (router_output >= threshold).astype(np.int32) * layout.astype(np.int32)
+    mask = (router_output > threshold).astype(np.int32) * layout.astype(np.int32)
     return router_output, mask
 
 
@@ -271,7 +271,7 @@ def main():
     optimal_threshold, optimal_coverage = find_optimal_threshold(
         residual_field, router_output, layout, args.beta
     )
-    fdm_mask_opt = (router_output >= optimal_threshold).astype(np.int32) \
+    fdm_mask_opt = (router_output > optimal_threshold).astype(np.int32) \
         * layout.astype(np.int32)
     actual_coverage = np.sum(fdm_mask_opt) / np.sum(layout)
 
