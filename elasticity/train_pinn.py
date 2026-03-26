@@ -457,7 +457,7 @@ def main():
     history = trainer.train(data, epochs=args.epochs)
 
     # Save model
-    model_path = os.path.join(args.output_dir, f'pinn_{args.problem}.h5')
+    model_path = os.path.join(args.output_dir, f'pinn_{args.problem}.weights.h5')
     model.save_weights(model_path)
     print(f"\nSaved model to {model_path}")
 

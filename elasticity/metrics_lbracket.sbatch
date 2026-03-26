@@ -28,7 +28,7 @@ rm -rf metrics_output_lbracket
 
 python plot_coverage_metrics.py \
     --problem l_bracket \
-    --pinn-path ./models/pinn_l_bracket.h5 \
+        --pinn-path ./models/pinn_l_bracket.weights.h5 \
     --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
     --fdm-path ./results/fdm_l_bracket.npz \
     --beta 1.1 \

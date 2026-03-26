@@ -4,7 +4,7 @@ Plot router separation at multiple thresholds for elasticity problems.
 Usage:
     python plot_router_thresholds.py --problem plate_with_hole \
         --router-path ./router_output/plate_with_hole/beta_0.1/router.weights.h5 \
-        --pinn-path ./models/pinn_plate_with_hole.h5
+            --pinn-path ./models/pinn_plate_with_hole.weights.h5
 """
 
 import argparse
@@ -88,7 +88,7 @@ def main():
     parser.add_argument('--router-path', type=str,
                         default='./router_output/plate_with_hole/beta_0.1/router.weights.h5')
     parser.add_argument('--pinn-path', type=str,
-                        default='./models/pinn_plate_with_hole.h5')
+                        default='./models/pinn_plate_with_hole.weights.h5')
     parser.add_argument('--output-dir', type=str, default='./threshold_plots')
 
     parser.add_argument('--threshold-start', type=float, default=0.01)

@@ -28,7 +28,7 @@ rm -rf metrics_output_plate
 
 python plot_coverage_metrics.py \
     --problem plate_with_hole \
-    --pinn-path ./models/pinn_plate_with_hole.h5 \
+        --pinn-path ./models/pinn_plate_with_hole.weights.h5 \
     --router-path ./router_output/plate_with_hole/beta_1.1/router.weights.h5 \
     --fdm-path ./results/fdm_plate_with_hole.npz \
     --beta 1.1 \

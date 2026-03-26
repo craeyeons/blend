@@ -54,7 +54,7 @@ python run_fdm.py \
 echo "=== Training Router ==="
 python train_router.py \
     --problem l_bracket \
-    --model-path ./models/pinn_l_bracket.h5 \
+        --model-path ./models/pinn_l_bracket.weights.h5 \
     --epochs 2000 \
     --beta 1.1 \
     --lambda-tv 1.0 \
@@ -67,7 +67,7 @@ echo "=== Threshold Plots ==="
 python plot_router_thresholds.py \
     --problem l_bracket \
     --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
-    --pinn-path ./models/pinn_l_bracket.h5 \
+    --pinn-path ./models/pinn_l_bracket.weights.h5 \
     --output-dir ./threshold_plots_lbracket \
     --threshold-start 0.1 \
     --threshold-end 0.9 \
@@ -77,7 +77,7 @@ python plot_router_thresholds.py \
 echo "=== Coverage Metrics ==="
 python plot_coverage_metrics.py \
     --problem l_bracket \
-    --pinn-path ./models/pinn_l_bracket.h5 \
+    --pinn-path ./models/pinn_l_bracket.weights.h5 \
     --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
     --fdm-path ./results/fdm_l_bracket.npz \
     --beta 1.1 \

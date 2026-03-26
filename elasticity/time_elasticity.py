@@ -148,7 +148,7 @@ def main():
     parser.add_argument('--problem', type=str, default='plate_with_hole',
                         choices=['plate_with_hole', 'l_bracket'])
     parser.add_argument('--pinn-path', type=str,
-                        default='./models/pinn_plate_with_hole.h5')
+                        default='./models/pinn_plate_with_hole.weights.h5')
     parser.add_argument('--router-weights', type=str, required=True)
     parser.add_argument('--output-dir', type=str, default='./timing_output')
 

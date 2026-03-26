@@ -54,7 +54,7 @@ python run_fdm.py \
 echo "=== Training Router ==="
 python train_router.py \
     --problem plate_with_hole \
-    --model-path ./models/pinn_plate_with_hole.h5 \
+        --model-path ./models/pinn_plate_with_hole.weights.h5 \
     --epochs 2000 \
     --beta 1.1 \
     --lambda-tv 1.0 \
@@ -66,7 +66,7 @@ echo "=== Threshold Plots ==="
 python plot_router_thresholds.py \
     --problem plate_with_hole \
     --router-path ./router_output/plate_with_hole/beta_1.1/router.weights.h5 \
-    --pinn-path ./models/pinn_plate_with_hole.h5 \
+    --pinn-path ./models/pinn_plate_with_hole.weights.h5 \
     --output-dir ./threshold_plots_plate \
     --threshold-start 0.1 \
     --threshold-end 0.9 \
@@ -76,7 +76,7 @@ python plot_router_thresholds.py \
 echo "=== Coverage Metrics ==="
 python plot_coverage_metrics.py \
     --problem plate_with_hole \
-    --pinn-path ./models/pinn_plate_with_hole.h5 \
+    --pinn-path ./models/pinn_plate_with_hole.weights.h5 \
     --router-path ./router_output/plate_with_hole/beta_1.1/router.weights.h5 \
     --fdm-path ./results/fdm_plate_with_hole.npz \
     --beta 1.1 \
