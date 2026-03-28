@@ -13,6 +13,7 @@ import os
 import time
 
 import numpy as np
+import cv2
 import tensorflow as tf
 
 # Configure TensorFlow GPU memory growth
@@ -90,6 +91,25 @@ def find_optimal_threshold(residual_field, router_output, layout, beta, n_points
     return optimal_threshold, optimal_coverage
 
 
+def threshold_for_coverage(router_output, layout, target_cov):
+    """Return the threshold that achieves approximately target_cov CFD coverage."""
+    fluid_logits = router_output[layout > 0]
+    n_fluid = len(fluid_logits)
+    sorted_logits = np.sort(fluid_logits)[::-1]
+    n_cfd = int(target_cov * n_fluid)
+    n_cfd = max(0, min(n_cfd, n_fluid - 1))
+    if n_cfd == 0:
+        return sorted_logits[0] + 1.0
+    return sorted_logits[n_cfd - 1]
+
+
+def apply_morph_open(mask, layout, kernel_size):
+    """Apply morphological opening to smooth the binary mask."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    opened = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+    return opened.astype(np.int32) * layout.astype(np.int32)
+
+
 def compute_residual_field(pinn_model, X, Y, layout, nu=0.01, rho=1.0,
                            bc_error=None):
     """Compute physics residual field, adding BC error before median-normalizing."""
@@ -154,6 +174,8 @@ def main():
     parser.add_argument('--nu', type=float, default=0.01)
     parser.add_argument('--rho', type=float, default=1.0)
     parser.add_argument('--n-runs', type=int, default=3)
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -228,6 +250,7 @@ def main():
         residual_field, router_output, layout, args.beta
     )
     cfd_mask_opt = (router_output >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)
+    cfd_mask_opt = apply_morph_open(cfd_mask_opt, layout, args.morph_kernel)
     actual_coverage = np.sum(cfd_mask_opt) / np.sum(layout)
 
     print(f"  Optimal threshold: {optimal_threshold:.6f}")
@@ -289,6 +312,7 @@ def main():
                 args.x_min, args.x_max, args.y_min, args.y_max, args.nu,
             )
             cfd_mask_timed = (router_output_timed >= optimal_threshold).astype(np.int32) * layout.astype(np.int32)
+            cfd_mask_timed = apply_morph_open(cfd_mask_timed, layout, args.morph_kernel)
             sim = CavityFlowHybridSimulation(
                 network=pinn_model, uv_func=compute_uv_from_psi,
                 mask=cfd_mask_timed,
@@ -299,6 +323,83 @@ def main():
             t1 = time.perf_counter()
         hybrid_times.append(t1 - t0)
         print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f} s")
+
+    # Keep last CFD solution as ground truth for RMSE
+    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
+    fluid_mask = layout > 0
+
+    # ================================================================
+    # COVERAGE SWEEP (single run at each 10% increment)
+    # ================================================================
+    print(f"\n--- Coverage sweep (10% increments, 1 run each) ---")
+    target_coverages = np.arange(0.1, 1.0, 0.1)  # 10%, 20%, ..., 90%
+
+    sweep_cov = [0.0]  # start with PINN-only
+    sweep_time = [0.0]  # PINN inference is ~instant relative to CFD
+    pinn_vel_mag = np.sqrt(pinn_u**2 + pinn_v**2)
+    rmse_pinn = np.sqrt(np.mean((pinn_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+    sweep_rmse = [rmse_pinn]
+
+    for target_cov in target_coverages:
+        thresh = threshold_for_coverage(router_output, layout, target_cov)
+        mask = (router_output >= thresh).astype(np.int32) * layout.astype(np.int32)
+        mask = apply_morph_open(mask, layout, args.morph_kernel)
+        cov = np.sum(mask) / np.sum(layout)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            sim = CavityFlowHybridSimulation(
+                network=pinn_model, uv_func=compute_uv_from_psi,
+                mask=mask,
+                Re=args.Re, N=args.N,
+                max_iter=args.max_iter, tol=args.tol,
+            )
+            t0 = time.perf_counter()
+            uh, vh, ph = sim.solve()
+            t1 = time.perf_counter()
+        elapsed = t1 - t0
+
+        uh, vh = np.array(uh), np.array(vh)
+        hyb_vel = np.sqrt(uh**2 + vh**2)
+        rmse = np.sqrt(np.mean((hyb_vel[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+
+        sweep_cov.append(cov)
+        sweep_time.append(elapsed)
+        sweep_rmse.append(rmse)
+        print(f"  cov={cov*100:5.1f}%  time={elapsed:.4f}s  RMSE={rmse:.6f}")
+
+    # Add CFD-only (100% coverage)
+    sweep_cov.append(1.0)
+    sweep_time.append(np.mean(cfd_times))
+    sweep_rmse.append(0.0)
+
+    sweep_cov = np.array(sweep_cov)
+    sweep_time = np.array(sweep_time)
+    sweep_rmse = np.array(sweep_rmse)
+
+    # ================================================================
+    # PLOT: Time vs RMSE
+    # ================================================================
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(sweep_time, sweep_rmse, 'o-', color='tab:blue', linewidth=2, markersize=6)
+
+    # Annotate each point with coverage %
+    for i, (t, r, c) in enumerate(zip(sweep_time, sweep_rmse, sweep_cov)):
+        ax.annotate(f'{c*100:.0f}%', (t, r), textcoords='offset points',
+                    xytext=(5, 5), fontsize=7)
+
+    ax.set_xlabel('Solve Time (s)')
+    ax.set_ylabel('RMSE (vs CFD)')
+    ax.set_title(f'Time vs RMSE at Coverage Increments — Cavity (Re={args.Re})')
+    fig.tight_layout()
+
+    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.png')
+    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"\n  Saved plot to {plot_path}")
+
+    # Save sweep data
+    np.savez(os.path.join(args.output_dir, 'timing_sweep.npz'),
+             coverage=sweep_cov, time=sweep_time, rmse=sweep_rmse)
 
     # ================================================================
     # RESULTS

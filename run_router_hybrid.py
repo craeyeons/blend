@@ -14,6 +14,7 @@ Usage:
 import argparse
 import os
 import numpy as np
+import cv2
 import tensorflow as tf
 
 # Configure TensorFlow GPU memory growth to avoid cuDNN issues
@@ -104,7 +105,9 @@ def main():
                         help='Base filters in router CNN')
     parser.add_argument('--temperature', type=float, default=0.5,
                         help='Sigmoid temperature for router (should match training)')
-    
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
+
     args = parser.parse_args()
     
     # Auto-detect paths from beta if not explicitly specified
@@ -196,7 +199,11 @@ def main():
     # Apply threshold to get binary mask
     # mask = 1 means CFD, mask = 0 means PINN
     mask = (r >= args.threshold).astype(np.int32)
-    
+
+    # Morphological opening to smooth the mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (args.morph_kernel, args.morph_kernel))
+    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel).astype(np.int32)
+
     # Apply layout mask (obstacle = 0)
     mask = mask * layout.astype(np.int32)
     

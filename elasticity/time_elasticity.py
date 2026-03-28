@@ -15,6 +15,7 @@ import os
 import time
 
 import numpy as np
+import cv2
 import tensorflow as tf
 
 gpus = tf.config.list_physical_devices('GPU')
@@ -73,9 +74,17 @@ def pinn_predict(pinn_model, X, Y, layout, E=1.0, nu=0.3):
     return pinn_ux, pinn_uy, pinn_vm
 
 
+def apply_morph_open(mask, layout, kernel_size):
+    """Apply morphological opening to smooth the binary mask."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    opened = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+    return opened.astype(np.int32) * layout.astype(np.int32)
+
+
 def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
                    disp_bc_mask, bc_ux, bc_uy, trac_bc_mask, threshold=0.0,
-                   E=1.0, nu=0.3, x_domain=(0.0, 2.0), y_domain=(0.0, 2.0)):
+                   E=1.0, nu=0.3, x_domain=(0.0, 2.0), y_domain=(0.0, 2.0),
+                   morph_kernel=5):
     """Run router inference and return output + mask."""
     bc_error = compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy, pinn_ux, pinn_uy, layout)
     error_transport = solve_error_transport(
@@ -89,6 +98,7 @@ def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
     router_output = router(tf.constant(inputs, dtype=tf.float32),
                            training=False).numpy().squeeze()
     mask = (router_output >= threshold).astype(np.int32) * layout.astype(np.int32)
+    mask = apply_morph_open(mask, layout, morph_kernel)
     return router_output, mask
 
 
@@ -176,6 +186,8 @@ def main():
 
     # Timing
     parser.add_argument('--n-runs', type=int, default=3)
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     N_RUNS = args.n_runs
@@ -260,6 +272,7 @@ def main():
     )
     fdm_mask_opt = (router_output >= optimal_threshold).astype(np.int32) \
         * layout.astype(np.int32)
+    fdm_mask_opt = apply_morph_open(fdm_mask_opt, layout, args.morph_kernel)
     actual_coverage = np.sum(fdm_mask_opt) / np.sum(layout)
 
     print(f"  Optimal threshold: {optimal_threshold:.6f}")
@@ -358,6 +371,7 @@ def main():
             E=args.E, nu=args.nu,
             x_domain=(args.x_min, args.x_max),
             y_domain=(args.y_min, args.y_max),
+            morph_kernel=args.morph_kernel,
         )
         t_router_end = time.perf_counter()
 
