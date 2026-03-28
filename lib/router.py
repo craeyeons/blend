@@ -35,6 +35,7 @@ Loss Function:
 """
 
 import numpy as np
+import cv2
 import tensorflow as tf
 
 # Configure TensorFlow GPU memory growth to avoid cuDNN issues
@@ -715,7 +716,7 @@ class RouterTrainer:
 
         return history
     
-    def predict(self, inputs, threshold=0.0):
+    def predict(self, inputs, threshold=0.0, layout=None, morph_kernel=5):
         """
         Get router prediction and binary mask.
 
@@ -725,6 +726,11 @@ class RouterTrainer:
             Router input of shape (1, H, W, 8)
         threshold : float
             Threshold for binary mask (default: 0.0, positive=CFD)
+        layout : np.ndarray, optional
+            Domain layout mask (1=fluid, 0=obstacle). If provided,
+            morphological opening is applied to smooth the mask.
+        morph_kernel : int
+            Kernel size for morphological opening (default: 5)
 
         Returns:
         --------
@@ -738,6 +744,14 @@ class RouterTrainer:
         r = r[0, :, :, 0].numpy()
 
         mask = (r >= threshold).astype(np.int32)
+
+        if layout is not None:
+            mask = mask * layout.astype(np.int32)
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (morph_kernel, morph_kernel))
+            mask = cv2.morphologyEx(
+                mask.astype(np.uint8), cv2.MORPH_OPEN, kernel
+            ).astype(np.int32) * layout.astype(np.int32)
 
         return r, mask
 

@@ -10,6 +10,7 @@ Usage:
 import argparse
 import os
 import numpy as np
+import cv2
 import tensorflow as tf
 
 gpus = tf.config.list_physical_devices('GPU')
@@ -39,8 +40,15 @@ from lib.router import (
 )
 
 
+def apply_morph_open(mask, layout, kernel_size):
+    """Apply morphological opening to smooth the binary mask."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    opened = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+    return opened.astype(np.int32) * layout.astype(np.int32)
+
+
 def plot_separation_at_threshold(r, X, Y, layout, threshold,
-                                  show_hole, save_path):
+                                  show_hole, save_path, morph_kernel=5):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # 1. Continuous output with threshold line
@@ -56,12 +64,14 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
     ax.set_title(f'Continuous (threshold={threshold:.2f})')
 
-    # 2. Binary mask
+    # 2. Binary mask (with morphological opening)
     ax = axes[1]
+    mask = (r >= threshold).astype(np.int32) * layout.astype(np.int32)
+    mask = apply_morph_open(mask, layout, morph_kernel)
     combined = np.zeros_like(r)
     combined[layout == 0] = 0
-    combined[(layout == 1) & (r < threshold)] = 1
-    combined[(layout == 1) & (r >= threshold)] = 2
+    combined[(layout == 1) & (mask == 0)] = 1
+    combined[(layout == 1) & (mask == 1)] = 2
     ax.contourf(X, Y, combined, levels=[-0.5, 0.5, 1.5, 2.5],
                 colors=['gray', 'blue', 'red'], alpha=0.7)
     legend_elements = [
@@ -73,7 +83,7 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     if show_hole:
         ax.add_patch(plt.Circle(show_hole[:2], show_hole[2], color='gray', fill=True))
     ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
-    fdm_frac = np.sum((r >= threshold) & (layout == 1)) / np.sum(layout == 1) * 100
+    fdm_frac = np.sum(mask) / np.sum(layout == 1) * 100
     ax.set_title(f'Binary (threshold={threshold:.2f}, FDM={fdm_frac:.1f}%)')
 
     plt.tight_layout()
@@ -112,6 +122,8 @@ def main():
     parser.add_argument('--nu', type=float, default=0.3)
     parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--base-filters', type=int, default=32)
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
 
     args = parser.parse_args()
 
@@ -196,7 +208,8 @@ def main():
 
     for t in thresholds:
         path = os.path.join(args.output_dir, f'threshold_{t:.4f}.png')
-        plot_separation_at_threshold(r, X, Y, layout, t, show_hole, path)
+        plot_separation_at_threshold(r, X, Y, layout, t, show_hole, path,
+                                     morph_kernel=args.morph_kernel)
 
     # Summary grid
     n_cols = 4
@@ -206,16 +219,18 @@ def main():
 
     for i, t in enumerate(thresholds):
         ax = axes[i]
+        mask = (r >= t).astype(np.int32) * layout.astype(np.int32)
+        mask = apply_morph_open(mask, layout, args.morph_kernel)
         combined = np.zeros_like(r)
         combined[layout == 0] = 0
-        combined[(layout == 1) & (r < t)] = 1
-        combined[(layout == 1) & (r >= t)] = 2
+        combined[(layout == 1) & (mask == 0)] = 1
+        combined[(layout == 1) & (mask == 1)] = 2
         ax.contourf(X, Y, combined, levels=[-0.5, 0.5, 1.5, 2.5],
                     colors=['gray', 'blue', 'red'], alpha=0.7)
         if show_hole:
             ax.add_patch(plt.Circle(show_hole[:2], show_hole[2], color='gray', fill=True))
         ax.set_aspect('equal')
-        fdm_frac = np.sum((r >= t) & (layout == 1)) / np.sum(layout == 1) * 100
+        fdm_frac = np.sum(mask) / np.sum(layout == 1) * 100
         ax.set_title(f't={t:.2f}, FDM={fdm_frac:.1f}%')
         ax.set_xticks([]); ax.set_yticks([])
 

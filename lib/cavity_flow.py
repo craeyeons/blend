@@ -236,9 +236,10 @@ class CavityFlowHybridSimulation(CavityFlowSimulation):
         v_pinn_jax = self.v_pinn_jax
         p_pinn_jax = self.p_pinn_jax
         cfd_boundary_jax = self.cfd_boundary_jax
-        
+        interface_jax = self.interface_jax
+
         apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
-        
+
         @jit
         def pressure_poisson_iteration_hybrid(p, rhs):
             """Single Jacobi iteration for pressure Poisson equation (hybrid version)"""
@@ -258,6 +259,8 @@ class CavityFlowHybridSimulation(CavityFlowSimulation):
             # Pin pressure at one point to prevent drift (pure Neumann problem)
             p_new = p_new - p_new[0, 0]
 
+            # At PINN-CFD interface: use PINN pressure as Dirichlet BC
+            p_new = jnp.where(interface_jax, p_pinn_jax, p_new)
             # In PINN region: use PINN pressure
             p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
             return p_new
@@ -603,9 +606,10 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
         v_pinn_jax = self.v_pinn_jax
         p_pinn_jax = self.p_pinn_jax
         cfd_boundary_jax = self.cfd_boundary_jax
-        
+        interface_jax = self.interface_jax
+
         apply_hybrid_bc = jit(self.apply_hybrid_boundary_conditions)
-        
+
         @jit
         def pressure_poisson_iteration_hybrid(p, rhs):
             """Single Jacobi iteration for pressure Poisson equation (hybrid version)"""
@@ -631,6 +635,8 @@ class CavityFlowDynamicHybridSimulation(CavityFlowSimulation):
             """Solve pressure Poisson equation with Jacobi iterations"""
             def body_fn(i, p):
                 p_new = pressure_poisson_iteration_hybrid(p, rhs)
+                # At PINN-CFD interface: use PINN pressure as Dirichlet BC
+                p_new = jnp.where(interface_jax, p_pinn_jax, p_new)
                 # Enforce PINN pressure in PINN region during iteration
                 p_new = jnp.where(mask_jax == 0, p_pinn_jax, p_new)
                 return p_new

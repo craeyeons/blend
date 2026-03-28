@@ -18,6 +18,7 @@ Usage:
 import argparse
 import os
 import time
+import cv2
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -209,10 +210,14 @@ def compute_hybrid_solution(pinn_model, router_output, layout, threshold, args):
     """
     Compute actual hybrid solution by running CFD in CFD regions with PINN boundary conditions.
     """
-    # Create binary mask from router output
+    # Create binary mask from router output with morphological opening
     cfd_mask = (router_output >= threshold).astype(np.int32)
     cfd_mask = cfd_mask * layout.astype(np.int32)
-    
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                       (args.morph_kernel, args.morph_kernel))
+    cfd_mask = cv2.morphologyEx(cfd_mask.astype(np.uint8), cv2.MORPH_OPEN,
+                                kernel).astype(np.int32) * layout.astype(np.int32)
+
     cfd_fraction = np.sum(cfd_mask) / np.sum(layout) * 100
     print(f"  CFD region: {cfd_fraction:.1f}%")
     print(f"  PINN region: {100 - cfd_fraction:.1f}%")
@@ -830,7 +835,9 @@ def main():
     # Output
     parser.add_argument('--output-dir', type=str, default='./metrics_output_cavity',
                         help='Directory to save output plots')
-    
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
+
     args = parser.parse_args()
     
     os.makedirs(args.output_dir, exist_ok=True)

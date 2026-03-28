@@ -11,6 +11,7 @@ Usage:
 import argparse
 import os
 import numpy as np
+import cv2
 import tensorflow as tf
 
 # Configure TensorFlow GPU memory growth
@@ -37,9 +38,16 @@ from lib.router import (
 from cylinder_network import Network as CylinderNetwork
 
 
-def plot_separation_at_threshold(r, X, Y, layout, threshold, 
+def apply_morph_open(mask, layout, kernel_size):
+    """Apply morphological opening to smooth the binary mask."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    opened = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+    return opened.astype(np.int32) * layout.astype(np.int32)
+
+
+def plot_separation_at_threshold(r, X, Y, layout, threshold,
                                   cylinder_center, cylinder_radius,
-                                  save_path):
+                                  save_path, morph_kernel=5):
     """
     Plot the router separation at a specific threshold.
     
@@ -80,20 +88,20 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     ax.set_ylabel('y')
     ax.set_title(f'Continuous Output (threshold={threshold:.2f} shown as green line)')
     
-    # 2. Binary mask at threshold
+    # 2. Binary mask at threshold (with morphological opening)
     ax = axes[1]
-    mask = (r >= threshold).astype(np.float32)
-    mask_masked = np.ma.masked_where(layout == 0, mask)
-    
-    # Create colored regions
+    mask = (r >= threshold).astype(np.int32) * layout.astype(np.int32)
+    mask = apply_morph_open(mask, layout, morph_kernel)
+
+    # Create colored regions from smoothed mask
     combined = np.zeros_like(r)
     combined[layout == 0] = 0  # Obstacle
-    combined[(layout == 1) & (r < threshold)] = 1  # PINN region
-    combined[(layout == 1) & (r >= threshold)] = 2  # CFD region
-    
+    combined[(layout == 1) & (mask == 0)] = 1  # PINN region
+    combined[(layout == 1) & (mask == 1)] = 2  # CFD region
+
     cf = ax.contourf(X, Y, combined, levels=[-0.5, 0.5, 1.5, 2.5],
                      colors=['gray', 'blue', 'red'], alpha=0.7)
-    
+
     # Add legend
     from matplotlib.patches import Patch
     legend_elements = [
@@ -102,16 +110,16 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
         Patch(facecolor='red', alpha=0.7, label='CFD')
     ]
     ax.legend(handles=legend_elements, loc='upper right')
-    
+
     circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
     ax.add_patch(circle)
     ax.set_aspect('equal')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    
+
     # Compute CFD percentage
     fluid_mask = layout == 1
-    cfd_fraction = np.sum((r >= threshold) & fluid_mask) / np.sum(fluid_mask) * 100
+    cfd_fraction = np.sum(mask) / np.sum(fluid_mask) * 100
     ax.set_title(f'Binary Mask (threshold={threshold:.2f}, CFD={cfd_fraction:.1f}%)')
     
     plt.tight_layout()
@@ -161,7 +169,9 @@ def main():
                         help='Sigmoid temperature for router (should match training)')
     parser.add_argument('--base-filters', type=int, default=32,
                         help='Base filters in router CNN')
-    
+    parser.add_argument('--morph-kernel', type=int, default=5,
+                        help='Kernel size for morphological opening of mask')
+
     args = parser.parse_args()
     
     # Create output directory
@@ -248,7 +258,7 @@ def main():
         plot_separation_at_threshold(
             r, X, Y, layout, threshold,
             cylinder_center, args.cylinder_radius,
-            save_path
+            save_path, morph_kernel=args.morph_kernel
         )
     
     # Also save a summary grid with all thresholds
@@ -258,22 +268,24 @@ def main():
     
     for i, threshold in enumerate(thresholds):
         ax = axes[i]
-        
-        # Binary mask
+
+        # Binary mask with morphological opening
+        mask = (r >= threshold).astype(np.int32) * layout.astype(np.int32)
+        mask = apply_morph_open(mask, layout, args.morph_kernel)
         combined = np.zeros_like(r)
         combined[layout == 0] = 0
-        combined[(layout == 1) & (r < threshold)] = 1
-        combined[(layout == 1) & (r >= threshold)] = 2
-        
+        combined[(layout == 1) & (mask == 0)] = 1
+        combined[(layout == 1) & (mask == 1)] = 2
+
         ax.contourf(X, Y, combined, levels=[-0.5, 0.5, 1.5, 2.5],
                    colors=['gray', 'blue', 'red'], alpha=0.7)
-        circle = plt.Circle(cylinder_center, args.cylinder_radius, 
+        circle = plt.Circle(cylinder_center, args.cylinder_radius,
                            color='gray', fill=True)
         ax.add_patch(circle)
         ax.set_aspect('equal')
-        
+
         fluid_mask = layout == 1
-        cfd_frac = np.sum((r >= threshold) & fluid_mask) / np.sum(fluid_mask) * 100
+        cfd_frac = np.sum(mask) / np.sum(fluid_mask) * 100
         ax.set_title(f't={threshold:.2f}, CFD={cfd_frac:.1f}%')
         ax.set_xticks([])
         ax.set_yticks([])
