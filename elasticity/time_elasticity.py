@@ -102,6 +102,18 @@ def router_predict(router, pinn_ux, pinn_uy, pinn_vm, layout,
     return router_output, mask
 
 
+def threshold_for_coverage(router_output, layout, target_cov):
+    """Return the threshold that achieves approximately target_cov FDM coverage."""
+    fluid_logits = router_output[layout > 0]
+    n_fluid = len(fluid_logits)
+    sorted_logits = np.sort(fluid_logits)[::-1]
+    n_fdm = int(target_cov * n_fluid)
+    n_fdm = max(0, min(n_fdm, n_fluid - 1))
+    if n_fdm == 0:
+        return sorted_logits[0] + 1.0
+    return sorted_logits[n_fdm - 1]
+
+
 def find_optimal_threshold(residual_field, router_output, layout, beta, n_points=500):
     """Find optimal threshold by sweeping thresholds on router logits."""
     fluid_mask = layout > 0
@@ -340,9 +352,6 @@ def main():
         fdm_times.append(t1 - t0)
         print(f"  FDM run {i + 1}/{N_RUNS}: {fdm_times[-1]:.4f} s")
 
-    # Keep last FDM as ground truth
-    disp_fdm = np.sqrt(ux_fdm ** 2 + uy_fdm ** 2)
-
     # ================================================================
     # TIME HYBRID (full pipeline: PINN + router + hybrid FDM)
     # ================================================================
@@ -403,6 +412,88 @@ def main():
         print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f}s "
               f"(PINN: {pinn_times[-1]:.4f}s, Router: {router_times[-1]:.4f}s, "
               f"Solve: {solve_times[-1]:.4f}s)")
+
+    # Keep last FDM as ground truth
+    fluid_mask = layout > 0
+    disp_fdm = np.sqrt(ux_fdm ** 2 + uy_fdm ** 2)
+
+    # ================================================================
+    # COVERAGE SWEEP (single run at each 10% increment)
+    # ================================================================
+    print(f"\n--- Coverage sweep (10% increments, 1 run each) ---")
+    target_coverages = np.arange(0.1, 1.0, 0.1)  # 10%, 20%, ..., 90%
+
+    sweep_cov = [0.0]  # start with PINN-only
+    sweep_time = [0.0]  # PINN inference is ~instant relative to FDM
+    disp_pinn = np.sqrt(pinn_ux ** 2 + pinn_uy ** 2)
+    rmse_pinn = np.sqrt(np.mean((disp_pinn[fluid_mask] - disp_fdm[fluid_mask]) ** 2))
+    sweep_rmse = [rmse_pinn]
+
+    for target_cov in target_coverages:
+        thresh = threshold_for_coverage(router_output, layout, target_cov)
+        mask = (router_output >= thresh).astype(np.int32) * layout.astype(np.int32)
+        mask = apply_morph_open(mask, layout, args.morph_kernel)
+        cov = np.sum(mask) / np.sum(layout)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            solver = ElasticitySolver(
+                E=args.E, nu=args.nu,
+                x_domain=(args.x_min, args.x_max),
+                y_domain=(args.y_min, args.y_max),
+                Nx=args.nx, Ny=args.ny,
+                max_iter=args.max_iter, tol=args.tol,
+            )
+            t0 = time.perf_counter()
+            ux_h, uy_h, _, _, _ = solver.solve(
+                layout, disp_bc_mask, bc_ux, bc_uy,
+                trac_bc_mask, bc_tx, bc_ty,
+                fdm_mask=mask,
+                initial_ux=pinn_ux, initial_uy=pinn_uy,
+            )
+            t1 = time.perf_counter()
+        elapsed = t1 - t0
+
+        disp_hyb = np.sqrt(np.array(ux_h) ** 2 + np.array(uy_h) ** 2)
+        rmse = np.sqrt(np.mean((disp_hyb[fluid_mask] - disp_fdm[fluid_mask]) ** 2))
+
+        sweep_cov.append(cov)
+        sweep_time.append(elapsed)
+        sweep_rmse.append(rmse)
+        print(f"  cov={cov*100:5.1f}%  time={elapsed:.4f}s  RMSE={rmse:.6f}")
+
+    # Add FDM-only (100% coverage)
+    sweep_cov.append(1.0)
+    sweep_time.append(np.mean(fdm_times))
+    sweep_rmse.append(0.0)
+
+    sweep_cov = np.array(sweep_cov)
+    sweep_time = np.array(sweep_time)
+    sweep_rmse = np.array(sweep_rmse)
+
+    # ================================================================
+    # PLOT: Time vs RMSE
+    # ================================================================
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(sweep_time, sweep_rmse, 'o-', color='tab:blue', linewidth=2, markersize=6)
+
+    # Annotate each point with coverage %
+    for i, (t, r, c) in enumerate(zip(sweep_time, sweep_rmse, sweep_cov)):
+        ax.annotate(f'{c*100:.0f}%', (t, r), textcoords='offset points',
+                    xytext=(5, 5), fontsize=7)
+
+    ax.set_xlabel('Solve Time (s)')
+    ax.set_ylabel('RMSE (vs FDM)')
+    ax.set_title(f'Time vs RMSE at Coverage Increments — {args.problem}')
+    fig.tight_layout()
+
+    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.png')
+    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"\n  Saved plot to {plot_path}")
+
+    # Save sweep data
+    np.savez(os.path.join(args.output_dir, 'timing_sweep.npz'),
+             coverage=sweep_cov, time=sweep_time, rmse=sweep_rmse)
 
     # ================================================================
     # RESULTS
