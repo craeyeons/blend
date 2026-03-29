@@ -325,8 +325,8 @@ def main():
         print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f} s")
 
     # Keep last CFD solution as ground truth for RMSE
-    cfd_vel_mag = np.sqrt(u_cfd**2 + v_cfd**2)
     fluid_mask = layout > 0
+    p_range = np.max(np.abs(p_cfd[fluid_mask])) + 1e-10
 
     # ================================================================
     # COVERAGE SWEEP (single run at each 10% increment)
@@ -336,8 +336,9 @@ def main():
 
     sweep_cov = [0.0]  # start with PINN-only
     sweep_time = [0.0]  # PINN inference is ~instant relative to CFD
-    pinn_vel_mag = np.sqrt(pinn_u**2 + pinn_v**2)
-    rmse_pinn = np.sqrt(np.mean((pinn_vel_mag[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+    error_pinn = ((pinn_u - u_cfd)**2 + (pinn_v - v_cfd)**2
+                  + ((pinn_p - p_cfd) / p_range)**2)
+    rmse_pinn = np.sqrt(np.mean(error_pinn[fluid_mask]))
     sweep_rmse = [rmse_pinn]
 
     for target_cov in target_coverages:
@@ -358,9 +359,10 @@ def main():
             t1 = time.perf_counter()
         elapsed = t1 - t0
 
-        uh, vh = np.array(uh), np.array(vh)
-        hyb_vel = np.sqrt(uh**2 + vh**2)
-        rmse = np.sqrt(np.mean((hyb_vel[fluid_mask] - cfd_vel_mag[fluid_mask])**2))
+        uh, vh, ph = np.array(uh), np.array(vh), np.array(ph)
+        error_hyb = ((uh - u_cfd)**2 + (vh - v_cfd)**2
+                     + ((ph - p_cfd) / p_range)**2)
+        rmse = np.sqrt(np.mean(error_hyb[fluid_mask]))
 
         sweep_cov.append(cov)
         sweep_time.append(elapsed)
