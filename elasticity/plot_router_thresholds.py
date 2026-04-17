@@ -118,6 +118,8 @@ def main():
     parser.add_argument('--applied-stress', type=float, default=10.0)
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
+    parser.add_argument('--fillet-radius', type=float, default=0.04,
+                        help='Fillet radius at L-bracket re-entrant corner (0=sharp)')
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
     parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
@@ -145,7 +147,8 @@ def main():
             Nx=args.nx, Ny=args.ny,
             x_domain=(args.x_min, args.x_max), y_domain=(args.y_min, args.y_max),
             corner_x=args.corner_x, corner_y=args.corner_y,
-            applied_stress=args.applied_stress)
+            applied_stress=args.applied_stress,
+            fillet_radius=args.fillet_radius)
         show_hole = None
 
     # PINN

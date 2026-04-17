@@ -186,6 +186,8 @@ def main():
     # L-bracket
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
+    parser.add_argument('--fillet-radius', type=float, default=0.04,
+                        help='Fillet radius at L-bracket re-entrant corner (0=sharp)')
 
     # Material
     parser.add_argument('--E', type=float, default=1.0)
@@ -241,6 +243,7 @@ def main():
                 corner_x=args.corner_x,
                 corner_y=args.corner_y,
                 applied_stress=args.applied_stress,
+                fillet_radius=args.fillet_radius,
             )
 
     # PINN

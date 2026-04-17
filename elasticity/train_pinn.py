@@ -72,6 +72,7 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
                 corner_x=args.corner_x,
                 corner_y=args.corner_y,
                 applied_stress=args.applied_stress,
+                fillet_radius=args.fillet_radius,
             )
     else:
         raise ValueError(f"Unknown problem: {problem}")
@@ -148,6 +149,7 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
         x_min, x_max = args.x_min, args.x_max
         y_max = args.y_max
         cx, cy = args.corner_x, args.corner_y
+        R = getattr(args, 'fillet_radius', 0.0)
 
         on_right_lower = (np.abs(x - x_max) < eps_x) & (y <= cy + eps_y)
         on_left = np.abs(x - x_min) < eps_x
@@ -155,11 +157,34 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
         on_inner_h = (np.abs(y - cy) < eps_y) & (x >= cx - eps_x)
         on_inner_v = (np.abs(x - cx) < eps_x) & (y >= cy - eps_y)
 
+        # Fillet arc: points near the quarter-circle centered at (cx-R, cy+R)
+        if R > 0:
+            fcx, fcy = cx - R, cy + R
+            dist_fc = np.sqrt((x - fcx) ** 2 + (y - fcy) ** 2)
+            on_fillet = ((x >= cx - R - eps_x) & (x <= cx + eps_x) &
+                         (y >= cy - eps_y) & (y <= cy + R + eps_y) &
+                         (np.abs(dist_fc - R) < max(eps_x, eps_y) * 1.5))
+            # Exclude points already matched to straight edges
+            on_fillet = on_fillet & (~on_inner_h) & (~on_inner_v)
+            # Also trim the straight inner edges at the fillet tangent points
+            on_inner_h = on_inner_h & (x >= cx + eps_x)
+            on_inner_v = on_inner_v & (y >= cy + R - eps_y)
+        else:
+            on_fillet = np.zeros_like(x, dtype=bool)
+
         normals[on_right_lower, 0] = 1.0
         normals[on_left, 0] = -1.0
         normals[on_top, 1] = 1.0
         normals[on_inner_h, 1] = 1.0
         normals[on_inner_v, 0] = 1.0
+
+        # Fillet arc: outward normal points away from arc center
+        if np.any(on_fillet):
+            vx = x[on_fillet] - (cx - R)
+            vy = y[on_fillet] - (cy + R)
+            vn = np.sqrt(vx ** 2 + vy ** 2) + 1e-12
+            normals[on_fillet, 0] = vx / vn
+            normals[on_fillet, 1] = vy / vn
 
         unclassified = np.linalg.norm(normals, axis=1) < 1e-8
         normals[unclassified, 1] = 1.0
@@ -397,6 +422,8 @@ def main():
     # L-bracket parameters
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
+    parser.add_argument('--fillet-radius', type=float, default=0.04,
+                        help='Fillet radius at L-bracket re-entrant corner (0=sharp)')
 
     # Loss weights
     parser.add_argument('--w-pde', type=float, default=1.0)

@@ -107,7 +107,7 @@ def create_plate_with_hole(Nx=200, Ny=200,
 def create_l_bracket(Nx=200, Ny=200,
                      x_domain=(0.0, 2.0), y_domain=(0.0, 2.0),
                      corner_x=1.0, corner_y=1.0,
-                     applied_stress=10.0):
+                     applied_stress=10.0, fillet_radius=0.0):
     """
     L-shaped bracket under load.
 
@@ -115,10 +115,13 @@ def create_l_bracket(Nx=200, Ny=200,
         Full square domain [0, 2] x [0, 2] with upper-right quadrant
         [corner_x, x_max] x [corner_y, y_max] removed.
 
+    If fillet_radius > 0, the re-entrant corner is replaced by a quarter-circle
+    arc of that radius, eliminating the stress singularity.
+
     Boundary conditions:
         - Bottom edge (y=0): fully fixed (ux=0, uy=0)
         - Top edge of upper arm (y=y_max, x < corner_x): traction tx = -applied_stress (pull left)
-        - All other outer edges and re-entrant corner: traction-free
+        - All other outer edges, fillet arc, and re-entrant edges: traction-free
 
     Parameters
     ----------
@@ -130,6 +133,8 @@ def create_l_bracket(Nx=200, Ny=200,
         Coordinates of the re-entrant corner.
     applied_stress : float
         Applied traction on the loaded edge.
+    fillet_radius : float
+        Radius of the fillet at the re-entrant corner. 0 = sharp corner.
 
     Returns
     -------
@@ -137,6 +142,7 @@ def create_l_bracket(Nx=200, Ny=200,
     """
     x_min, x_max = x_domain
     y_min, y_max = y_domain
+    R = fillet_radius
 
     x = np.linspace(x_min, x_max, Nx)
     y = np.linspace(y_min, y_max, Ny)
@@ -145,6 +151,18 @@ def create_l_bracket(Nx=200, Ny=200,
     # Layout: L-shape (remove upper-right block)
     layout = np.ones((Ny, Nx), dtype=np.float32)
     layout[(Y > corner_y) & (X > corner_x)] = 0.0
+
+    # Fillet: remove material in the corner zone outside the arc.
+    # Arc center is at (corner_x - R, corner_y + R); the arc connects
+    # (corner_x - R, corner_y) on the horizontal edge to
+    # (corner_x, corner_y + R) on the vertical edge.
+    if R > 0:
+        fillet_cx = corner_x - R
+        fillet_cy = corner_y + R
+        in_fillet_zone = ((X >= corner_x - R) & (X <= corner_x) &
+                          (Y >= corner_y) & (Y <= corner_y + R))
+        dist_to_fc = np.sqrt((X - fillet_cx) ** 2 + (Y - fillet_cy) ** 2)
+        layout[in_fillet_zone & (dist_to_fc > R)] = 0.0
 
     disp_bc_mask = np.zeros((Ny, Nx), dtype=np.float32)
     trac_bc_mask = np.zeros((Ny, Nx), dtype=np.float32)
@@ -172,15 +190,20 @@ def create_l_bracket(Nx=200, Ny=200,
     bc_tx[top_edge & (layout > 0)] = -applied_stress
 
     # Inner edges of L (re-entrant corner region): traction-free
-    # Horizontal inner edge: y ~ corner_y, x > corner_x
+    # Horizontal inner edge: y ~ corner_y, x > corner_x  (stops at fillet tangent)
     h_inner = (np.abs(Y - corner_y) < (y[1] - y[0]) / 2) & (X >= corner_x)
     trac_bc_mask[h_inner & (layout > 0)] = 1.0
-    # Vertical inner edge: x ~ corner_x, y > corner_y
+    # Vertical inner edge: x ~ corner_x, y > corner_y  (stops at fillet tangent)
     v_inner = (np.abs(X - corner_x) < (x[1] - x[0]) / 2) & (Y >= corner_y)
     trac_bc_mask[v_inner & (layout > 0)] = 1.0
 
-    # Top of right arm (y ~ corner_y where layout transitions)
-    # Already covered above
+    # Fillet arc boundary: traction-free
+    if R > 0:
+        void_mask = layout < 0.5
+        fillet_boundary = ndimage.binary_dilation(void_mask) & ~void_mask & in_fillet_zone
+        trac_bc_mask[fillet_boundary] = 1.0
+        bc_tx[fillet_boundary] = 0.0
+        bc_ty[fillet_boundary] = 0.0
 
     # Don't double-count: displacement BC takes priority
     trac_bc_mask[disp_bc_mask > 0] = 0.0
