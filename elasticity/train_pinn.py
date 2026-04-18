@@ -427,7 +427,7 @@ def main():
 
     # Loss weights
     parser.add_argument('--w-pde', type=float, default=1.0)
-    parser.add_argument('--w-disp', type=float, default=1.0)
+    parser.add_argument('--w-disp', type=float, default=10.0)
     parser.add_argument('--w-trac', type=float, default=1.0)
 
     args = parser.parse_args()
