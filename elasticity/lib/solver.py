@@ -269,22 +269,73 @@ class ElasticitySolver:
             has_void_below = (1 - lp[:-2, 1:-1])
             return jnp.clip(has_void_above + has_void_below, 0.0, 1.0)
 
+        def _estimate_dudx(field, layout):
+            """Central-difference ∂field/∂x at each point."""
+            fp = _pad_zeros(field)
+            lp = _pad_zeros(layout)
+            f_r = fp[1:-1, 2:]
+            f_l = fp[1:-1, :-2]
+            w_r = lp[1:-1, 2:]
+            w_l = lp[1:-1, :-2]
+            # One-sided where only one neighbour exists
+            both = w_r * w_l
+            only_r = w_r * (1 - w_l)
+            only_l = w_l * (1 - w_r)
+            grad = jnp.where(both > 0, (f_r - f_l) / (2 * dx),
+                   jnp.where(only_r > 0, (f_r - field) / dx,
+                   jnp.where(only_l > 0, (field - f_l) / dx,
+                   0.0)))
+            return grad
+
+        def _estimate_dudy(field, layout):
+            """Central-difference ∂field/∂y at each point."""
+            fp = _pad_zeros(field)
+            lp = _pad_zeros(layout)
+            f_u = fp[2:, 1:-1]
+            f_d = fp[:-2, 1:-1]
+            w_u = lp[2:, 1:-1]
+            w_d = lp[:-2, 1:-1]
+            both = w_u * w_d
+            only_u = w_u * (1 - w_d)
+            only_d = w_d * (1 - w_u)
+            grad = jnp.where(both > 0, (f_u - f_d) / (2 * dy),
+                   jnp.where(only_u > 0, (f_u - field) / dy,
+                   jnp.where(only_d > 0, (field - f_d) / dy,
+                   0.0)))
+            return grad
+
         def _apply_trac_ux(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for ux at traction boundaries."""
+            """Neumann BC for ux at traction boundaries (with cross-coupling)."""
             avg = _interior_avg(ux, tmask, layout)
             is_horiz = _boundary_is_horizontal(tmask, layout)
-            # Vertical face: ux_ghost = avg + tx*dx/C11
-            # Horizontal face: ux_ghost = avg + tx*dy/C66  (from sigma_xy = tx)
-            offset = (1 - is_horiz) * tx * dx / C11 + is_horiz * tx * dy / C66
+            duy_dy = _estimate_dudy(uy, layout)
+            duy_dx = _estimate_dudx(uy, layout)
+            # Vertical face:  σ_xx = C11·∂ux/∂x + C12·∂uy/∂y = tx
+            #   → ∂ux/∂x = (tx - C12·∂uy/∂y) / C11
+            #   → ux_ghost = avg + (tx - C12·∂uy/∂y) * dx / C11
+            # Horizontal face: σ_xy = C66·(∂ux/∂y + ∂uy/∂x) = tx
+            #   → ∂ux/∂y = tx/C66 - ∂uy/∂x
+            #   → ux_ghost = avg + (tx/C66 - ∂uy/∂x) * dy
+            offset_v = (tx - C12 * duy_dy) * dx / C11
+            offset_h = (tx / C66 - duy_dx) * dy
+            offset = (1 - is_horiz) * offset_v + is_horiz * offset_h
             return avg + offset
 
         def _apply_trac_uy(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for uy at traction boundaries."""
+            """Neumann BC for uy at traction boundaries (with cross-coupling)."""
             avg = _interior_avg(uy, tmask, layout)
             is_horiz = _boundary_is_horizontal(tmask, layout)
-            # Horizontal face: uy_ghost = avg + ty*dy/C11
-            # Vertical face: uy_ghost = avg + ty*dx/C66  (from sigma_xy = ty)
-            offset = is_horiz * ty * dy / C11 + (1 - is_horiz) * ty * dx / C66
+            dux_dx = _estimate_dudx(ux, layout)
+            dux_dy = _estimate_dudy(ux, layout)
+            # Horizontal face: σ_yy = C12·∂ux/∂x + C11·∂uy/∂y = ty
+            #   → ∂uy/∂y = (ty - C12·∂ux/∂x) / C11
+            #   → uy_ghost = avg + (ty - C12·∂ux/∂x) * dy / C11
+            # Vertical face: σ_xy = C66·(∂ux/∂y + ∂uy/∂x) = ty
+            #   → ∂uy/∂x = ty/C66 - ∂ux/∂y
+            #   → uy_ghost = avg + (ty/C66 - ∂ux/∂y) * dx
+            offset_h = (ty - C12 * dux_dx) * dy / C11
+            offset_v = (ty / C66 - dux_dy) * dx
+            offset = is_horiz * offset_h + (1 - is_horiz) * offset_v
             return avg + offset
 
         self._apply_traction_ux = jit(_apply_trac_ux)
