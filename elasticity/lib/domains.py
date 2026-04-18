@@ -152,17 +152,18 @@ def create_l_bracket(Nx=200, Ny=200,
     layout = np.ones((Ny, Nx), dtype=np.float32)
     layout[(Y > corner_y) & (X > corner_x)] = 0.0
 
-    # Fillet: remove material in the corner zone outside the arc.
-    # Arc center is at (corner_x - R, corner_y + R); the arc connects
-    # (corner_x - R, corner_y) on the horizontal edge to
-    # (corner_x, corner_y + R) on the vertical edge.
+    # Fillet: remove material near the re-entrant corner inside the arc.
+    # Arc center is at (corner_x + R, corner_y + R) in the void quadrant;
+    # the arc connects (corner_x + R, corner_y) on the horizontal inner
+    # edge to (corner_x, corner_y + R) on the vertical inner edge.
+    # Material points closer than R to the center are scooped out.
     if R > 0:
-        fillet_cx = corner_x - R
+        fillet_cx = corner_x + R
         fillet_cy = corner_y + R
-        in_fillet_zone = ((X >= corner_x - R) & (X <= corner_x) &
+        in_fillet_zone = ((X >= corner_x) & (X <= corner_x + R) &
                           (Y >= corner_y) & (Y <= corner_y + R))
         dist_to_fc = np.sqrt((X - fillet_cx) ** 2 + (Y - fillet_cy) ** 2)
-        layout[in_fillet_zone & (dist_to_fc > R)] = 0.0
+        layout[in_fillet_zone & (dist_to_fc < R)] = 0.0
 
     disp_bc_mask = np.zeros((Ny, Nx), dtype=np.float32)
     trac_bc_mask = np.zeros((Ny, Nx), dtype=np.float32)
