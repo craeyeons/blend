@@ -157,7 +157,8 @@ def main():
     input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
     pinn_model = network.build(num_inputs=2, layers=args.layers,
                                activation='tanh', num_outputs=2,
-                               input_range=input_range)
+                               input_range=input_range,
+                               hard_bc=args.problem)
     pinn_model.load_weights(args.pinn_path)
 
     xy = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)

@@ -117,7 +117,8 @@ def main():
     input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
     pinn_model = network.build(num_inputs=2, layers=args.layers,
                                activation='tanh', num_outputs=2,
-                               input_range=input_range)
+                               input_range=input_range,
+                               hard_bc=args.problem)
     try:
         pinn_model.load_weights(args.model_path)
         print(f"  Loaded: {args.model_path}")

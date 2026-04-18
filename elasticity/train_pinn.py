@@ -429,6 +429,8 @@ def main():
     parser.add_argument('--w-pde', type=float, default=1.0)
     parser.add_argument('--w-disp', type=float, default=10.0)
     parser.add_argument('--w-trac', type=float, default=1.0)
+    parser.add_argument('--no-hard-bc', action='store_true',
+                        help='Disable hard displacement BC enforcement')
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -444,6 +446,7 @@ def main():
 
     # Build model
     input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+    hard_bc = args.problem if not args.no_hard_bc else None
     network = Network()
     model = network.build(
         num_inputs=2,
@@ -451,6 +454,7 @@ def main():
         activation=args.activation,
         num_outputs=2,
         input_range=input_range,
+        hard_bc=hard_bc,
     )
     model.summary()
 
@@ -461,10 +465,11 @@ def main():
     print(f"  Disp BC points: {len(data[1])}")
     print(f"  Trac BC points: {len(data[3])}")
 
-    # Train
+    # Train — when hard BCs are active, displacement BC is exact; zero its weight
+    w_disp = 0.0 if hard_bc else args.w_disp
     trainer = ElasticityPINNTrainer(
         model, E=args.E, nu=args.nu, lr=args.lr, epochs=args.epochs,
-        w_pde=args.w_pde, w_disp=args.w_disp, w_trac=args.w_trac,
+        w_pde=args.w_pde, w_disp=w_disp, w_trac=args.w_trac,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
     )
 

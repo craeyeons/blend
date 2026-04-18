@@ -30,7 +30,7 @@ class Network:
 
     def build(self, num_inputs=2, layers=[64, 64, 64, 64],
               activation='tanh', num_outputs=2,
-              input_range=None):
+              input_range=None, hard_bc=None):
         """
         Build a PINN model for static linear elasticity.
 
@@ -47,6 +47,11 @@ class Network:
         input_range : list of (min, max) tuples, optional
             Per-input ranges for normalization to [-1, 1].
             E.g. [(0, 2), (0, 2)] for x in [0,2], y in [0,2].
+        hard_bc : str, optional
+            Hard displacement BC mode baked into the network output.
+            'l_bracket'       – bottom edge fixed: u *= (y - y_min)
+            'plate_with_hole' – rollers: ux *= (x - x_min), uy *= (y - y_min)
+            None              – no hard BC (soft penalty only)
 
         Returns
         -------
@@ -70,4 +75,23 @@ class Network:
         outputs = tf.keras.layers.Dense(
             num_outputs, kernel_initializer='glorot_normal'
         )(x)
+
+        # Hard displacement BC: multiply output by distance-to-boundary
+        # so the prescribed displacements are satisfied exactly.
+        if hard_bc == 'l_bracket':
+            # Bottom edge (y = y_min) fully fixed: u(x, y_min) = 0
+            y_min = input_range[1][0] if input_range else 0.0
+            dist = inputs[:, 1:2] - y_min          # (y - y_min), zero on bottom
+            outputs = outputs * dist
+        elif hard_bc == 'plate_with_hole':
+            # Left edge roller: ux(x_min, y) = 0
+            # Bottom edge roller: uy(x, y_min) = 0
+            x_min = input_range[0][0] if input_range else -2.0
+            y_min = input_range[1][0] if input_range else -2.0
+            dist_x = inputs[:, 0:1] - x_min        # zero on left edge
+            dist_y = inputs[:, 1:2] - y_min        # zero on bottom edge
+            ux = outputs[:, 0:1] * dist_x
+            uy = outputs[:, 1:2] * dist_y
+            outputs = tf.concat([ux, uy], axis=1)
+
         return tf.keras.models.Model(inputs=inputs, outputs=outputs)
