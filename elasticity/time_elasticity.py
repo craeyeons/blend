@@ -35,6 +35,7 @@ plt.style.use(['science', 'no-latex'])
 from lib.network import Network
 from lib.domains import create_plate_with_hole, create_l_bracket
 from lib.solver import ElasticitySolver
+from lib.solver import compute_stress_field
 from lib.router import (
     RouterCNN,
     PINNResidualComputer,
@@ -53,23 +54,9 @@ def pinn_predict(pinn_model, X, Y, layout, E=1.0, nu=0.3):
 
     dx = (X[0, -1] - X[0, 0]) / (X.shape[1] - 1)
     dy = (Y[-1, 0] - Y[0, 0]) / (Y.shape[0] - 1)
-    C11 = E / (1.0 - nu ** 2)
-    C12 = nu * E / (1.0 - nu ** 2)
-    C66 = E / (2.0 * (1.0 + nu))
-
-    exx = np.zeros_like(pinn_ux)
-    eyy = np.zeros_like(pinn_uy)
-    exy = np.zeros_like(pinn_ux)
-    exx[1:-1, 1:-1] = (pinn_ux[1:-1, 2:] - pinn_ux[1:-1, :-2]) / (2 * dx)
-    eyy[1:-1, 1:-1] = (pinn_uy[2:, 1:-1] - pinn_uy[:-2, 1:-1]) / (2 * dy)
-    exy[1:-1, 1:-1] = 0.5 * (
-        (pinn_ux[2:, 1:-1] - pinn_ux[:-2, 1:-1]) / (2 * dy)
-        + (pinn_uy[1:-1, 2:] - pinn_uy[1:-1, :-2]) / (2 * dx)
-    )
-    sxx = C11 * exx + C12 * eyy
-    syy = C12 * exx + C11 * eyy
-    sxy = 2 * C66 * exy
-    pinn_vm = np.sqrt(sxx ** 2 - sxx * syy + syy ** 2 + 3 * sxy ** 2).astype(np.float32) * layout
+    _, _, _, pinn_vm = compute_stress_field(
+        pinn_ux, pinn_uy, layout, dx, dy, E=E, nu=nu)
+    pinn_vm = pinn_vm.astype(np.float32) * layout
 
     return pinn_ux, pinn_uy, pinn_vm
 

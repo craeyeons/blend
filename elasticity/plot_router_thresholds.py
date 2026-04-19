@@ -173,20 +173,10 @@ def main():
     # Von Mises from PINN
     dx = (args.x_max - args.x_min) / (args.nx - 1)
     dy = (args.y_max - args.y_min) / (args.ny - 1)
-    C11 = args.E / (1.0 - args.nu ** 2)
-    C12 = args.nu * args.E / (1.0 - args.nu ** 2)
-    C66 = args.E / (2.0 * (1.0 + args.nu))
-    exx = np.zeros_like(pinn_ux)
-    eyy = np.zeros_like(pinn_uy)
-    exy = np.zeros_like(pinn_ux)
-    exx[1:-1, 1:-1] = (pinn_ux[1:-1, 2:] - pinn_ux[1:-1, :-2]) / (2 * dx)
-    eyy[1:-1, 1:-1] = (pinn_uy[2:, 1:-1] - pinn_uy[:-2, 1:-1]) / (2 * dy)
-    exy[1:-1, 1:-1] = 0.5 * ((pinn_ux[2:, 1:-1] - pinn_ux[:-2, 1:-1]) / (2 * dy)
-                               + (pinn_uy[1:-1, 2:] - pinn_uy[1:-1, :-2]) / (2 * dx))
-    sx = C11 * exx + C12 * eyy
-    sy = C12 * exx + C11 * eyy
-    sxy_p = 2 * C66 * exy
-    pinn_vm = np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy_p ** 2).astype(np.float32) * layout
+    from lib.solver import compute_stress_field
+    _, _, _, pinn_vm = compute_stress_field(
+        pinn_ux, pinn_uy, layout, dx, dy, E=args.E, nu=args.nu)
+    pinn_vm = pinn_vm.astype(np.float32) * layout
 
     bc_error = compute_bc_error_field(dbc, bux, buy, pinn_ux, pinn_uy, layout)
     error_transport = solve_error_transport(

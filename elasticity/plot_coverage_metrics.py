@@ -481,20 +481,10 @@ def main():
     # Compute PINN von Mises for input channel
     dx = (args.x_max - args.x_min) / (args.nx - 1)
     dy = (args.y_max - args.y_min) / (args.ny - 1)
-    C11 = args.E / (1.0 - args.nu ** 2)
-    C12 = args.nu * args.E / (1.0 - args.nu ** 2)
-    C66 = args.E / (2.0 * (1.0 + args.nu))
-    exx = np.zeros_like(ux_pinn)
-    eyy = np.zeros_like(uy_pinn)
-    exy = np.zeros_like(ux_pinn)
-    exx[1:-1, 1:-1] = (ux_pinn[1:-1, 2:] - ux_pinn[1:-1, :-2]) / (2 * dx)
-    eyy[1:-1, 1:-1] = (uy_pinn[2:, 1:-1] - uy_pinn[:-2, 1:-1]) / (2 * dy)
-    exy[1:-1, 1:-1] = 0.5 * ((ux_pinn[2:, 1:-1] - ux_pinn[:-2, 1:-1]) / (2 * dy)
-                               + (uy_pinn[1:-1, 2:] - uy_pinn[1:-1, :-2]) / (2 * dx))
-    sx = C11 * exx + C12 * eyy
-    sy = C12 * exx + C11 * eyy
-    sxy_p = 2 * C66 * exy
-    pinn_vm = np.sqrt(sx ** 2 - sx * sy + sy ** 2 + 3 * sxy_p ** 2).astype(np.float32) * layout
+    from lib.solver import compute_stress_field
+    _, _, _, pinn_vm = compute_stress_field(
+        ux_pinn, uy_pinn, layout, dx, dy, E=args.E, nu=args.nu)
+    pinn_vm = pinn_vm.astype(np.float32) * layout
 
     error_transport = solve_error_transport(
         bc_error, layout, E=args.E, nu=args.nu,

@@ -84,26 +84,36 @@ class Network:
             dist = inputs[:, 1:2] - y_min          # (y - y_min), zero on bottom
 
             # SDF-based void mask: suppress output in the void region.
-            # For the L-bracket, void = {x > cx AND y > cy}.
-            # SDF to void boundary (positive in material, negative in void):
-            #   sdf = -max(x - cx, y - cy)  when in the void quadrant
-            #   sdf = min(cx - x, cy - y)   clipped to the quadrant
-            # We use a smooth approximation via sigmoid for differentiability.
             params = hard_bc_params or {}
             cx = params.get('corner_x', 1.0)
             cy = params.get('corner_y', 1.0)
             k = 20.0  # sharpness — transition width ~ 2/k in physical units
             x_coord = inputs[:, 0:1]
             y_coord = inputs[:, 1:2]
-            # h_x ≈ 1 when x > cx (in void x-range), ≈ 0 otherwise
-            # h_y ≈ 1 when y > cy (in void y-range), ≈ 0 otherwise
-            # void = h_x * h_y;  mask = 1 - void
             void_mask = tf.keras.layers.Lambda(
                 lambda coords: 1.0 - tf.sigmoid(k * (coords[0] - cx))
                                     * tf.sigmoid(k * (coords[1] - cy))
             )([x_coord, y_coord])
 
-            outputs = outputs * dist * void_mask
+            # Singular enrichment: add r^λ branch for the re-entrant corner.
+            # For a 270° corner, Williams eigenvalue λ = 2/3 ≈ 0.5445.
+            # The enrichment provides r^λ * [a1, a2] where a1,a2 are learned,
+            # letting the network capture the stress singularity exactly.
+            lam = 2.0 / 3.0
+            r_sq = tf.keras.layers.Lambda(
+                lambda coords: (coords[0] - cx) ** 2 + (coords[1] - cy) ** 2
+            )([x_coord, y_coord])
+            # r^λ = (r²)^(λ/2), with soft floor to keep gradients finite at r=0
+            r_lam = tf.keras.layers.Lambda(
+                lambda rsq: tf.pow(rsq + 1e-8, lam / 2.0)
+            )(r_sq)
+            # Learned coefficients for the singular branch (2 outputs)
+            singular_coeffs = tf.keras.layers.Dense(
+                num_outputs, kernel_initializer='zeros', name='singular_coeffs'
+            )(x)  # x is the last hidden layer
+            singular_branch = singular_coeffs * r_lam
+
+            outputs = (outputs + singular_branch) * dist * void_mask
         elif hard_bc == 'plate_with_hole':
             # Left edge roller: ux(x_min, y) = 0
             # Bottom edge roller: uy(x, y_min) = 0

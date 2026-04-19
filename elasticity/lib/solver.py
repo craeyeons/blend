@@ -20,6 +20,72 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 
+def compute_stress_field(ux, uy, layout, dx, dy, E=1.0, nu=0.3):
+    """
+    Layout-aware stress computation from displacement fields.
+
+    Uses one-sided finite differences at material-void boundaries so that
+    void cells (where u=0) don't create artificial strain spikes.
+
+    Parameters
+    ----------
+    ux, uy : ndarray (Ny, Nx)
+        Displacement fields.
+    layout : ndarray (Ny, Nx)
+        1 = material, 0 = void.
+    dx, dy : float
+        Grid spacing.
+    E, nu : float
+        Young's modulus and Poisson's ratio.
+
+    Returns
+    -------
+    sxx, syy, sxy, von_mises : ndarray (Ny, Nx)
+    """
+    C11 = E / (1.0 - nu ** 2)
+    C12 = nu * E / (1.0 - nu ** 2)
+    C66 = E / (2.0 * (1.0 + nu))
+
+    L = np.asarray(layout, dtype=np.float64)
+    Lp = np.pad(L, 1, mode='constant', constant_values=0.0)
+    uxp = np.pad(np.asarray(ux, dtype=np.float64), 1, mode='constant', constant_values=0.0)
+    uyp = np.pad(np.asarray(uy, dtype=np.float64), 1, mode='constant', constant_values=0.0)
+
+    w_r = Lp[1:-1, 2:]
+    w_l = Lp[1:-1, :-2]
+    w_u = Lp[2:, 1:-1]
+    w_d = Lp[:-2, 1:-1]
+
+    def _grad_x(fp, w_r, w_l):
+        f_r, f_l, f_c = fp[1:-1, 2:], fp[1:-1, :-2], fp[1:-1, 1:-1]
+        both = w_r * w_l
+        only_r = w_r * (1 - w_l)
+        only_l = w_l * (1 - w_r)
+        return np.where(both > 0, (f_r - f_l) / (2 * dx),
+               np.where(only_r > 0, (f_r - f_c) / dx,
+               np.where(only_l > 0, (f_c - f_l) / dx, 0.0)))
+
+    def _grad_y(fp, w_u, w_d):
+        f_u, f_d, f_c = fp[2:, 1:-1], fp[:-2, 1:-1], fp[1:-1, 1:-1]
+        both = w_u * w_d
+        only_u = w_u * (1 - w_d)
+        only_d = w_d * (1 - w_u)
+        return np.where(both > 0, (f_u - f_d) / (2 * dy),
+               np.where(only_u > 0, (f_u - f_c) / dy,
+               np.where(only_d > 0, (f_c - f_d) / dy, 0.0)))
+
+    exx = _grad_x(uxp, w_r, w_l) * L
+    eyy = _grad_y(uyp, w_u, w_d) * L
+    exy = 0.5 * (_grad_y(uxp, w_u, w_d) + _grad_x(uyp, w_r, w_l)) * L
+
+    sxx = C11 * exx + C12 * eyy
+    syy = C12 * exx + C11 * eyy
+    sxy = 2 * C66 * exy
+    von_mises = np.sqrt(sxx ** 2 - sxx * syy + syy ** 2 + 3 * sxy ** 2)
+
+    return sxx, syy, sxy, von_mises
+
+
 class ElasticitySolver:
     """
     Jacobi-iteration solver for 2D plane-stress linear elasticity.
@@ -412,13 +478,17 @@ class ElasticitySolver:
         # Compute stresses from displacements
         ux_np = np.array(ux)
         uy_np = np.array(uy)
-        sxx, syy, sxy = self.compute_stress(ux_np, uy_np)
+        sxx, syy, sxy = self.compute_stress(ux_np, uy_np, layout=np.array(layout))
 
         return ux_np, uy_np, sxx, syy, sxy
 
-    def compute_stress(self, ux, uy):
+    def compute_stress(self, ux, uy, layout=None):
         """
-        Compute stress field from displacement using central differences.
+        Compute stress field from displacement using layout-aware differences.
+
+        When *layout* is provided, void neighbors are excluded from the
+        finite-difference stencil (one-sided or skipped) so that material
+        points adjacent to the void don't see an artificial jump to zero.
 
         Returns
         -------
@@ -427,17 +497,69 @@ class ElasticitySolver:
         dx, dy = self.dx, self.dy
         C11, C12, C66 = self.C11, self.C12, self.C66
 
-        # Strain via central differences
-        exx = np.zeros_like(ux)
-        eyy = np.zeros_like(uy)
-        exy = np.zeros_like(ux)
+        if layout is None:
+            # Legacy path — plain central differences (no void awareness)
+            exx = np.zeros_like(ux)
+            eyy = np.zeros_like(uy)
+            exy = np.zeros_like(ux)
+            exx[1:-1, 1:-1] = (ux[1:-1, 2:] - ux[1:-1, :-2]) / (2 * dx)
+            eyy[1:-1, 1:-1] = (uy[2:, 1:-1] - uy[:-2, 1:-1]) / (2 * dy)
+            exy[1:-1, 1:-1] = 0.5 * (
+                (ux[2:, 1:-1] - ux[:-2, 1:-1]) / (2 * dy)
+                + (uy[1:-1, 2:] - uy[1:-1, :-2]) / (2 * dx)
+            )
+        else:
+            # Layout-aware: use one-sided differences near void boundaries
+            L = layout.astype(np.float64)
+            Lp = np.pad(L, 1, mode='constant', constant_values=0.0)
+            uxp = np.pad(ux, 1, mode='constant', constant_values=0.0)
+            uyp = np.pad(uy, 1, mode='constant', constant_values=0.0)
 
-        exx[1:-1, 1:-1] = (ux[1:-1, 2:] - ux[1:-1, :-2]) / (2 * dx)
-        eyy[1:-1, 1:-1] = (uy[2:, 1:-1] - uy[:-2, 1:-1]) / (2 * dy)
-        exy[1:-1, 1:-1] = 0.5 * (
-            (ux[2:, 1:-1] - ux[:-2, 1:-1]) / (2 * dy)
-            + (uy[1:-1, 2:] - uy[1:-1, :-2]) / (2 * dx)
-        )
+            # Neighbor layout weights (in padded coords, original [i,j] -> [i+1,j+1])
+            w_r = Lp[1:-1, 2:]   # right
+            w_l = Lp[1:-1, :-2]  # left
+            w_u = Lp[2:, 1:-1]   # up
+            w_d = Lp[:-2, 1:-1]  # down
+
+            def _layout_grad_x(fp, w_r, w_l):
+                """∂f/∂x with layout masking: central, one-sided, or zero."""
+                f_r = fp[1:-1, 2:]
+                f_l = fp[1:-1, :-2]
+                f_c = fp[1:-1, 1:-1]
+                both = w_r * w_l
+                only_r = w_r * (1 - w_l)
+                only_l = w_l * (1 - w_r)
+                return np.where(both > 0, (f_r - f_l) / (2 * dx),
+                       np.where(only_r > 0, (f_r - f_c) / dx,
+                       np.where(only_l > 0, (f_c - f_l) / dx,
+                       0.0)))
+
+            def _layout_grad_y(fp, w_u, w_d):
+                """∂f/∂y with layout masking."""
+                f_u = fp[2:, 1:-1]
+                f_d = fp[:-2, 1:-1]
+                f_c = fp[1:-1, 1:-1]
+                both = w_u * w_d
+                only_u = w_u * (1 - w_d)
+                only_d = w_d * (1 - w_u)
+                return np.where(both > 0, (f_u - f_d) / (2 * dy),
+                       np.where(only_u > 0, (f_u - f_c) / dy,
+                       np.where(only_d > 0, (f_c - f_d) / dy,
+                       0.0)))
+
+            dux_dx = _layout_grad_x(uxp, w_r, w_l)
+            duy_dy = _layout_grad_y(uyp, w_u, w_d)
+            dux_dy = _layout_grad_y(uxp, w_u, w_d)
+            duy_dx = _layout_grad_x(uyp, w_r, w_l)
+
+            exx = dux_dx
+            eyy = duy_dy
+            exy = 0.5 * (dux_dy + duy_dx)
+
+            # Zero out void
+            exx = exx * L
+            eyy = eyy * L
+            exy = exy * L
 
         sxx = C11 * exx + C12 * eyy
         syy = C12 * exx + C11 * eyy
