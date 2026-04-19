@@ -114,6 +114,11 @@ class Network:
             singular_branch = singular_coeffs * r_lam
 
             outputs = (outputs + singular_branch) * dist * void_mask
+        elif hard_bc == 'bottom_fixed':
+            # Bottom edge (y = y_min) fully fixed: u(x, y_min) = 0
+            y_min = input_range[1][0] if input_range else 0.0
+            dist = inputs[:, 1:2] - y_min
+            outputs = outputs * dist
         elif hard_bc == 'plate_with_hole':
             # Left edge roller: ux(x_min, y) = 0
             # Bottom edge roller: uy(x, y_min) = 0
