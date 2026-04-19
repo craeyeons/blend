@@ -87,7 +87,7 @@ class Network:
             params = hard_bc_params or {}
             cx = params.get('corner_x', 1.0)
             cy = params.get('corner_y', 1.0)
-            k = 20.0  # sharpness — transition width ~ 2/k in physical units
+            k = params.get('void_sharpness', 50.0)  # transition width ~ 2/k
             x_coord = inputs[:, 0:1]
             y_coord = inputs[:, 1:2]
             void_mask = tf.keras.layers.Lambda(

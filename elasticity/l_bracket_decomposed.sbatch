@@ -45,7 +45,9 @@ python train_pinn_decomposed.py \
     --n-domain 10000 \
     --n-boundary 2000 \
     --n-coupling 5000 \
-    --w-coupling 10.0
+    --n-interface 2000 \
+    --w-coupling 10.0 \
+    --w-trac-match 10.0
 
 # --- Step 2: FDM ground truth ---
 echo "=== Running FDM solver ==="

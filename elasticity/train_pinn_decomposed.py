@@ -79,7 +79,8 @@ class DecomposedTrainer:
     """Train two sub-domain PINNs jointly with coupling loss."""
 
     def __init__(self, model_v, model_h, E=1.0, nu=0.3, lr=3e-4, epochs=10000,
-                 w_pde=1.0, w_trac=1.0, w_coupling=10.0, grad_clip_norm=1.0):
+                 w_pde=1.0, w_trac=1.0, w_coupling=10.0,
+                 w_trac_match=10.0, grad_clip_norm=1.0):
         self.model_v = model_v
         self.model_h = model_h
         self.E = E
@@ -90,6 +91,7 @@ class DecomposedTrainer:
         self.w_pde = w_pde
         self.w_trac = w_trac
         self.w_coupling = w_coupling
+        self.w_trac_match = w_trac_match
         self.grad_clip_norm = grad_clip_norm
 
         lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
@@ -98,6 +100,7 @@ class DecomposedTrainer:
         self.history = {
             'total': [], 'pde_v': [], 'pde_h': [],
             'trac_v': [], 'trac_h': [], 'coupling': [],
+            'trac_match': [],
         }
 
     def _pde_residual(self, model, xy):
@@ -153,11 +156,39 @@ class DecomposedTrainer:
         tx_true, ty_true = trac_vals[:, 0], trac_vals[:, 1]
         return tf.reduce_mean((tx_pred - tx_true) ** 2 + (ty_pred - ty_true) ** 2)
 
+    def _traction_at(self, model, xy, normals):
+        """Compute traction vector sigma . n at given points."""
+        with tf.GradientTape(persistent=True) as tape:
+            tape.watch(xy)
+            uv = model(xy, training=True)
+            ux = uv[:, 0]
+            uy = uv[:, 1]
+        grad_ux = tape.gradient(ux, xy)
+        grad_uy = tape.gradient(uy, xy)
+        del tape
+        dux_dx = grad_ux[:, 0]
+        dux_dy = grad_ux[:, 1]
+        duy_dx = grad_uy[:, 0]
+        duy_dy = grad_uy[:, 1]
+        sxx = self.C11 * dux_dx + self.C12 * duy_dy
+        syy = self.C12 * dux_dx + self.C11 * duy_dy
+        sxy = self.C66 * (dux_dy + duy_dx)
+        nx, ny = normals[:, 0], normals[:, 1]
+        tx = sxx * nx + sxy * ny
+        ty = sxy * nx + syy * ny
+        return tx, ty
+
+    def _traction_matching_loss(self, xy_iface, normals_iface):
+        """Both PINNs must produce the same traction at the interface."""
+        tx_v, ty_v = self._traction_at(self.model_v, xy_iface, normals_iface)
+        tx_h, ty_h = self._traction_at(self.model_h, xy_iface, normals_iface)
+        return tf.reduce_mean((tx_v - tx_h) ** 2 + (ty_v - ty_h) ** 2)
+
     @tf.function
     def train_step(self, xy_pde_v, xy_pde_h,
                    xy_trac_v, trac_vals_v, trac_normals_v,
                    xy_trac_h, trac_vals_h, trac_normals_h,
-                   xy_coupling):
+                   xy_coupling, xy_iface, normals_iface):
         all_vars = self.model_v.trainable_variables + self.model_h.trainable_variables
         with tf.GradientTape() as tape:
             pde_v = self._pde_residual(self.model_v, xy_pde_v)
@@ -171,9 +202,13 @@ class DecomposedTrainer:
             uv_h = self.model_h(xy_coupling, training=True)
             coupling = tf.reduce_mean((uv_v - uv_h) ** 2)
 
+            # Traction matching: sigma_V . n = sigma_H . n at the interface
+            trac_match = self._traction_matching_loss(xy_iface, normals_iface)
+
             total = (self.w_pde * (pde_v + pde_h)
                      + self.w_trac * (trac_v + trac_h)
-                     + self.w_coupling * coupling)
+                     + self.w_coupling * coupling
+                     + self.w_trac_match * trac_match)
 
         grads = tape.gradient(total, all_vars)
         safe_grads = []
@@ -189,20 +224,22 @@ class DecomposedTrainer:
         else:
             grad_norm = tf.linalg.global_norm(safe_grads)
         self.optimizer.apply_gradients(zip(safe_grads, all_vars))
-        return total, pde_v, pde_h, trac_v, trac_h, coupling
+        return total, pde_v, pde_h, trac_v, trac_h, coupling, trac_match
 
     def train(self, data, epochs=10000, print_every=500):
         (xy_pde_v, xy_pde_h,
          xy_trac_v, trac_vals_v, trac_normals_v,
          xy_trac_h, trac_vals_h, trac_normals_h,
-         xy_coupling) = [tf.constant(d, dtype=tf.float32) for d in data]
+         xy_coupling, xy_iface, normals_iface,
+         ) = [tf.constant(d, dtype=tf.float32) for d in data]
 
         for epoch in range(epochs):
-            total, pde_v, pde_h, trac_v, trac_h, coupling = self.train_step(
+            (total, pde_v, pde_h, trac_v, trac_h,
+             coupling, trac_match) = self.train_step(
                 xy_pde_v, xy_pde_h,
                 xy_trac_v, trac_vals_v, trac_normals_v,
                 xy_trac_h, trac_vals_h, trac_normals_h,
-                xy_coupling,
+                xy_coupling, xy_iface, normals_iface,
             )
             self.history['total'].append(float(total))
             self.history['pde_v'].append(float(pde_v))
@@ -210,13 +247,15 @@ class DecomposedTrainer:
             self.history['trac_v'].append(float(trac_v))
             self.history['trac_h'].append(float(trac_h))
             self.history['coupling'].append(float(coupling))
+            self.history['trac_match'].append(float(trac_match))
 
             if (epoch + 1) % print_every == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
                       f"Total: {total:.6e}, "
                       f"PDE_v: {pde_v:.6e}, PDE_h: {pde_h:.6e}, "
                       f"Trac_v: {trac_v:.6e}, Trac_h: {trac_h:.6e}, "
-                      f"Coupling: {coupling:.6e}")
+                      f"Coupling: {coupling:.6e}, "
+                      f"TracMatch: {trac_match:.6e}")
         return self.history
 
 
@@ -384,10 +423,30 @@ def create_training_data(args):
     # --- Coupling points in overlap [x_min, cx] x [y_min, cy] ---
     xy_coupling = sample_interior((x_min, cx), (y_min, cy), args.n_coupling)
 
+    # --- Interface points for traction matching ---
+    # Along x = cx, y in [y_min, cy]: V-bar right cut / H-bar interior
+    n_iface_v = args.n_interface // 2
+    xy_iface_v = sample_partial_edge((x_min, cx), (y_min, y_max),
+                                     'right', (y_min, cy), n_iface_v)
+    # Normal pointing right (+x) from V-bar perspective
+    n_iface_v_arr = np.column_stack([np.ones(n_iface_v),
+                                     np.zeros(n_iface_v)]).astype(np.float32)
+
+    # Along y = cy, x in [x_min, cx]: H-bar top cut / V-bar interior
+    n_iface_h = args.n_interface - n_iface_v
+    xy_iface_h = sample_partial_edge((x_min, x_max), (y_min, cy),
+                                     'top', (x_min, cx), n_iface_h)
+    # Normal pointing up (+y) from H-bar perspective
+    n_iface_h_arr = np.column_stack([np.zeros(n_iface_h),
+                                     np.ones(n_iface_h)]).astype(np.float32)
+
+    xy_iface = np.concatenate([xy_iface_v, xy_iface_h], axis=0)
+    normals_iface = np.concatenate([n_iface_v_arr, n_iface_h_arr], axis=0)
+
     return (xy_pde_v, xy_pde_h,
             xy_trac_v, trac_vals_v, trac_normals_v,
             xy_trac_h, trac_vals_h, trac_normals_h,
-            xy_coupling)
+            xy_coupling, xy_iface, normals_iface)
 
 
 def main():
@@ -399,6 +458,7 @@ def main():
     parser.add_argument('--n-domain', type=int, default=10000)
     parser.add_argument('--n-boundary', type=int, default=2000)
     parser.add_argument('--n-coupling', type=int, default=5000)
+    parser.add_argument('--n-interface', type=int, default=2000)
     parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
     parser.add_argument('--activation', type=str, default='tanh')
     parser.add_argument('--output-dir', type=str, default='./models')
@@ -417,6 +477,7 @@ def main():
     parser.add_argument('--w-pde', type=float, default=1.0)
     parser.add_argument('--w-trac', type=float, default=1.0)
     parser.add_argument('--w-coupling', type=float, default=10.0)
+    parser.add_argument('--w-trac-match', type=float, default=10.0)
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -460,12 +521,14 @@ def main():
     print(f"  V-bar traction BC points: {len(data[2])}")
     print(f"  H-bar traction BC points: {len(data[5])}")
     print(f"  Coupling points: {len(data[8])}")
+    print(f"  Interface traction matching points: {len(data[9])}")
 
     # Train
     trainer = DecomposedTrainer(
         model_v, model_h,
         E=args.E, nu=args.nu, lr=args.lr, epochs=args.epochs,
         w_pde=args.w_pde, w_trac=args.w_trac, w_coupling=args.w_coupling,
+        w_trac_match=args.w_trac_match,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
     )
     print("\nTraining...")
@@ -526,6 +589,7 @@ def main():
         ax.semilogy(history['trac_v'], label='Trac V-bar')
         ax.semilogy(history['trac_h'], label='Trac H-bar')
         ax.semilogy(history['coupling'], label='Coupling')
+        ax.semilogy(history['trac_match'], label='Trac Match')
         ax.set_xlabel('Epoch'); ax.set_ylabel('Loss')
         ax.set_title('Decomposed PINN Training Loss')
         ax.legend(); ax.grid(True, alpha=0.3)

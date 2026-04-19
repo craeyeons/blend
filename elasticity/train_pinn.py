@@ -78,8 +78,19 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
         raise ValueError(f"Unknown problem: {problem}")
 
     # PDE collocation points: sample from interior material points
-    # with adaptive density near the re-entrant corner (if L-bracket)
+    # with adaptive density near the re-entrant corner (if L-bracket).
+    # For L-bracket: exclude points near the void boundary to avoid
+    # PDE residual artifacts from differentiating through the sigmoid mask.
     interior_mask = (layout > 0) & (disp_bc_mask == 0) & (trac_bc_mask == 0)
+
+    if problem == 'l_bracket' and args is not None:
+        cx, cy = args.corner_x, args.corner_y
+        # Buffer zone: don't sample PDE points within ~2/k of void boundary
+        # where the sigmoid mask gradient is large.  k=50 → buffer ~0.04
+        buf = 0.06
+        near_void = ((X > cx - buf) & (Y > cy - buf))
+        interior_mask = interior_mask & ~near_void
+
     iy, ix = np.where(interior_mask)
     xy_interior = np.stack([X[iy, ix], Y[iy, ix]], axis=-1).astype(np.float32)
 
