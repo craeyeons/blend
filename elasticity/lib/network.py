@@ -92,9 +92,9 @@ class Network:
             k = 20.0  # sharpness of transition
             x_coord = inputs[:, 0:1]
             y_coord = inputs[:, 1:2]
-            h_x = tf.sigmoid(k * (x_coord - cx))  # ~0 when x < cx, ~1 when x > cx
-            h_y = tf.sigmoid(k * (y_coord - cy))  # ~0 when y < cy, ~1 when y > cy
-            void_mask = 1.0 - h_x * h_y           # ~1 in material, ~0 in void
+            void_mask = tf.keras.layers.Lambda(
+                lambda xy: 1.0 - tf.sigmoid(k * (xy[0] - cx)) * tf.sigmoid(k * (xy[1] - cy))
+            )([x_coord, y_coord])
 
             outputs = outputs * dist * void_mask
         elif hard_bc == 'plate_with_hole':
