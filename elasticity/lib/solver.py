@@ -136,54 +136,80 @@ class ElasticitySolver:
 
         a_x = C11 / dx ** 2  # coefficient for ux neighbours in x
         a_y = C66 / dy ** 2  # coefficient for ux neighbours in y
-        a_P_ux = 2.0 * a_x + 2.0 * a_y
 
         b_x = C66 / dx ** 2  # coefficient for uy neighbours in x
         b_y = C11 / dy ** 2  # coefficient for uy neighbours in y
-        a_P_uy = 2.0 * b_x + 2.0 * b_y
 
         c_cross = (C12 + C66) / (4.0 * dx * dy)
+
+        # Layout-aware neighbor weights.  When a neighbor is void we mirror
+        # the current cell (zero-gradient / implicit Neumann), which means
+        # that neighbor drops out of both the numerator and the diagonal a_P.
+        w_xp = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[1:-1, 2:])
+        w_xm = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[1:-1, :-2])
+        w_yp = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[2:, 1:-1])
+        w_ym = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[:-2, 1:-1])
+
+        # Per-point diagonal for ux equation
+        a_P_ux = a_x * (w_xp + w_xm) + a_y * (w_yp + w_ym)
+        a_P_ux = jnp.where(a_P_ux < 1e-30, 1.0, a_P_ux)
+
+        # Per-point diagonal for uy equation
+        a_P_uy = b_x * (w_xp + w_xm) + b_y * (w_yp + w_ym)
+        a_P_uy = jnp.where(a_P_uy < 1e-30, 1.0, a_P_uy)
+
+        # Diagonal-neighbor layout weights for cross-derivative stencil
+        w_pp = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[2:, 2:])
+        w_pm = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[2:, :-2])
+        w_mp = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[:-2, 2:])
+        w_mm = jnp.zeros_like(layout_j).at[1:-1, 1:-1].set(layout_j[:-2, :-2])
 
         @jit
         def jacobi_step(ux, uy):
             """Single Jacobi iteration for coupled ux, uy."""
             # --- Update ux ---
-            # Neighbour contributions
-            ux_xp = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[1:-1, 2:])
-            ux_xm = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[1:-1, :-2])
-            ux_yp = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[2:, 1:-1])
-            ux_ym = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[:-2, 1:-1])
+            # Neighbour contributions, masked by layout so void gives 0
+            ux_xp = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[1:-1, 2:])  * w_xp
+            ux_xm = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[1:-1, :-2]) * w_xm
+            ux_yp = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[2:, 1:-1])  * w_yp
+            ux_ym = jnp.zeros_like(ux).at[1:-1, 1:-1].set(ux[:-2, 1:-1]) * w_ym
 
-            # Cross-derivative of uy (for ux equation)
+            # Cross-derivative of uy (layout-masked diagonal neighbors)
             uy_cross = jnp.zeros_like(uy)
             uy_cross = uy_cross.at[1:-1, 1:-1].set(
-                uy[2:, 2:] - uy[2:, :-2] - uy[:-2, 2:] + uy[:-2, :-2]
+                uy[2:, 2:]   * w_pp[1:-1, 1:-1]
+              - uy[2:, :-2]  * w_pm[1:-1, 1:-1]
+              - uy[:-2, 2:]  * w_mp[1:-1, 1:-1]
+              + uy[:-2, :-2] * w_mm[1:-1, 1:-1]
             )
 
             ux_new = jnp.zeros_like(ux)
             ux_new = ux_new.at[1:-1, 1:-1].set(
                 (a_x * (ux_xp[1:-1, 1:-1] + ux_xm[1:-1, 1:-1])
                  + a_y * (ux_yp[1:-1, 1:-1] + ux_ym[1:-1, 1:-1])
-                 + c_cross * uy_cross[1:-1, 1:-1]) / a_P_ux
+                 + c_cross * uy_cross[1:-1, 1:-1]) / a_P_ux[1:-1, 1:-1]
             )
 
             # --- Update uy ---
-            uy_xp = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[1:-1, 2:])
-            uy_xm = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[1:-1, :-2])
-            uy_yp = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[2:, 1:-1])
-            uy_ym = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[:-2, 1:-1])
+            uy_xp = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[1:-1, 2:])  * w_xp
+            uy_xm = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[1:-1, :-2]) * w_xm
+            uy_yp = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[2:, 1:-1])  * w_yp
+            uy_ym = jnp.zeros_like(uy).at[1:-1, 1:-1].set(uy[:-2, 1:-1]) * w_ym
 
-            # Cross-derivative of ux (for uy equation)
+            # Cross-derivative of ux (layout-masked diagonal neighbors)
             ux_cross = jnp.zeros_like(ux)
             ux_cross = ux_cross.at[1:-1, 1:-1].set(
-                ux[2:, 2:] - ux[2:, :-2] - ux[:-2, 2:] + ux[:-2, :-2]
+                ux[2:, 2:]   * w_pp[1:-1, 1:-1]
+              - ux[2:, :-2]  * w_pm[1:-1, 1:-1]
+              - ux[:-2, 2:]  * w_mp[1:-1, 1:-1]
+              + ux[:-2, :-2] * w_mm[1:-1, 1:-1]
             )
 
             uy_new = jnp.zeros_like(uy)
             uy_new = uy_new.at[1:-1, 1:-1].set(
                 (b_x * (uy_xp[1:-1, 1:-1] + uy_xm[1:-1, 1:-1])
                  + b_y * (uy_yp[1:-1, 1:-1] + uy_ym[1:-1, 1:-1])
-                 + c_cross * ux_cross[1:-1, 1:-1]) / a_P_uy
+                 + c_cross * ux_cross[1:-1, 1:-1]) / a_P_uy[1:-1, 1:-1]
             )
 
             # Apply displacement BCs (NaN = free component, skip)
@@ -269,73 +295,22 @@ class ElasticitySolver:
             has_void_below = (1 - lp[:-2, 1:-1])
             return jnp.clip(has_void_above + has_void_below, 0.0, 1.0)
 
-        def _estimate_dudx(field, layout):
-            """Central-difference ∂field/∂x at each point."""
-            fp = _pad_zeros(field)
-            lp = _pad_zeros(layout)
-            f_r = fp[1:-1, 2:]
-            f_l = fp[1:-1, :-2]
-            w_r = lp[1:-1, 2:]
-            w_l = lp[1:-1, :-2]
-            # One-sided where only one neighbour exists
-            both = w_r * w_l
-            only_r = w_r * (1 - w_l)
-            only_l = w_l * (1 - w_r)
-            grad = jnp.where(both > 0, (f_r - f_l) / (2 * dx),
-                   jnp.where(only_r > 0, (f_r - field) / dx,
-                   jnp.where(only_l > 0, (field - f_l) / dx,
-                   0.0)))
-            return grad
-
-        def _estimate_dudy(field, layout):
-            """Central-difference ∂field/∂y at each point."""
-            fp = _pad_zeros(field)
-            lp = _pad_zeros(layout)
-            f_u = fp[2:, 1:-1]
-            f_d = fp[:-2, 1:-1]
-            w_u = lp[2:, 1:-1]
-            w_d = lp[:-2, 1:-1]
-            both = w_u * w_d
-            only_u = w_u * (1 - w_d)
-            only_d = w_d * (1 - w_u)
-            grad = jnp.where(both > 0, (f_u - f_d) / (2 * dy),
-                   jnp.where(only_u > 0, (f_u - field) / dy,
-                   jnp.where(only_d > 0, (field - f_d) / dy,
-                   0.0)))
-            return grad
-
         def _apply_trac_ux(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for ux at traction boundaries (with cross-coupling)."""
+            """Neumann BC for ux at traction boundaries."""
             avg = _interior_avg(ux, tmask, layout)
             is_horiz = _boundary_is_horizontal(tmask, layout)
-            duy_dy = _estimate_dudy(uy, layout)
-            duy_dx = _estimate_dudx(uy, layout)
-            # Vertical face:  σ_xx = C11·∂ux/∂x + C12·∂uy/∂y = tx
-            #   → ∂ux/∂x = (tx - C12·∂uy/∂y) / C11
-            #   → ux_ghost = avg + (tx - C12·∂uy/∂y) * dx / C11
-            # Horizontal face: σ_xy = C66·(∂ux/∂y + ∂uy/∂x) = tx
-            #   → ∂ux/∂y = tx/C66 - ∂uy/∂x
-            #   → ux_ghost = avg + (tx/C66 - ∂uy/∂x) * dy
-            offset_v = (tx - C12 * duy_dy) * dx / C11
-            offset_h = (tx / C66 - duy_dx) * dy
-            offset = (1 - is_horiz) * offset_v + is_horiz * offset_h
+            # Vertical face: ux_ghost = avg + tx*dx/C11
+            # Horizontal face: ux_ghost = avg + tx*dy/C66  (from sigma_xy = tx)
+            offset = (1 - is_horiz) * tx * dx / C11 + is_horiz * tx * dy / C66
             return avg + offset
 
         def _apply_trac_uy(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for uy at traction boundaries (with cross-coupling)."""
+            """Neumann BC for uy at traction boundaries."""
             avg = _interior_avg(uy, tmask, layout)
             is_horiz = _boundary_is_horizontal(tmask, layout)
-            dux_dx = _estimate_dudx(ux, layout)
-            dux_dy = _estimate_dudy(ux, layout)
-            # Horizontal face: σ_yy = C12·∂ux/∂x + C11·∂uy/∂y = ty
-            #   → ∂uy/∂y = (ty - C12·∂ux/∂x) / C11
-            #   → uy_ghost = avg + (ty - C12·∂ux/∂x) * dy / C11
-            # Vertical face: σ_xy = C66·(∂ux/∂y + ∂uy/∂x) = ty
-            #   → ∂uy/∂x = ty/C66 - ∂ux/∂y
-            #   → uy_ghost = avg + (ty/C66 - ∂ux/∂y) * dx
-            offset_h = (ty - C12 * dux_dx) * dy / C11
-            offset_v = (ty / C66 - dux_dy) * dx
-            offset = is_horiz * offset_h + (1 - is_horiz) * offset_v
+            # Horizontal face: uy_ghost = avg + ty*dy/C11
+            # Vertical face: uy_ghost = avg + ty*dx/C66  (from sigma_xy = ty)
+            offset = is_horiz * ty * dy / C11 + (1 - is_horiz) * ty * dx / C66
             return avg + offset
 
         self._apply_traction_ux = jit(_apply_trac_ux)

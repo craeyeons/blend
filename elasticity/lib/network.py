@@ -30,7 +30,7 @@ class Network:
 
     def build(self, num_inputs=2, layers=[64, 64, 64, 64],
               activation='tanh', num_outputs=2,
-              input_range=None, hard_bc=None, hard_bc_params=None):
+              input_range=None, hard_bc=None):
         """
         Build a PINN model for static linear elasticity.
 
@@ -82,21 +82,7 @@ class Network:
             # Bottom edge (y = y_min) fully fixed: u(x, y_min) = 0
             y_min = input_range[1][0] if input_range else 0.0
             dist = inputs[:, 1:2] - y_min          # (y - y_min), zero on bottom
-
-            # Smooth void mask: ~1 in material, ~0 in void (upper-right cutout).
-            # The void is where x > corner_x AND y > corner_y.
-            # void_mask = 1 - H(x - cx) * H(y - cy)  with smooth Heaviside.
-            params = hard_bc_params or {}
-            cx = params.get('corner_x', 1.0)
-            cy = params.get('corner_y', 1.0)
-            k = 20.0  # sharpness of transition
-            x_coord = inputs[:, 0:1]
-            y_coord = inputs[:, 1:2]
-            void_mask = tf.keras.layers.Lambda(
-                lambda xy: 1.0 - tf.sigmoid(k * (xy[0] - cx)) * tf.sigmoid(k * (xy[1] - cy))
-            )([x_coord, y_coord])
-
-            outputs = outputs * dist * void_mask
+            outputs = outputs * dist
         elif hard_bc == 'plate_with_hole':
             # Left edge roller: ux(x_min, y) = 0
             # Bottom edge roller: uy(x, y_min) = 0
