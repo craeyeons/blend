@@ -78,10 +78,22 @@ def create_training_data(problem, n_domain=10000, n_boundary=2000, args=None):
         raise ValueError(f"Unknown problem: {problem}")
 
     # PDE collocation points: sample from interior material points
+    # with adaptive density near the re-entrant corner (if L-bracket)
     interior_mask = (layout > 0) & (disp_bc_mask == 0) & (trac_bc_mask == 0)
     iy, ix = np.where(interior_mask)
     xy_interior = np.stack([X[iy, ix], Y[iy, ix]], axis=-1).astype(np.float32)
-    xy_domain = _sample_rows(xy_interior, n_domain).astype(np.float32)
+
+    if problem == 'l_bracket' and args is not None and len(xy_interior) > 0:
+        # Weight sampling by 1/r^0.5 from the re-entrant corner
+        cx, cy = args.corner_x, args.corner_y
+        r = np.sqrt((xy_interior[:, 0] - cx) ** 2 + (xy_interior[:, 1] - cy) ** 2)
+        weights = 1.0 / (r + 0.02) ** 0.5  # soft floor to avoid inf
+        weights /= weights.sum()
+        idx = np.random.choice(len(xy_interior), size=n_domain,
+                               replace=True, p=weights)
+        xy_domain = xy_interior[idx].astype(np.float32)
+    else:
+        xy_domain = _sample_rows(xy_interior, n_domain).astype(np.float32)
 
     # Displacement BC points/values from the exact same masks used by FDM
     dy_disp, dx_disp = np.where((layout > 0) & (disp_bc_mask > 0))
@@ -447,6 +459,9 @@ def main():
     # Build model
     input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
     hard_bc = args.problem if not args.no_hard_bc else None
+    hard_bc_params = None
+    if args.problem == 'l_bracket':
+        hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
     network = Network()
     model = network.build(
         num_inputs=2,
@@ -455,6 +470,7 @@ def main():
         num_outputs=2,
         input_range=input_range,
         hard_bc=hard_bc,
+        hard_bc_params=hard_bc_params,
     )
     model.summary()
 

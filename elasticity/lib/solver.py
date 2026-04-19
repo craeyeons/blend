@@ -113,6 +113,35 @@ class ElasticitySolver:
             bc_tx_j = jnp.zeros_like(layout_j)
             bc_ty_j = jnp.zeros_like(layout_j)
 
+        # --- Auto-detect traction boundary from layout ---
+        # Any material cell with at least one void/outside neighbor is a
+        # boundary cell (unless it already has a displacement BC).
+        lp = jnp.pad(layout_j, 1, mode='constant', constant_values=0.0)
+        has_void_neighbor = (
+            (1 - lp[1:-1, 2:])    # right
+            + (1 - lp[1:-1, :-2]) # left
+            + (1 - lp[2:, 1:-1])  # up
+            + (1 - lp[:-2, 1:-1]) # down
+        ) > 0
+        auto_trac_mask = (layout_j > 0) & has_void_neighbor & (disp_mask_j == 0)
+        # Merge: auto-detected cells get traction=0 if not already in trac_mask
+        trac_mask_j = jnp.where(auto_trac_mask, 1.0, trac_mask_j)
+        # (bc_tx_j / bc_ty_j remain 0 for auto-detected cells, which is correct
+        # for traction-free boundaries)
+
+        # --- Compute local outward normals from layout gradient ---
+        # n = -∇(layout) / |∇(layout)|   (points from material into void)
+        # Use the padded layout (lp has shape Ny+2, Nx+2).
+        # Central differences on the *original* grid indices via the padded array:
+        #   ∂layout/∂x at (i,j) = (lp[i+1, j+2] - lp[i+1, j]) / (2dx)
+        #   ∂layout/∂y at (i,j) = (lp[i+2, j+1] - lp[i, j+1]) / (2dy)
+        grad_x = (lp[1:-1, 2:] - lp[1:-1, :-2]) / (2.0 * dx)   # (Ny, Nx)
+        grad_y = (lp[2:, 1:-1] - lp[:-2, 1:-1]) / (2.0 * dy)   # (Ny, Nx)
+
+        nmag = jnp.sqrt(grad_x ** 2 + grad_y ** 2) + 1e-30
+        normal_x = -grad_x / nmag  # outward = into void
+        normal_y = -grad_y / nmag
+
         # Hybrid mode: pin PINN values in non-FDM regions
         if fdm_mask is not None:
             fdm_mask_j = jnp.array(fdm_mask, dtype=jnp.float64) * layout_j
@@ -246,23 +275,18 @@ class ElasticitySolver:
 
             return ux_new, uy_new
 
-        # Traction BC helpers (Neumann via ghost-cell approach)
+        # Traction BC helpers (Neumann via ghost-cell extrapolation)
         #
-        # On a vertical boundary (normal = +x):
-        #   sigma_xx = C11 dux/dx + C12 duy/dy = tx
-        #   sigma_xy = C66 (dux/dy + duy/dx) = ty
-        # Approximate dux/dx ~ (ux_ghost - ux_interior) / dx
-        #   => ux_ghost = ux_interior + (tx - C12 duy/dy) * dx / C11
-        # For simplicity, neglect the cross-term C12*duy/dy (it couples
-        # and converges via iteration). This gives:
-        #   ux_ghost ~ ux_interior + tx * dx / C11
-        #   uy_ghost ~ uy_interior + ty * dy / C11   (y-normal face)
+        # At a traction boundary point with outward normal n = (nx, ny):
+        #   sigma . n = t   =>   [sxx*nx + sxy*ny,  sxy*nx + syy*ny] = [tx, ty]
         #
-        # On a horizontal boundary (normal = +y):
-        #   sigma_yy = C12 dux/dx + C11 duy/dy = ty
-        #   sigma_xy = C66 (dux/dy + duy/dx) = tx
-        #   => uy_ghost ~ uy_interior + ty * dy / C11
-        #   => ux_ghost ~ ux_interior + tx * dy / C66
+        # We extrapolate the boundary cell value from its interior material
+        # neighbors, then add an offset that enforces the traction condition.
+        # The offset uses the dominant normal component to determine which
+        # stress-displacement relation to invert.
+
+        nx_j = normal_x  # precomputed outward normals
+        ny_j = normal_y
 
         def _pad_zeros(arr):
             """Pad with zeros (void) so domain edges see void outside."""
@@ -288,29 +312,34 @@ class ElasticitySolver:
             total = f_l * w_l + f_r * w_r + f_d * w_d + f_u * w_u
             return total / jnp.maximum(count, 1.0)
 
-        def _boundary_is_horizontal(tmask, layout):
-            """1 where the traction face has a y-facing normal."""
-            lp = _pad_zeros(layout)
-            has_void_above = (1 - lp[2:, 1:-1])
-            has_void_below = (1 - lp[:-2, 1:-1])
-            return jnp.clip(has_void_above + has_void_below, 0.0, 1.0)
-
         def _apply_trac_ux(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for ux at traction boundaries."""
+            """Neumann BC for ux using local normals."""
             avg = _interior_avg(ux, tmask, layout)
-            is_horiz = _boundary_is_horizontal(tmask, layout)
-            # Vertical face: ux_ghost = avg + tx*dx/C11
-            # Horizontal face: ux_ghost = avg + tx*dy/C66  (from sigma_xy = tx)
-            offset = (1 - is_horiz) * tx * dx / C11 + is_horiz * tx * dy / C66
+            abs_ny = jnp.abs(ny_j)
+            abs_nx = jnp.abs(nx_j)
+            is_horiz = abs_ny / (abs_nx + abs_ny + 1e-30)
+            # Vertical-dominant face (|nx| > |ny|):
+            #   σ_xx·nx = tx  =>  C11·∂ux/∂x·nx = tx  =>  offset = tx·dx/(C11·|nx|)
+            # Horizontal-dominant face (|ny| > |nx|):
+            #   σ_xy·ny = tx  =>  C66·∂ux/∂y·ny = tx  =>  offset = tx·dy/(C66·|ny|)
+            offset_v = tx * dx / (C11 * (abs_nx + 1e-30))
+            offset_h = tx * dy / (C66 * (abs_ny + 1e-30))
+            offset = (1 - is_horiz) * offset_v + is_horiz * offset_h
             return avg + offset
 
         def _apply_trac_uy(ux, uy, tx, ty, tmask, layout):
-            """Neumann BC for uy at traction boundaries."""
+            """Neumann BC for uy using local normals."""
             avg = _interior_avg(uy, tmask, layout)
-            is_horiz = _boundary_is_horizontal(tmask, layout)
-            # Horizontal face: uy_ghost = avg + ty*dy/C11
-            # Vertical face: uy_ghost = avg + ty*dx/C66  (from sigma_xy = ty)
-            offset = is_horiz * ty * dy / C11 + (1 - is_horiz) * ty * dx / C66
+            abs_ny = jnp.abs(ny_j)
+            abs_nx = jnp.abs(nx_j)
+            is_horiz = abs_ny / (abs_nx + abs_ny + 1e-30)
+            # Horizontal-dominant face (|ny| > |nx|):
+            #   σ_yy·ny = ty  =>  C11·∂uy/∂y·ny = ty  =>  offset = ty·dy/(C11·|ny|)
+            # Vertical-dominant face (|nx| > |ny|):
+            #   σ_xy·nx = ty  =>  C66·∂uy/∂x·nx = ty  =>  offset = ty·dx/(C66·|nx|)
+            offset_h = ty * dy / (C11 * (abs_ny + 1e-30))
+            offset_v = ty * dx / (C66 * (abs_nx + 1e-30))
+            offset = is_horiz * offset_h + (1 - is_horiz) * offset_v
             return avg + offset
 
         self._apply_traction_ux = jit(_apply_trac_ux)
