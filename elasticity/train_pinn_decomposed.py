@@ -220,6 +220,27 @@ class DecomposedTrainer:
         return self.history
 
 
+def load_decomposed_pinn(vbar_path, hbar_path, layers, activation,
+                         x_min, x_max, y_min, y_max, corner_x, corner_y):
+    """
+    Load both sub-domain PINN models for the decomposed L-bracket.
+
+    Returns (model_v, model_h).
+    """
+    network = Network()
+    model_v = network.build(num_inputs=2, layers=layers,
+                            activation=activation, num_outputs=2,
+                            input_range=[(x_min, corner_x), (y_min, y_max)],
+                            hard_bc='bottom_fixed')
+    model_h = network.build(num_inputs=2, layers=layers,
+                            activation=activation, num_outputs=2,
+                            input_range=[(x_min, x_max), (y_min, corner_y)],
+                            hard_bc='bottom_fixed')
+    model_v.load_weights(vbar_path)
+    model_h.load_weights(hbar_path)
+    return model_v, model_h
+
+
 def blend_solutions(model_v, model_h, X, Y, layout,
                     corner_x, corner_y, sharpness=10.0):
     """

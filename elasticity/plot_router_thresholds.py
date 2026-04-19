@@ -32,6 +32,7 @@ from matplotlib.patches import Patch
 
 from lib.network import Network
 from lib.domains import create_plate_with_hole, create_l_bracket
+from train_pinn_decomposed import load_decomposed_pinn, blend_solutions
 from lib.router import (
     RouterCNN,
     create_router_input,
@@ -100,6 +101,10 @@ def main():
                         default='./router_output/plate_with_hole/beta_0.1/router.weights.h5')
     parser.add_argument('--pinn-path', type=str,
                         default='./models/pinn_plate_with_hole.weights.h5')
+    parser.add_argument('--pinn-vbar-path', type=str, default=None,
+                        help='V-bar PINN weights for decomposed L-bracket')
+    parser.add_argument('--pinn-hbar-path', type=str, default=None,
+                        help='H-bar PINN weights for decomposed L-bracket')
     parser.add_argument('--output-dir', type=str, default='./threshold_plots')
 
     parser.add_argument('--threshold-start', type=float, default=0.01)
@@ -153,22 +158,34 @@ def main():
 
     # PINN
     print("Loading PINN...")
-    network = Network()
-    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
-    hard_bc_params = None
-    if args.problem == 'l_bracket':
-        hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
-    pinn_model = network.build(num_inputs=2, layers=args.layers,
-                               activation='tanh', num_outputs=2,
-                               input_range=input_range,
-                               hard_bc=args.problem,
-                               hard_bc_params=hard_bc_params)
-    pinn_model.load_weights(args.pinn_path)
-
-    xy = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
-    out = pinn_model.predict(xy, batch_size=len(xy), verbose=0)
-    pinn_ux = out[:, 0].reshape(X.shape).astype(np.float32) * layout
-    pinn_uy = out[:, 1].reshape(X.shape).astype(np.float32) * layout
+    use_decomposed = (args.pinn_vbar_path is not None and
+                      args.pinn_hbar_path is not None)
+    if use_decomposed:
+        model_v, model_h = load_decomposed_pinn(
+            args.pinn_vbar_path, args.pinn_hbar_path,
+            layers=args.layers, activation='tanh',
+            x_min=args.x_min, x_max=args.x_max,
+            y_min=args.y_min, y_max=args.y_max,
+            corner_x=args.corner_x, corner_y=args.corner_y)
+        pinn_ux, pinn_uy = blend_solutions(
+            model_v, model_h, X, Y, layout,
+            args.corner_x, args.corner_y)
+    else:
+        network = Network()
+        input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+        hard_bc_params = None
+        if args.problem == 'l_bracket':
+            hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
+        pinn_model = network.build(num_inputs=2, layers=args.layers,
+                                   activation='tanh', num_outputs=2,
+                                   input_range=input_range,
+                                   hard_bc=args.problem,
+                                   hard_bc_params=hard_bc_params)
+        pinn_model.load_weights(args.pinn_path)
+        xy = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
+        out = pinn_model.predict(xy, batch_size=len(xy), verbose=0)
+        pinn_ux = out[:, 0].reshape(X.shape).astype(np.float32) * layout
+        pinn_uy = out[:, 1].reshape(X.shape).astype(np.float32) * layout
 
     # Von Mises from PINN
     dx = (args.x_max - args.x_min) / (args.nx - 1)

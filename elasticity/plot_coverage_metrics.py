@@ -43,6 +43,7 @@ import matplotlib.patches as mpatches
 from lib.network import Network
 from lib.domains import create_plate_with_hole, create_l_bracket
 from lib.solver import ElasticitySolver
+from train_pinn_decomposed import load_decomposed_pinn, blend_solutions
 from lib.router import (
     RouterCNN,
     PINNResidualComputer,
@@ -376,7 +377,11 @@ def main():
     parser.add_argument('--problem', type=str, default='plate_with_hole',
                         choices=['plate_with_hole', 'l_bracket'])
     parser.add_argument('--pinn-path', type=str,
-                        default='./models/pinn_plate_with_hole.h5')
+                        default='./models/pinn_plate_with_hole.weights.h5')
+    parser.add_argument('--pinn-vbar-path', type=str, default=None,
+                        help='V-bar PINN weights for decomposed L-bracket')
+    parser.add_argument('--pinn-hbar-path', type=str, default=None,
+                        help='H-bar PINN weights for decomposed L-bracket')
     parser.add_argument('--router-path', type=str,
                         default='./router_output/plate_with_hole/beta_0.1/router.weights.h5')
     parser.add_argument('--fdm-path', type=str, default=None,
@@ -433,21 +438,45 @@ def main():
 
     # --- PINN ---
     print("[1] Loading PINN...")
-    network = Network()
-    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
-    hard_bc_params = None
-    if args.problem == 'l_bracket':
+    use_decomposed = (args.pinn_vbar_path is not None and
+                      args.pinn_hbar_path is not None)
+    if use_decomposed:
+        model_v, model_h = load_decomposed_pinn(
+            args.pinn_vbar_path, args.pinn_hbar_path,
+            layers=args.layers, activation='tanh',
+            x_min=args.x_min, x_max=args.x_max,
+            y_min=args.y_min, y_max=args.y_max,
+            corner_x=args.corner_x, corner_y=args.corner_y)
+        print(f"  Loaded decomposed PINN")
+        t0 = time.time()
+        ux_pinn, uy_pinn = blend_solutions(
+            model_v, model_h, X, Y, layout,
+            args.corner_x, args.corner_y)
+        timings['pinn_inference_s'] = time.time() - t0
+        # Build single-domain model for residual computation
+        network = Network()
+        input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
         hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
-    pinn_model = network.build(num_inputs=2, layers=args.layers,
-                               activation='tanh', num_outputs=2,
-                               input_range=input_range,
-                               hard_bc=args.problem,
-                               hard_bc_params=hard_bc_params)
-    pinn_model.load_weights(args.pinn_path)
-
-    t0 = time.time()
-    ux_pinn, uy_pinn = load_pinn_solution(pinn_model, X, Y, layout)
-    timings['pinn_inference_s'] = time.time() - t0
+        pinn_model = network.build(num_inputs=2, layers=args.layers,
+                                   activation='tanh', num_outputs=2,
+                                   input_range=input_range,
+                                   hard_bc=args.problem,
+                                   hard_bc_params=hard_bc_params)
+    else:
+        network = Network()
+        input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+        hard_bc_params = None
+        if args.problem == 'l_bracket':
+            hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
+        pinn_model = network.build(num_inputs=2, layers=args.layers,
+                                   activation='tanh', num_outputs=2,
+                                   input_range=input_range,
+                                   hard_bc=args.problem,
+                                   hard_bc_params=hard_bc_params)
+        pinn_model.load_weights(args.pinn_path)
+        t0 = time.time()
+        ux_pinn, uy_pinn = load_pinn_solution(pinn_model, X, Y, layout)
+        timings['pinn_inference_s'] = time.time() - t0
     print(f"  PINN inference: {timings['pinn_inference_s']:.3f}s")
 
     # --- FDM ---

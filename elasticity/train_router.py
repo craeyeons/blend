@@ -24,6 +24,7 @@ if gpus:
 
 from lib.network import Network
 from lib.domains import create_plate_with_hole, create_l_bracket
+from train_pinn_decomposed import load_decomposed_pinn, blend_solutions
 from lib.router import (
     RouterCNN,
     RouterTrainer,
@@ -44,7 +45,11 @@ def main():
     parser.add_argument('--problem', type=str, default='plate_with_hole',
                         choices=['plate_with_hole', 'l_bracket'])
     parser.add_argument('--model-path', type=str,
-                        default='./models/pinn_plate_with_hole.h5')
+                        default='./models/pinn_plate_with_hole.weights.h5')
+    parser.add_argument('--pinn-vbar-path', type=str, default=None,
+                        help='V-bar PINN weights for decomposed L-bracket')
+    parser.add_argument('--pinn-hbar-path', type=str, default=None,
+                        help='H-bar PINN weights for decomposed L-bracket')
     parser.add_argument('--output-dir', type=str, default=None)
     parser.add_argument('--output-base-dir', type=str, default='./router_output')
 
@@ -113,22 +118,42 @@ def main():
 
     # Step 1: Load PINN
     print("\n[Step 1] Loading PINN model...")
-    network = Network()
-    input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
-    hard_bc_params = None
-    if args.problem == 'l_bracket':
+    use_decomposed = (args.pinn_vbar_path is not None and
+                      args.pinn_hbar_path is not None)
+    if use_decomposed:
+        model_v, model_h = load_decomposed_pinn(
+            args.pinn_vbar_path, args.pinn_hbar_path,
+            layers=args.layers, activation='tanh',
+            x_min=args.x_min, x_max=args.x_max,
+            y_min=args.y_min, y_max=args.y_max,
+            corner_x=args.corner_x, corner_y=args.corner_y)
+        print(f"  Loaded decomposed PINN: {args.pinn_vbar_path}, {args.pinn_hbar_path}")
+        # Build a dummy single-domain PINN for residual computation in router trainer
+        network = Network()
+        input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
         hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
-    pinn_model = network.build(num_inputs=2, layers=args.layers,
-                               activation='tanh', num_outputs=2,
-                               input_range=input_range,
-                               hard_bc=args.problem,
-                               hard_bc_params=hard_bc_params)
-    try:
-        pinn_model.load_weights(args.model_path)
-        print(f"  Loaded: {args.model_path}")
-    except Exception as e:
-        print(f"  Failed to load PINN: {e}")
-        return
+        pinn_model = network.build(num_inputs=2, layers=args.layers,
+                                   activation='tanh', num_outputs=2,
+                                   input_range=input_range,
+                                   hard_bc=args.problem,
+                                   hard_bc_params=hard_bc_params)
+    else:
+        network = Network()
+        input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
+        hard_bc_params = None
+        if args.problem == 'l_bracket':
+            hard_bc_params = {'corner_x': args.corner_x, 'corner_y': args.corner_y}
+        pinn_model = network.build(num_inputs=2, layers=args.layers,
+                                   activation='tanh', num_outputs=2,
+                                   input_range=input_range,
+                                   hard_bc=args.problem,
+                                   hard_bc_params=hard_bc_params)
+        try:
+            pinn_model.load_weights(args.model_path)
+            print(f"  Loaded: {args.model_path}")
+        except Exception as e:
+            print(f"  Failed to load PINN: {e}")
+            return
 
     # Step 2: Create domain setup
     print("\n[Step 2] Creating domain setup...")
@@ -161,15 +186,21 @@ def main():
 
     # Step 2b: PINN predictions (timed — this is part of the hybrid pipeline)
     print("\n[Step 2b] Computing PINN predictions...")
-    xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
-    # Warmup pass (JIT / first-call overhead)
-    _ = pinn_model.predict(xy_flat[:1], verbose=0)
-    t_pinn_start = time.perf_counter()
-    pinn_out = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
-    t_pinn_end = time.perf_counter()
+    if use_decomposed:
+        t_pinn_start = time.perf_counter()
+        pinn_ux, pinn_uy = blend_solutions(
+            model_v, model_h, X, Y, layout,
+            args.corner_x, args.corner_y)
+        t_pinn_end = time.perf_counter()
+    else:
+        xy_flat = np.stack([X.flatten(), Y.flatten()], axis=-1).astype(np.float32)
+        _ = pinn_model.predict(xy_flat[:1], verbose=0)
+        t_pinn_start = time.perf_counter()
+        pinn_out = pinn_model.predict(xy_flat, batch_size=len(xy_flat), verbose=0)
+        t_pinn_end = time.perf_counter()
+        pinn_ux = pinn_out[:, 0].reshape(X.shape).astype(np.float32) * layout
+        pinn_uy = pinn_out[:, 1].reshape(X.shape).astype(np.float32) * layout
     pinn_inference_s = t_pinn_end - t_pinn_start
-    pinn_ux = pinn_out[:, 0].reshape(X.shape).astype(np.float32) * layout
-    pinn_uy = pinn_out[:, 1].reshape(X.shape).astype(np.float32) * layout
     print(f"  PINN inference time: {pinn_inference_s:.4f}s")
 
     # Compute von Mises from PINN (finite differences on predictions)

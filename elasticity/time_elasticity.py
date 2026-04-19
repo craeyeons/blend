@@ -34,8 +34,8 @@ plt.style.use(['science', 'no-latex'])
 
 from lib.network import Network
 from lib.domains import create_plate_with_hole, create_l_bracket
-from lib.solver import ElasticitySolver
-from lib.solver import compute_stress_field
+from lib.solver import ElasticitySolver, compute_stress_field
+from train_pinn_decomposed import load_decomposed_pinn, blend_solutions
 from lib.router import (
     RouterCNN,
     PINNResidualComputer,
@@ -151,6 +151,10 @@ def main():
                         choices=['plate_with_hole', 'l_bracket'])
     parser.add_argument('--pinn-path', type=str,
                         default='./models/pinn_plate_with_hole.weights.h5')
+    parser.add_argument('--pinn-vbar-path', type=str, default=None,
+                        help='V-bar PINN weights for decomposed L-bracket')
+    parser.add_argument('--pinn-hbar-path', type=str, default=None,
+                        help='H-bar PINN weights for decomposed L-bracket')
     parser.add_argument('--router-weights', type=str, required=True)
     parser.add_argument('--output-dir', type=str, default='./timing_output')
 
@@ -234,6 +238,15 @@ def main():
             )
 
     # PINN
+    use_decomposed = (args.pinn_vbar_path is not None and
+                      args.pinn_hbar_path is not None)
+    if use_decomposed:
+        model_v, model_h = load_decomposed_pinn(
+            args.pinn_vbar_path, args.pinn_hbar_path,
+            layers=args.layers, activation='tanh',
+            x_min=args.x_min, x_max=args.x_max,
+            y_min=args.y_min, y_max=args.y_max,
+            corner_x=args.corner_x, corner_y=args.corner_y)
     network = Network()
     input_range = [(args.x_min, args.x_max), (args.y_min, args.y_max)]
     hard_bc_params = None
@@ -244,11 +257,22 @@ def main():
                                input_range=input_range,
                                hard_bc=args.problem,
                                hard_bc_params=hard_bc_params)
-    pinn_model.load_weights(args.pinn_path)
+    if not use_decomposed:
+        pinn_model.load_weights(args.pinn_path)
 
     # Initial PINN predictions (for router setup)
-    pinn_ux, pinn_uy, pinn_vm = pinn_predict(pinn_model, X, Y, layout,
-                                              E=args.E, nu=args.nu)
+    if use_decomposed:
+        pinn_ux, pinn_uy = blend_solutions(
+            model_v, model_h, X, Y, layout,
+            args.corner_x, args.corner_y)
+        dx = (args.x_max - args.x_min) / (args.nx - 1)
+        dy = (args.y_max - args.y_min) / (args.ny - 1)
+        _, _, _, pinn_vm = compute_stress_field(
+            pinn_ux, pinn_uy, layout, dx, dy, E=args.E, nu=args.nu)
+        pinn_vm = pinn_vm.astype(np.float32) * layout
+    else:
+        pinn_ux, pinn_uy, pinn_vm = pinn_predict(pinn_model, X, Y, layout,
+                                                  E=args.E, nu=args.nu)
 
     # Router
     bc_error = compute_bc_error_field(disp_bc_mask, bc_ux, bc_uy,
@@ -361,9 +385,19 @@ def main():
 
         # 1. PINN inference
         t_pinn_start = time.perf_counter()
-        h_pinn_ux, h_pinn_uy, h_pinn_vm = pinn_predict(
-            pinn_model, X, Y, layout, E=args.E, nu=args.nu
-        )
+        if use_decomposed:
+            h_pinn_ux, h_pinn_uy = blend_solutions(
+                model_v, model_h, X, Y, layout,
+                args.corner_x, args.corner_y)
+            dx = (args.x_max - args.x_min) / (args.nx - 1)
+            dy = (args.y_max - args.y_min) / (args.ny - 1)
+            _, _, _, h_pinn_vm = compute_stress_field(
+                h_pinn_ux, h_pinn_uy, layout, dx, dy, E=args.E, nu=args.nu)
+            h_pinn_vm = h_pinn_vm.astype(np.float32) * layout
+        else:
+            h_pinn_ux, h_pinn_uy, h_pinn_vm = pinn_predict(
+                pinn_model, X, Y, layout, E=args.E, nu=args.nu
+            )
         t_pinn_end = time.perf_counter()
 
         # 2. Router inference
