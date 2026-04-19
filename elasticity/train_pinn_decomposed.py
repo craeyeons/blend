@@ -260,21 +260,26 @@ class DecomposedTrainer:
 
 
 def load_decomposed_pinn(vbar_path, hbar_path, layers, activation,
-                         x_min, x_max, y_min, y_max, corner_x, corner_y):
+                         x_min, x_max, y_min, y_max, corner_x, corner_y,
+                         applied_stress=10.0, E=1.0):
     """
     Load both sub-domain PINN models for the decomposed L-bracket.
 
     Returns (model_v, model_h).
     """
+    disp_scale = applied_stress * (y_max - y_min) / E
+    bc_params = {'disp_scale': disp_scale}
     network = Network()
     model_v = network.build(num_inputs=2, layers=layers,
                             activation=activation, num_outputs=2,
                             input_range=[(x_min, corner_x), (y_min, y_max)],
-                            hard_bc='bottom_fixed')
+                            hard_bc='bottom_fixed',
+                            hard_bc_params=bc_params)
     model_h = network.build(num_inputs=2, layers=layers,
                             activation=activation, num_outputs=2,
                             input_range=[(x_min, x_max), (y_min, corner_y)],
-                            hard_bc='bottom_fixed')
+                            hard_bc='bottom_fixed',
+                            hard_bc_params=bc_params)
     model_v.load_weights(vbar_path)
     model_h.load_weights(hbar_path)
     return model_v, model_h
@@ -495,18 +500,27 @@ def main():
     print()
 
     # Build two models
+    # Displacement scale: characteristic displacement ~ sigma * L / E
+    # so the network only needs to learn O(1) outputs
+    L = y_max - y_min
+    disp_scale = args.applied_stress * L / args.E
+    print(f"  Displacement scale factor: {disp_scale:.2f}")
+
     network = Network()
     input_range_v = [(x_min, cx), (y_min, y_max)]
     input_range_h = [(x_min, x_max), (y_min, cy)]
+    bc_params = {'disp_scale': disp_scale}
 
     model_v = network.build(num_inputs=2, layers=args.layers,
                             activation=args.activation, num_outputs=2,
                             input_range=input_range_v,
-                            hard_bc='bottom_fixed')
+                            hard_bc='bottom_fixed',
+                            hard_bc_params=bc_params)
     model_h = network.build(num_inputs=2, layers=args.layers,
                             activation=args.activation, num_outputs=2,
                             input_range=input_range_h,
-                            hard_bc='bottom_fixed')
+                            hard_bc='bottom_fixed',
+                            hard_bc_params=bc_params)
 
     print("V-bar model:")
     model_v.summary()

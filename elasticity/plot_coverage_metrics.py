@@ -446,7 +446,8 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y)
+            corner_x=args.corner_x, corner_y=args.corner_y,
+            applied_stress=args.applied_stress, E=args.E)
         print(f"  Loaded decomposed PINN")
         t0 = time.time()
         ux_pinn, uy_pinn = blend_solutions(

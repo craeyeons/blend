@@ -118,7 +118,11 @@ class Network:
             # Bottom edge (y = y_min) fully fixed: u(x, y_min) = 0
             y_min = input_range[1][0] if input_range else 0.0
             dist = inputs[:, 1:2] - y_min
-            outputs = outputs * dist
+            # Scale so network learns O(1) outputs: characteristic
+            # displacement ~ sigma * L / E.  Passed via hard_bc_params.
+            params = hard_bc_params or {}
+            disp_scale = params.get('disp_scale', 1.0)
+            outputs = outputs * dist * disp_scale
         elif hard_bc == 'plate_with_hole':
             # Left edge roller: ux(x_min, y) = 0
             # Bottom edge roller: uy(x, y_min) = 0

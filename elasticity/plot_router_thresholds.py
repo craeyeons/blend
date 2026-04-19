@@ -166,7 +166,8 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y)
+            corner_x=args.corner_x, corner_y=args.corner_y,
+            applied_stress=args.applied_stress, E=args.E)
         pinn_ux, pinn_uy = blend_solutions(
             model_v, model_h, X, Y, layout,
             args.corner_x, args.corner_y)

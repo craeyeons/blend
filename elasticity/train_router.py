@@ -126,7 +126,8 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y)
+            corner_x=args.corner_x, corner_y=args.corner_y,
+            applied_stress=args.applied_stress, E=args.E)
         print(f"  Loaded decomposed PINN: {args.pinn_vbar_path}, {args.pinn_hbar_path}")
         # Build a dummy single-domain PINN for residual computation in router trainer
         network = Network()

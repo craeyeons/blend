@@ -41,8 +41,8 @@ python train_pinn.py \
     --epochs 10000 \
     --lr 1e-3 \
     --n-domain 10000 \
-    --n-boundary 2000 \
-    --w-trac 5.0
+    ----w-tracn-boundary 2000 \
+     5.0
 
 # --- Step 2: FDM ground truth ---
 echo "=== Running FDM solver ==="
