@@ -31,7 +31,15 @@ def main():
     # Material
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
-    parser.add_argument('--applied-stress', type=float, default=10.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0,
+                        help='Legacy load magnitude; used when --load-magnitude absent')
+    parser.add_argument('--load-edge', type=str, default='top',
+                        choices=['top', 'right'])
+    parser.add_argument('--load-magnitude', type=float, default=None)
+    parser.add_argument('--load-angle', type=float, default=None,
+                        help='Load direction (deg, CCW from +x)')
+    parser.add_argument('--tag', type=str, default=None,
+                        help='Suffix for output .npz / .png')
 
     # Plate with hole
     parser.add_argument('--x-min', type=float, default=-2.0)
@@ -54,6 +62,16 @@ def main():
     if args.problem == 'l_bracket' and args.x_min == -2.0:
         args.x_min = 0.0
         args.y_min = 0.0
+
+    # Resolve (tx, ty) for the applied load.
+    mag = args.load_magnitude if args.load_magnitude is not None else args.applied_stress
+    if args.load_angle is not None:
+        theta = np.deg2rad(args.load_angle)
+        load_tx = float(mag * np.cos(theta))
+        load_ty = float(mag * np.sin(theta))
+    else:
+        load_tx = -mag if args.load_edge == 'top' else mag
+        load_ty = 0.0
 
     print("=" * 60)
     print(f"FDM SOLVER: {args.problem}")
@@ -80,6 +98,8 @@ def main():
                 corner_y=args.corner_y,
                 applied_stress=args.applied_stress,
                 fillet_radius=args.fillet_radius,
+                load_edge=args.load_edge,
+                load_tx=load_tx, load_ty=load_ty,
             )
 
     # Solve
@@ -99,8 +119,14 @@ def main():
 
     vm = solver.compute_von_mises(sxx, syy, sxy)
 
-    # Save
-    out_path = os.path.join(args.output_dir, f'fdm_{args.problem}.npz')
+    # Save. Tag filename with load config so different loads don't collide.
+    if args.tag:
+        suffix = f'_{args.tag}'
+    elif args.problem == 'l_bracket':
+        suffix = f'_{args.load_edge}_tx{load_tx:.3g}_ty{load_ty:.3g}'
+    else:
+        suffix = ''
+    out_path = os.path.join(args.output_dir, f'fdm_{args.problem}{suffix}.npz')
     np.savez(out_path,
              X=X, Y=Y, layout=layout,
              ux=ux, uy=uy,
@@ -140,7 +166,7 @@ def main():
 
         plt.suptitle(f'FDM Solution: {args.problem}', fontsize=14)
         plt.tight_layout()
-        fig_path = os.path.join(args.output_dir, f'fdm_{args.problem}.png')
+        fig_path = os.path.join(args.output_dir, f'fdm_{args.problem}{suffix}.png')
         plt.savefig(fig_path, dpi=150)
         print(f"Saved plot to {fig_path}")
         plt.show()

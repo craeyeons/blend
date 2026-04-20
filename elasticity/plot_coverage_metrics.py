@@ -87,6 +87,8 @@ def compute_fdm_solution(args):
             corner_y=args.corner_y,
             applied_stress=args.applied_stress,
             fillet_radius=args.fillet_radius,
+            load_edge=args.load_edge,
+            load_tx=args._load_tx, load_ty=args._load_ty,
         )
 
     solver = ElasticitySolver(
@@ -401,7 +403,13 @@ def main():
     parser.add_argument('--hole-x', type=float, default=0.0)
     parser.add_argument('--hole-y', type=float, default=0.0)
     parser.add_argument('--hole-radius', type=float, default=0.5)
-    parser.add_argument('--applied-stress', type=float, default=10.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0,
+                        help='Legacy load magnitude; used when --load-magnitude absent')
+    parser.add_argument('--load-edge', type=str, default='top',
+                        choices=['top', 'right'])
+    parser.add_argument('--load-magnitude', type=float, default=None)
+    parser.add_argument('--load-angle', type=float, default=None,
+                        help='Load direction (deg, CCW from +x)')
     parser.add_argument('--corner-x', type=float, default=1.0)
     parser.add_argument('--corner-y', type=float, default=1.0)
     parser.add_argument('--fillet-radius', type=float, default=0.04,
@@ -417,6 +425,16 @@ def main():
 
     if args.problem == 'l_bracket' and args.x_min == -2.0:
         args.x_min, args.y_min = 0.0, 0.0
+
+    # Resolve applied traction vector (shared by domain setup and FDM helper).
+    mag = args.load_magnitude if args.load_magnitude is not None else args.applied_stress
+    if args.load_angle is not None:
+        theta = np.deg2rad(args.load_angle)
+        args._load_tx = float(mag * np.cos(theta))
+        args._load_ty = float(mag * np.sin(theta))
+    else:
+        args._load_tx = -mag if args.load_edge == 'top' else mag
+        args._load_ty = 0.0
 
     os.makedirs(args.output_dir, exist_ok=True)
     timings = {}
@@ -435,7 +453,9 @@ def main():
             x_domain=(args.x_min, args.x_max), y_domain=(args.y_min, args.y_max),
             corner_x=args.corner_x, corner_y=args.corner_y,
             applied_stress=args.applied_stress,
-            fillet_radius=args.fillet_radius)
+            fillet_radius=args.fillet_radius,
+            load_edge=args.load_edge,
+            load_tx=args._load_tx, load_ty=args._load_ty)
         show_hole = None
 
     # --- PINN ---
@@ -448,8 +468,7 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y,
-            applied_stress=args.applied_stress, E=args.E)
+            corner_x=args.corner_x, corner_y=args.corner_y)
         print(f"  Loaded decomposed PINN")
         t0 = time.time()
         ux_pinn, uy_pinn = blend_solutions(

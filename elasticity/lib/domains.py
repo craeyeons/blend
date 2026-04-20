@@ -107,7 +107,8 @@ def create_plate_with_hole(Nx=200, Ny=200,
 def create_l_bracket(Nx=200, Ny=200,
                      x_domain=(0.0, 2.0), y_domain=(0.0, 2.0),
                      corner_x=1.0, corner_y=1.0,
-                     applied_stress=10.0, fillet_radius=0.0):
+                     applied_stress=10.0, fillet_radius=0.0,
+                     load_edge='top', load_tx=None, load_ty=None):
     """
     L-shaped bracket under load.
 
@@ -177,18 +178,34 @@ def create_l_bracket(Nx=200, Ny=200,
     bc_ux[0, :] = 0.0
     bc_uy[0, :] = 0.0
 
-    # Right edge of lower arm (x=x_max, y < corner_y): traction-free
+    # Resolve applied load vector. Backwards compatible: with no override,
+    # load_edge='top' and tx = -applied_stress, ty = 0 (pull left).
+    if load_edge == 'top':
+        tx_val = -applied_stress if load_tx is None else load_tx
+        ty_val = 0.0 if load_ty is None else load_ty
+    elif load_edge == 'right':
+        tx_val = applied_stress if load_tx is None else load_tx
+        ty_val = 0.0 if load_ty is None else load_ty
+    else:
+        raise ValueError(f"load_edge must be 'top' or 'right', got {load_edge}")
+
+    # Right edge of lower arm (x=x_max, y <= corner_y)
     lower_arm_right = (np.abs(X - x_max) < (x[1] - x[0]) / 2) & (Y <= corner_y)
     trac_bc_mask[lower_arm_right & (layout > 0)] = 1.0
+    if load_edge == 'right':
+        bc_tx[lower_arm_right & (layout > 0)] = tx_val
+        bc_ty[lower_arm_right & (layout > 0)] = ty_val
 
     # Left edge: traction-free
     left_edge = np.abs(X - x_min) < (x[1] - x[0]) / 2
     trac_bc_mask[left_edge & (layout > 0)] = 1.0
 
-    # Top edge of upper arm (y=y_max, x < corner_x): pull left
+    # Top edge of upper arm (y=y_max, x <= corner_x)
     top_edge = (np.abs(Y - y_max) < (y[1] - y[0]) / 2) & (X <= corner_x)
     trac_bc_mask[top_edge & (layout > 0)] = 1.0
-    bc_tx[top_edge & (layout > 0)] = -applied_stress
+    if load_edge == 'top':
+        bc_tx[top_edge & (layout > 0)] = tx_val
+        bc_ty[top_edge & (layout > 0)] = ty_val
 
     # Inner edges of L (re-entrant corner region): traction-free
     # Horizontal inner edge: y ~ corner_y, x > corner_x  (stops at fillet tangent)

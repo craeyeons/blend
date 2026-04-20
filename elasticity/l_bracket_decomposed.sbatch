@@ -26,8 +26,30 @@ export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TF_GPU_ALLOCATOR=cuda_malloc_async
 
-VBAR=./models/pinn_l_bracket_vbar.weights.h5
-HBAR=./models/pinn_l_bracket_hbar.weights.h5
+# ============================================================
+# EDIT THESE PER SUBMISSION to change the applied load.
+#   LOAD_EDGE      : 'top'  (V-bar top edge)   or  'right' (H-bar right edge)
+#   LOAD_MAGNITUDE : traction magnitude (e.g. 10.0)
+#   LOAD_ANGLE     : direction in degrees, CCW from +x
+#                    (e.g. 180 = pull in -x, -90 = pull in -y)
+# ============================================================
+LOAD_EDGE=top
+LOAD_MAGNITUDE=10.0
+LOAD_ANGLE=180.0
+
+# Encode load config in a short, filesystem-safe tag.
+TAG="${LOAD_EDGE}_m${LOAD_MAGNITUDE}_a${LOAD_ANGLE}"
+TAG="${TAG//./p}"   # replace '.' with 'p' so filenames are cleaner
+TAG="${TAG//-/n}"   # replace leading '-' in angle with 'n'
+
+VBAR=./models/pinn_l_bracket_vbar_${TAG}.weights.h5
+HBAR=./models/pinn_l_bracket_hbar_${TAG}.weights.h5
+FDM_NPZ=./results/fdm_l_bracket_${TAG}.npz
+ROUTER_DIR=./router_output/l_bracket/${TAG}/beta_1.1
+METRICS_DIR=./metrics_output_lbracket/${TAG}
+THRESH_DIR=./threshold_plots_lbracket/${TAG}
+
+echo "Load config: edge=$LOAD_EDGE  magnitude=$LOAD_MAGNITUDE  angle=$LOAD_ANGLE  tag=$TAG"
 
 echo "=== Verifying GPU ==="
 python -c "
@@ -47,14 +69,22 @@ python train_pinn_decomposed.py \
     --n-coupling 5000 \
     --n-interface 2000 \
     --w-coupling 10.0 \
-    --w-trac-match 10.0
+    --w-trac-match 10.0 \
+    --load-edge $LOAD_EDGE \
+    --load-magnitude $LOAD_MAGNITUDE \
+    --load-angle $LOAD_ANGLE \
+    --tag $TAG
 
 # --- Step 2: FDM ground truth ---
 echo "=== Running FDM solver ==="
 python run_fdm.py \
     --problem l_bracket \
     --nx 200 --ny 200 \
-    --max-iter 200000
+    --max-iter 200000 \
+    --load-edge $LOAD_EDGE \
+    --load-magnitude $LOAD_MAGNITUDE \
+    --load-angle $LOAD_ANGLE \
+    --tag $TAG
 
 # --- Step 3: Train router ---
 echo "=== Training Router ==="
@@ -68,16 +98,17 @@ python train_router.py \
     --lambda-tv 1.0 \
     --lr 1e-3 \
     --nx 200 --ny 200 \
-    --x-min 0.0 --y-min 0.0
+    --x-min 0.0 --y-min 0.0 \
+    --output-dir $ROUTER_DIR
 
 # --- Step 4: Threshold plots ---
 echo "=== Threshold Plots ==="
 python plot_router_thresholds.py \
     --problem l_bracket \
-    --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
+    --router-path ${ROUTER_DIR}/router.weights.h5 \
     --pinn-vbar-path $VBAR \
     --pinn-hbar-path $HBAR \
-    --output-dir ./threshold_plots_lbracket \
+    --output-dir $THRESH_DIR \
     --threshold-start -0.5 \
     --threshold-end 0.5 \
     --num-thresholds 11
@@ -88,9 +119,12 @@ python plot_coverage_metrics.py \
     --problem l_bracket \
     --pinn-vbar-path $VBAR \
     --pinn-hbar-path $HBAR \
-    --router-path ./router_output/l_bracket/beta_1.1/router.weights.h5 \
-    --fdm-path ./results/fdm_l_bracket.npz \
+    --router-path ${ROUTER_DIR}/router.weights.h5 \
+    --fdm-path $FDM_NPZ \
     --beta 1.1 \
-    --output-dir ./metrics_output_lbracket
+    --load-edge $LOAD_EDGE \
+    --load-magnitude $LOAD_MAGNITUDE \
+    --load-angle $LOAD_ANGLE \
+    --output-dir $METRICS_DIR
 
 echo "=== Job completed ==="

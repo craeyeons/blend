@@ -352,6 +352,25 @@ def blend_solutions(model_v, model_h, X, Y, layout,
     return ux, uy
 
 
+def resolve_load_vector(args):
+    """Return (tx, ty) for the applied traction, from magnitude/angle if given.
+
+    Falls back to legacy behavior: load_edge='top', tx=-applied_stress, ty=0.
+    Angle is in degrees, measured CCW from +x.
+    """
+    mag = args.load_magnitude if args.load_magnitude is not None else args.applied_stress
+    if args.load_angle is not None:
+        theta = np.deg2rad(args.load_angle)
+        tx = mag * np.cos(theta)
+        ty = mag * np.sin(theta)
+    else:
+        if args.load_edge == 'top':
+            tx, ty = -mag, 0.0
+        else:  # 'right'
+            tx, ty = mag, 0.0
+    return float(tx), float(ty)
+
+
 def create_training_data(args):
     """Create training data for both sub-domain PINNs."""
     cx, cy = args.corner_x, args.corner_y
@@ -359,16 +378,21 @@ def create_training_data(args):
     y_min, y_max = args.y_min, args.y_max
     n_domain = args.n_domain
     n_bc = args.n_boundary
-    sigma = args.applied_stress
+    tx_val, ty_val = resolve_load_vector(args)
+    top_loaded = (args.load_edge == 'top')
+    right_loaded = (args.load_edge == 'right')
 
     # --- V-bar: [x_min, cx] x [y_min, y_max] ---
     xy_pde_v = sample_interior((x_min, cx), (y_min, y_max), n_domain)
 
     # Traction BCs for V-bar:
-    # Top (y=y_max): tx = -sigma, ty = 0, normal = (0, 1)
+    # Top (y=y_max): loaded iff load_edge=='top'. Normal = (0, 1).
     n_top = n_bc // 3
     xy_top = sample_edge((x_min, cx), (y_min, y_max), 'top', n_top)
-    t_top = np.column_stack([np.full(n_top, -sigma), np.zeros(n_top)]).astype(np.float32)
+    top_tx = tx_val if top_loaded else 0.0
+    top_ty = ty_val if top_loaded else 0.0
+    t_top = np.column_stack([np.full(n_top, top_tx),
+                             np.full(n_top, top_ty)]).astype(np.float32)
     n_top_arr = np.column_stack([np.zeros(n_top), np.ones(n_top)]).astype(np.float32)
 
     # Left (x=x_min): traction-free, normal = (-1, 0)
@@ -400,10 +424,13 @@ def create_training_data(args):
     n_left_h_arr = np.column_stack([np.full(n_left_h, -1.0),
                                      np.zeros(n_left_h)]).astype(np.float32)
 
-    # Right (x=x_max): traction-free, normal = (1, 0)
+    # Right (x=x_max): loaded iff load_edge=='right'. Normal = (1, 0).
     n_right_h = n_bc // 3
     xy_right_h = sample_edge((x_min, x_max), (y_min, cy), 'right', n_right_h)
-    t_right_h = np.zeros((n_right_h, 2), dtype=np.float32)
+    right_tx = tx_val if right_loaded else 0.0
+    right_ty = ty_val if right_loaded else 0.0
+    t_right_h = np.column_stack([np.full(n_right_h, right_tx),
+                                 np.full(n_right_h, right_ty)]).astype(np.float32)
     n_right_h_arr = np.column_stack([np.ones(n_right_h),
                                       np.zeros(n_right_h)]).astype(np.float32)
 
@@ -465,7 +492,17 @@ def main():
 
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
-    parser.add_argument('--applied-stress', type=float, default=10.0)
+    parser.add_argument('--applied-stress', type=float, default=10.0,
+                        help='Legacy load magnitude; used when --load-magnitude absent')
+    parser.add_argument('--load-edge', type=str, default='top',
+                        choices=['top', 'right'],
+                        help='Edge on which traction is applied')
+    parser.add_argument('--load-magnitude', type=float, default=None,
+                        help='Traction magnitude. Defaults to --applied-stress')
+    parser.add_argument('--load-angle', type=float, default=None,
+                        help='Traction direction (deg, CCW from +x). Omit for legacy default')
+    parser.add_argument('--tag', type=str, default=None,
+                        help='Extra suffix for output weights (e.g. "top_m10_a180")')
 
     parser.add_argument('--x-min', type=float, default=0.0)
     parser.add_argument('--x-max', type=float, default=2.0)
@@ -534,15 +571,18 @@ def main():
     print("\nTraining...")
     history = trainer.train(data, epochs=args.epochs)
 
-    # Save
-    v_path = os.path.join(args.output_dir, 'pinn_l_bracket_vbar.weights.h5')
-    h_path = os.path.join(args.output_dir, 'pinn_l_bracket_hbar.weights.h5')
+    # Save. Encode load config in filename so different loads don't collide.
+    tx_val, ty_val = resolve_load_vector(args)
+    suffix = args.tag or f'{args.load_edge}_tx{tx_val:.3g}_ty{ty_val:.3g}'
+    v_path = os.path.join(args.output_dir, f'pinn_l_bracket_vbar_{suffix}.weights.h5')
+    h_path = os.path.join(args.output_dir, f'pinn_l_bracket_hbar_{suffix}.weights.h5')
     model_v.save_weights(v_path)
     model_h.save_weights(h_path)
     print(f"\nSaved V-bar model to {v_path}")
     print(f"Saved H-bar model to {h_path}")
 
-    history_path = os.path.join(args.output_dir, 'pinn_l_bracket_decomposed_history.npz')
+    history_path = os.path.join(args.output_dir,
+                                f'pinn_l_bracket_decomposed_history_{suffix}.npz')
     np.savez(history_path, **history)
 
     # Quick visualization: blended solution on L-bracket grid
@@ -561,6 +601,8 @@ def main():
             x_domain=(x_min, x_max), y_domain=(y_min, y_max),
             corner_x=cx, corner_y=cy,
             applied_stress=args.applied_stress,
+            load_edge=args.load_edge,
+            load_tx=tx_val, load_ty=ty_val,
         )
 
         ux, uy = blend_solutions(model_v, model_h, X, Y, layout, cx, cy)

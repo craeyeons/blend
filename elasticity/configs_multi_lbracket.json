@@ -1,0 +1,70 @@
+{
+  "_comment": "Multi-load configs for L-bracket router training. Each entry names a PINN pair trained with the matching load. The 'tag' must equal the TAG built in l_bracket_decomposed.sbatch (dots -> 'p', '-' in angle -> 'n'). fdm_path is used by the hybrid/evaluator; omit if not needed.",
+  "train": [
+    {
+      "load_edge": "top",
+      "load_magnitude": 10.0,
+      "load_angle": 180.0,
+      "tag": "top_m10p0_a180p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_top_m10p0_a180p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_top_m10p0_a180p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_top_m10p0_a180p0.npz"
+    },
+    {
+      "load_edge": "top",
+      "load_magnitude": 10.0,
+      "load_angle": 225.0,
+      "tag": "top_m10p0_a225p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_top_m10p0_a225p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_top_m10p0_a225p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_top_m10p0_a225p0.npz"
+    },
+    {
+      "load_edge": "top",
+      "load_magnitude": 6.0,
+      "load_angle": 200.0,
+      "tag": "top_m6p0_a200p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_top_m6p0_a200p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_top_m6p0_a200p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_top_m6p0_a200p0.npz"
+    },
+    {
+      "load_edge": "right",
+      "load_magnitude": 8.0,
+      "load_angle": -45.0,
+      "tag": "right_m8p0_an45p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_right_m8p0_an45p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_right_m8p0_an45p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_right_m8p0_an45p0.npz"
+    },
+    {
+      "load_edge": "right",
+      "load_magnitude": 12.0,
+      "load_angle": -90.0,
+      "tag": "right_m12p0_an90p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_right_m12p0_an90p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_right_m12p0_an90p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_right_m12p0_an90p0.npz"
+    }
+  ],
+  "test": [
+    {
+      "load_edge": "top",
+      "load_magnitude": 8.0,
+      "load_angle": 210.0,
+      "tag": "top_m8p0_a210p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_top_m8p0_a210p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_top_m8p0_a210p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_top_m8p0_a210p0.npz"
+    },
+    {
+      "load_edge": "right",
+      "load_magnitude": 10.0,
+      "load_angle": -60.0,
+      "tag": "right_m10p0_an60p0",
+      "pinn_vbar_path": "./models/pinn_l_bracket_vbar_right_m10p0_an60p0.weights.h5",
+      "pinn_hbar_path": "./models/pinn_l_bracket_hbar_right_m10p0_an60p0.weights.h5",
+      "fdm_path":       "./results/fdm_l_bracket_right_m10p0_an60p0.npz"
+    }
+  ]
+}
