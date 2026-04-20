@@ -88,6 +88,11 @@ def main():
     parser.add_argument('--corner-y', type=float, default=1.0)
     parser.add_argument('--fillet-radius', type=float, default=0.04,
                         help='Fillet radius at L-bracket re-entrant corner (0=sharp)')
+    parser.add_argument('--load-edge', type=str, default='top',
+                        choices=['top', 'right'])
+    parser.add_argument('--load-magnitude', type=float, default=None)
+    parser.add_argument('--load-angle', type=float, default=None,
+                        help='Load direction (deg, CCW from +x)')
 
     # Material
     parser.add_argument('--E', type=float, default=1.0)
@@ -104,6 +109,16 @@ def main():
     if args.problem == 'l_bracket' and args.x_min == -2.0:
         args.x_min = 0.0
         args.y_min = 0.0
+
+    # Resolve applied traction vector for L-bracket load config.
+    mag = args.load_magnitude if args.load_magnitude is not None else args.applied_stress
+    if args.load_angle is not None:
+        theta = np.deg2rad(args.load_angle)
+        args._load_tx = float(mag * np.cos(theta))
+        args._load_ty = float(mag * np.sin(theta))
+    else:
+        args._load_tx = -mag if args.load_edge == 'top' else mag
+        args._load_ty = 0.0
 
     if args.output_dir is None:
         beta_str = f"beta_{args.beta:.4f}".rstrip('0').rstrip('.')
@@ -126,8 +141,7 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y,
-            applied_stress=args.applied_stress, E=args.E)
+            corner_x=args.corner_x, corner_y=args.corner_y)
         print(f"  Loaded decomposed PINN: {args.pinn_vbar_path}, {args.pinn_hbar_path}")
         # Build a dummy single-domain PINN for residual computation in router trainer
         network = Network()
@@ -179,6 +193,8 @@ def main():
                 corner_y=args.corner_y,
                 applied_stress=args.applied_stress,
                 fillet_radius=args.fillet_radius,
+                load_edge=args.load_edge,
+                load_tx=args._load_tx, load_ty=args._load_ty,
             )
         show_hole = None
 

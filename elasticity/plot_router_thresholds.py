@@ -125,6 +125,11 @@ def main():
     parser.add_argument('--corner-y', type=float, default=1.0)
     parser.add_argument('--fillet-radius', type=float, default=0.04,
                         help='Fillet radius at L-bracket re-entrant corner (0=sharp)')
+    parser.add_argument('--load-edge', type=str, default='top',
+                        choices=['top', 'right'])
+    parser.add_argument('--load-magnitude', type=float, default=None)
+    parser.add_argument('--load-angle', type=float, default=None,
+                        help='Load direction (deg, CCW from +x)')
     parser.add_argument('--E', type=float, default=1.0)
     parser.add_argument('--nu', type=float, default=0.3)
     parser.add_argument('--layers', type=int, nargs='+', default=[128, 128, 128, 128])
@@ -136,6 +141,15 @@ def main():
 
     if args.problem == 'l_bracket' and args.x_min == -2.0:
         args.x_min, args.y_min = 0.0, 0.0
+
+    mag = args.load_magnitude if args.load_magnitude is not None else args.applied_stress
+    if args.load_angle is not None:
+        theta = np.deg2rad(args.load_angle)
+        args._load_tx = float(mag * np.cos(theta))
+        args._load_ty = float(mag * np.sin(theta))
+    else:
+        args._load_tx = -mag if args.load_edge == 'top' else mag
+        args._load_ty = 0.0
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -153,7 +167,9 @@ def main():
             x_domain=(args.x_min, args.x_max), y_domain=(args.y_min, args.y_max),
             corner_x=args.corner_x, corner_y=args.corner_y,
             applied_stress=args.applied_stress,
-            fillet_radius=args.fillet_radius)
+            fillet_radius=args.fillet_radius,
+            load_edge=args.load_edge,
+            load_tx=args._load_tx, load_ty=args._load_ty)
         show_hole = None
 
     # PINN
@@ -166,8 +182,7 @@ def main():
             layers=args.layers, activation='tanh',
             x_min=args.x_min, x_max=args.x_max,
             y_min=args.y_min, y_max=args.y_max,
-            corner_x=args.corner_x, corner_y=args.corner_y,
-            applied_stress=args.applied_stress, E=args.E)
+            corner_x=args.corner_x, corner_y=args.corner_y)
         pinn_ux, pinn_uy = blend_solutions(
             model_v, model_h, X, Y, layout,
             args.corner_x, args.corner_y)

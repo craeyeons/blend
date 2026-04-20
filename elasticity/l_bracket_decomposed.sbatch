@@ -99,6 +99,9 @@ python train_router.py \
     --lr 1e-3 \
     --nx 200 --ny 200 \
     --x-min 0.0 --y-min 0.0 \
+    --load-edge $LOAD_EDGE \
+    --load-magnitude $LOAD_MAGNITUDE \
+    --load-angle $LOAD_ANGLE \
     --output-dir $ROUTER_DIR
 
 # --- Step 4: Threshold plots ---
@@ -109,6 +112,9 @@ python plot_router_thresholds.py \
     --pinn-vbar-path $VBAR \
     --pinn-hbar-path $HBAR \
     --output-dir $THRESH_DIR \
+    --load-edge $LOAD_EDGE \
+    --load-magnitude $LOAD_MAGNITUDE \
+    --load-angle $LOAD_ANGLE \
     --threshold-start -0.5 \
     --threshold-end 0.5 \
     --num-thresholds 11
