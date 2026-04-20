@@ -1451,20 +1451,12 @@ def main():
 
     # =========================================================================
     # Step 7d: Baseline hybrid using simple residual-threshold separator
-    #   cfd_mask = (residual_field >= tau), with tau chosen so that the CFD
-    #   area matches the optimal hybrid coverage (the star in coverage_metrics.png).
+    #   cfd_mask = (residual_field >= beta). Points whose normalized residual
+    #   exceeds the CFD cost coefficient are routed to CFD.
     # =========================================================================
-    print("\n[Step 7d] Computing baseline hybrid with residual-threshold separator...")
-    target_coverage = full_loss_optimal['optimal_coverage']
+    print("\n[Step 7d] Computing baseline hybrid with residual-threshold separator (tau = beta)...")
     fluid_mask_full = layout > 0
-    fluid_residuals = residual_field[fluid_mask_full]
-    if len(fluid_residuals) > 0 and 0.0 < target_coverage < 1.0:
-        residual_threshold = float(np.quantile(fluid_residuals, 1.0 - target_coverage))
-    elif target_coverage <= 0.0:
-        residual_threshold = float(fluid_residuals.max()) + 1.0 if len(fluid_residuals) else 1.0
-    else:
-        residual_threshold = float(fluid_residuals.min()) - 1.0 if len(fluid_residuals) else 0.0
-    print(f"  Target coverage (from optimal hybrid): {target_coverage*100:.2f}%")
+    residual_threshold = float(args.beta)
     print(f"  Residual threshold (R(x) >= tau => CFD): {residual_threshold:.6f}")
 
     u_hybrid_r, v_hybrid_r, p_hybrid_r, cfd_mask_r, hybrid_solve_time_r = compute_hybrid_solution(

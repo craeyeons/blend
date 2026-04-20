@@ -311,43 +311,46 @@ def blend_solutions(model_v, model_h, X, Y, layout,
     x_flat = xy_flat[:, 0]
     y_flat = xy_flat[:, 1]
 
-    # V-bar owns its full domain [0, cx] x [0, y_max] (including overlap).
-    # H-bar owns only its exclusive region (cx, x_max] x [0, cy].
-    # Narrow sigmoid transition at x = cx to avoid hard discontinuity.
-    in_v_domain = (x_flat <= cx)           # V-bar full domain
-    in_h_exclusive = (x_flat > cx) & (y_flat <= cy)  # H-bar exclusive only
-    # Transition strip: blend V→H over a narrow band around x = cx
-    transition_width = (X[0, 1] - X[0, 0]) * 5  # ~5 grid cells
-    in_transition = ((x_flat > cx - transition_width) &
-                     (x_flat <= cx + transition_width) &
-                     (y_flat <= cy))
+    # Identify regions
+    in_v = (x_flat <= cx)  # V-bar domain
+    in_h = (y_flat <= cy)  # H-bar domain
+    in_overlap = in_v & in_h
+    in_v_only = in_v & ~in_h  # V-bar exclusive (y > cy, x < cx)
+    in_h_only = in_h & ~in_v  # H-bar exclusive (x > cx, y < cy)
 
     ux_out = np.zeros(len(xy_flat), dtype=np.float32)
     uy_out = np.zeros(len(xy_flat), dtype=np.float32)
 
-    # V-bar domain (everything x <= cx)
-    if np.any(in_v_domain):
-        uv = model_v.predict(xy_flat[in_v_domain], batch_size=4096, verbose=0)
-        ux_out[in_v_domain] = uv[:, 0]
-        uy_out[in_v_domain] = uv[:, 1]
+    # V-bar exclusive
+    if np.any(in_v_only):
+        uv = model_v.predict(xy_flat[in_v_only], batch_size=4096, verbose=0)
+        ux_out[in_v_only] = uv[:, 0]
+        uy_out[in_v_only] = uv[:, 1]
 
-    # H-bar exclusive (x > cx, y <= cy)
-    if np.any(in_h_exclusive):
-        uv = model_h.predict(xy_flat[in_h_exclusive], batch_size=4096, verbose=0)
-        ux_out[in_h_exclusive] = uv[:, 0]
-        uy_out[in_h_exclusive] = uv[:, 1]
+    # H-bar exclusive
+    if np.any(in_h_only):
+        uv = model_h.predict(xy_flat[in_h_only], batch_size=4096, verbose=0)
+        ux_out[in_h_only] = uv[:, 0]
+        uy_out[in_h_only] = uv[:, 1]
 
-    # Narrow transition: sigmoid blend at x ≈ cx for y <= cy
-    if np.any(in_transition):
-        pts = xy_flat[in_transition]
+    # Overlap: smooth blend
+    if np.any(in_overlap):
+        pts = xy_flat[in_overlap]
         uv_v = model_v.predict(pts, batch_size=4096, verbose=0)
         uv_h = model_h.predict(pts, batch_size=4096, verbose=0)
-        # w_h = 0 at x << cx, w_h = 1 at x >> cx
-        w_h = 1.0 / (1.0 + np.exp(-sharpness * (pts[:, 0] - cx)))
-        w_h = w_h[:, None]
-        blended = (1.0 - w_h) * uv_v + w_h * uv_h
-        ux_out[in_transition] = blended[:, 0]
-        uy_out[in_transition] = blended[:, 1]
+
+        # Distance to V-bar exclusive region (y = cy boundary)
+        d_v = cy - pts[:, 1]  # small when close to V-bar exclusive
+        # Distance to H-bar exclusive region (x = cx boundary)
+        d_h = cx - pts[:, 0]  # small when close to H-bar exclusive
+
+        # w_v: weight for V-bar. High when close to V-bar exclusive (d_v small).
+        w_v = d_h / (d_v + d_h + 1e-10)
+        w_v = w_v[:, None]  # (N, 1) for broadcasting
+
+        blended = w_v * uv_v + (1.0 - w_v) * uv_h
+        ux_out[in_overlap] = blended[:, 0]
+        uy_out[in_overlap] = blended[:, 1]
 
     ux = ux_out.reshape(X.shape) * layout
     uy = uy_out.reshape(X.shape) * layout
