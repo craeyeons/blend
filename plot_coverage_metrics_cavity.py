@@ -247,7 +247,7 @@ def compute_hybrid_solution(pinn_model, router_output, layout, threshold, args):
 
 
 def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
-                         threshold, coverage, save_path=None):
+                         threshold, coverage, save_path=None, title=None, show_info=True):
     """
     Plot the hybrid solution fields with CFD/PINN region overlay.
     """
@@ -313,25 +313,27 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     # Add text info panel
     ax = axes[1, 2]
     ax.axis('off')
-    info_text = f"""Hybrid Solution Summary
-    
+    if show_info:
+        info_text = f"""Hybrid Solution Summary
+
     Optimal Threshold: {threshold:.6f}
     CFD Coverage: {coverage*100:.2f}%
     PINN Coverage: {(1-coverage)*100:.2f}%
-    
+
     Legend:
     • Blue regions: PINN solver
     • Red regions: CFD solver
-    
+
     The hybrid solution uses CFD for regions
     where router_output > threshold, and
     PINN elsewhere.
     """
-    ax.text(0.1, 0.9, info_text, transform=ax.transAxes, fontsize=11,
-            verticalalignment='top', fontfamily='monospace',
-            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-    
-    plt.suptitle(f'Hybrid PINN-CFD Solution (Cavity Flow)', fontsize=16, fontweight='bold')
+        ax.text(0.1, 0.9, info_text, transform=ax.transAxes, fontsize=11,
+                verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+
+    suptitle = title if title is not None else 'Hybrid PINN-CFD Solution (Cavity Flow)'
+    plt.suptitle(suptitle, fontsize=16, fontweight='bold')
     plt.tight_layout()
     
     if save_path:
@@ -1078,7 +1080,9 @@ def main():
         u_hybrid_r, v_hybrid_r, p_hybrid_r, X, Y, layout, cfd_mask_r,
         threshold=residual_threshold,
         coverage=actual_coverage_r,
-        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.png')
+        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.png'),
+        title=f'Naive Threshold Based Rule (Threshold = {residual_threshold:.2f})',
+        show_info=False,
     )
 
     # =========================================================================

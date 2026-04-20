@@ -271,7 +271,8 @@ def plot_expected_loss(results, beta, save_path=None):
 
 def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
                               ux_hybrid, uy_hybrid, X, Y, layout,
-                              cfd_mask, show_hole=None, save_path=None):
+                              cfd_mask, show_hole=None, save_path=None,
+                              title=None):
     """Side-by-side grid: PINN / Hybrid / FDM for ux, uy, |u|, and error."""
     fluid = layout > 0
 
@@ -358,7 +359,8 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
             if j == 0:
                 ax.set_ylabel(row_label, fontsize=13, fontweight='bold')
 
-    fig.suptitle('Solution Comparison', fontsize=16, fontweight='bold', y=1.01)
+    fig.suptitle(title if title is not None else 'Solution Comparison',
+                 fontsize=16, fontweight='bold', y=1.01)
     plt.tight_layout()
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -580,6 +582,33 @@ def main():
                               ux_hybrid, uy_hybrid, X, Y, layout, cfd_mask,
                               show_hole,
                               save_path=os.path.join(args.output_dir, 'solution_comparison.png'))
+
+    # --- Baseline: naive residual-threshold rule (tau = beta) ---
+    print("[5b] Building naive residual-threshold hybrid (tau = beta)...")
+    residual_threshold = float(args.beta)
+    cfd_mask_r = ((res_norm >= residual_threshold).astype(np.int32)
+                  * layout.astype(np.int32))
+    hybrid_solver_r = ElasticitySolver(
+        E=args.E, nu=args.nu,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+        Nx=args.nx, Ny=args.ny,
+        max_iter=args.max_iter, tol=args.tol,
+    )
+    ux_hybrid_r, uy_hybrid_r, _, _, _ = hybrid_solver_r.solve(
+        layout, dbc, bux, buy,
+        tbc, btx, bty,
+        fdm_mask=cfd_mask_r,
+        initial_ux=ux_pinn, initial_uy=uy_pinn,
+    )
+    plot_solution_comparison(
+        ux_pinn, uy_pinn, ux_fdm, uy_fdm,
+        ux_hybrid_r, uy_hybrid_r, X, Y, layout, cfd_mask_r,
+        show_hole,
+        save_path=os.path.join(args.output_dir,
+                                'hybrid_solution_residual_threshold.png'),
+        title=f'Naive Threshold Based Rule (Threshold = {residual_threshold:.2f})',
+    )
 
     # --- Error field ---
     err_pinn = compute_l2_error_field(ux_pinn, uy_pinn, ux_fdm, uy_fdm, layout)
