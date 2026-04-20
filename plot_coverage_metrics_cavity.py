@@ -1055,6 +1055,41 @@ def main():
     )
 
     # =========================================================================
+    # Step 7d: Baseline hybrid using simple residual-threshold separator
+    #   cfd_mask = (residual_field >= tau), tau chosen so CFD area matches
+    #   the optimal hybrid coverage (star in coverage_metrics.png).
+    # =========================================================================
+    print("\n[Step 7d] Computing baseline hybrid with residual-threshold separator...")
+    target_coverage = full_loss_optimal['optimal_coverage']
+    fluid_mask_full = layout > 0
+    fluid_residuals = residual_field[fluid_mask_full]
+    if len(fluid_residuals) > 0 and 0.0 < target_coverage < 1.0:
+        residual_threshold = float(np.quantile(fluid_residuals, 1.0 - target_coverage))
+    elif target_coverage <= 0.0:
+        residual_threshold = float(fluid_residuals.max()) + 1.0 if len(fluid_residuals) else 1.0
+    else:
+        residual_threshold = float(fluid_residuals.min()) - 1.0 if len(fluid_residuals) else 0.0
+    print(f"  Target coverage (from optimal hybrid): {target_coverage*100:.2f}%")
+    print(f"  Residual threshold (R(x) >= tau => CFD): {residual_threshold:.6f}")
+
+    u_hybrid_r, v_hybrid_r, p_hybrid_r, cfd_mask_r, hybrid_solve_time_r = compute_hybrid_solution(
+        pinn_model, residual_field, layout, residual_threshold, args
+    )
+    actual_coverage_r = np.mean(cfd_mask_r[fluid_mask_full])
+    hybrid_vel_mag_r = np.sqrt(u_hybrid_r**2 + v_hybrid_r**2)
+    rmse_hybrid_r = np.sqrt(np.mean((hybrid_vel_mag_r[fluid_mask_full] - cfd_vel_mag[fluid_mask_full])**2))
+    print(f"  Residual-threshold hybrid CFD coverage: {actual_coverage_r*100:.2f}%")
+    print(f"  Residual-threshold hybrid RMSE (vs CFD): {rmse_hybrid_r:.6f}")
+    print(f"  Residual-threshold hybrid solve time: {hybrid_solve_time_r:.2f}s")
+
+    plot_hybrid_solution(
+        u_hybrid_r, v_hybrid_r, p_hybrid_r, X, Y, layout, cfd_mask_r,
+        threshold=residual_threshold,
+        coverage=actual_coverage_r,
+        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.png')
+    )
+
+    # =========================================================================
     # Step 8: Generate plots
     # =========================================================================
     print("\n[Step 8] Generating plots...")
@@ -1088,6 +1123,13 @@ def main():
              cfd_mask=cfd_mask,
              full_loss_optimal_threshold=full_loss_optimal['optimal_threshold'],
              full_loss_optimal_coverage=full_loss_optimal['optimal_coverage'],
+             u_hybrid_residual=u_hybrid_r,
+             v_hybrid_residual=v_hybrid_r,
+             p_hybrid_residual=p_hybrid_r,
+             cfd_mask_residual=cfd_mask_r,
+             residual_threshold=residual_threshold,
+             residual_threshold_coverage=actual_coverage_r,
+             residual_threshold_rmse=rmse_hybrid_r,
              **results)
     print(f"  ✓ Saved numerical results to {results_path}")
     
@@ -1108,6 +1150,12 @@ def main():
     print(f"  Hybrid RMSE (vs CFD): {rmse_hybrid:.6f}")
     print(f"  Hybrid CFD coverage:   {actual_coverage*100:.2f}%")
     print(f"  Hybrid solve time:     {hybrid_solve_time:.2f}s")
+    print(f"  ----------------------------------------")
+    print(f"  Residual-threshold baseline:")
+    print(f"    tau (R(x) >= tau => CFD): {residual_threshold:.6f}")
+    print(f"    CFD coverage:             {actual_coverage_r*100:.2f}%")
+    print(f"    RMSE (vs CFD):            {rmse_hybrid_r:.6f}")
+    print(f"    Solve time:               {hybrid_solve_time_r:.2f}s")
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
 
