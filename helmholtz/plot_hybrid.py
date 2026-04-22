@@ -149,12 +149,22 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax.grid(True, alpha=0.3); ax.legend()
 
     ax = fig.add_subplot(2, 3, 5)
-    ax.plot(cov, speedup, 'o-', color='C2')
-    ax.axhline(1.0, ls='--', color='k', alpha=0.5, label='FEM baseline')
-    ax.set_xlabel('FEM coverage (%)')
-    ax.set_ylabel('Speedup  (FEM / hybrid wall)')
-    ax.set_title('Speedup vs coverage')
-    ax.grid(True, alpha=0.3); ax.legend()
+    wall_ms = wall * 1000
+    ax.plot(wall_ms, errs, '-', color='C2', alpha=0.5, zorder=1)
+    sc = ax.scatter(wall_ms, errs, c=cov, cmap='viridis',
+                    s=60, zorder=2, edgecolor='k', linewidth=0.5)
+    for x, y, c in zip(wall_ms, errs, cov):
+        ax.annotate(f'{c:.0f}%', (x, y), xytext=(5, 5),
+                    textcoords='offset points', fontsize=8)
+    ax.axvline(fem_mean * 1000, ls='--', color='k', alpha=0.5,
+               label=f'FEM baseline ({fem_mean*1000:.1f} ms)')
+    ax.axhline(pinn_only, ls='--', color='C3', alpha=0.7,
+               label=f'PINN-only ({pinn_only:.2e})')
+    ax.set_xlabel('Wall time (ms)'); ax.set_yscale('log')
+    ax.set_ylabel('Rel L2 vs full FEM')
+    ax.set_title('Accuracy vs time  (labels = FEM coverage %)')
+    plt.colorbar(sc, ax=ax, label='FEM coverage (%)', fraction=0.046)
+    ax.grid(True, alpha=0.3); ax.legend(loc='best', fontsize=8)
 
     ax = fig.add_subplot(2, 3, 6)
     ax.plot(cov, wall * 1000, 'o-', color='C1', label='Hybrid total')
