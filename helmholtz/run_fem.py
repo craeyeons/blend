@@ -12,7 +12,7 @@ import time
 import numpy as np
 
 from lib.fem_solver import HelmholtzSolver
-from lib.domains import manufactured_solution
+from lib.domains import manufactured_solution, gaussian_source
 
 
 def relative_norm(pred, exact):
@@ -31,6 +31,12 @@ def main():
     p.add_argument('--ny', type=int, default=201)
     p.add_argument('--tag', type=str, default=None)
     p.add_argument('--output-dir', type=str, default='./results')
+    p.add_argument('--source', type=str, default='manufactured',
+                   choices=['manufactured', 'gaussian'])
+    p.add_argument('--x-s', type=float, default=0.5)
+    p.add_argument('--y-s', type=float, default=0.5)
+    p.add_argument('--sigma', type=float, default=0.05)
+    p.add_argument('--amplitude', type=float, default=1.0)
     args = p.parse_args()
 
     tag = args.tag or f'k{args.k:.3f}'.replace('.', 'p')
@@ -42,11 +48,19 @@ def main():
 
     solver = HelmholtzSolver(k=args.k, mesh_n=args.mesh_n)
 
-    def f_callable(x, y):
-        return (args.k ** 2) * np.sin(args.k * x) * np.sin(args.k * y)
+    if args.source == 'manufactured':
+        def f_callable(x, y):
+            return (args.k ** 2) * np.sin(args.k * x) * np.sin(args.k * y)
 
-    def g_callable(x, y):
-        return np.sin(args.k * x) * np.sin(args.k * y)
+        def g_callable(x, y):
+            return np.sin(args.k * x) * np.sin(args.k * y)
+    else:  # gaussian
+        def f_callable(x, y):
+            r2 = (x - args.x_s) ** 2 + (y - args.y_s) ** 2
+            return args.amplitude * np.exp(-r2 / (2.0 * args.sigma ** 2))
+
+        def g_callable(x, y):
+            return np.zeros_like(x)
 
     t_assemble_start = time.perf_counter()
     u_dof, solve_time_s = solver.solve(f_callable, g_callable)
@@ -60,19 +74,29 @@ def main():
     X, Y = np.meshgrid(xs, ys)
     u_fem = solver.interp_to_grid(u_dof, X, Y)
 
-    # Sanity check vs exact
-    u_exact, _ = manufactured_solution(X, Y, args.k)
-    rel_l2 = relative_norm(u_fem, u_exact)
-    print(f"FEM relative L2 error vs u*: {rel_l2:.4e}")
+    save_kw = dict(
+        X=X, Y=Y, u_fem=u_fem,
+        k=np.float32(args.k),
+        mesh_n=np.int32(args.mesh_n),
+        solve_time_s=np.float32(solve_time_s),
+        assemble_plus_solve_s=np.float32(assemble_plus_solve),
+        source=np.array(args.source),
+    )
+    if args.source == 'manufactured':
+        u_exact, _ = manufactured_solution(X, Y, args.k)
+        rel_l2 = relative_norm(u_fem, u_exact)
+        print(f"FEM relative L2 error vs u*: {rel_l2:.4e}")
+        save_kw['u_exact'] = u_exact
+        save_kw['fem_rel_l2'] = np.float32(rel_l2)
+    else:
+        print(f"Gaussian source: no analytic u*; FEM will serve as reference.")
+        save_kw['x_s'] = np.float32(args.x_s)
+        save_kw['y_s'] = np.float32(args.y_s)
+        save_kw['sigma'] = np.float32(args.sigma)
+        save_kw['amplitude'] = np.float32(args.amplitude)
 
     out_path = os.path.join(args.output_dir, f'fem_helmholtz_{tag}.npz')
-    np.savez(out_path,
-             X=X, Y=Y, u_fem=u_fem, u_exact=u_exact,
-             k=np.float32(args.k),
-             mesh_n=np.int32(args.mesh_n),
-             solve_time_s=np.float32(solve_time_s),
-             assemble_plus_solve_s=np.float32(assemble_plus_solve),
-             fem_rel_l2=np.float32(rel_l2))
+    np.savez(out_path, **save_kw)
     print(f"Saved: {out_path}")
 
 

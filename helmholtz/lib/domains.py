@@ -48,3 +48,16 @@ def manufactured_solution(X, Y, k):
     u_star = np.sin(k * X) * np.sin(k * Y)
     f_source = (k ** 2) * u_star
     return u_star.astype(np.float32), f_source.astype(np.float32)
+
+
+def gaussian_source(X, Y, x_s=0.5, y_s=0.5, sigma=0.05, amplitude=1.0):
+    """Localized Gaussian forcing for Helmholtz with homogeneous Dirichlet BC.
+
+    f(x, y) = A * exp( - ((x - x_s)^2 + (y - y_s)^2) / (2 sigma^2) )
+
+    Approximates a point source without Dirac pathology. No closed-form
+    solution; FEM is the reference.
+    """
+    r2 = (X - x_s) ** 2 + (Y - y_s) ** 2
+    f_source = amplitude * np.exp(-r2 / (2.0 * sigma ** 2))
+    return f_source.astype(np.float32)

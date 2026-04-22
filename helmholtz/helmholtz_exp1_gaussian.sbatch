@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=helmholtz_exp1
+#SBATCH --job-name=helmholtz_exp1_gaussian
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
@@ -26,7 +26,6 @@ export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TF_GPU_ALLOCATOR=cuda_malloc_async
 
-# One-time: install scikit-fem if missing (idempotent).
 python -c "import skfem" 2>/dev/null || pip install --no-input scikit-fem
 
 echo "=== Verifying GPU + scikit-fem ==="
@@ -37,19 +36,28 @@ import skfem; print('scikit-fem:', skfem.__version__)
 "
 
 # ============================================================
-# Sweep over wavenumbers k in {4 pi, 8 pi, 12 pi}.
+# Gaussian-source sanity check: centered source, sigma=0.05,
+# homogeneous Dirichlet, no analytic solution -> FEM reference.
+# Sweep k in {4 pi, 8 pi, 12 pi}.
 # ============================================================
 PI=3.141592653589793
+XS=0.5
+YS=0.5
+SIGMA=0.05
+AMP=1.0
+
 for MULT in 4 8 12; do
     K=$(python -c "print(${MULT} * ${PI})")
-    TAG="k${MULT}pi"
+    TAG="gauss_k${MULT}pi"
     echo ""
     echo "=============================================================="
-    echo "=== Experiment 1: k = ${MULT} pi  (k=${K})  tag=${TAG}"
+    echo "=== Gaussian sanity: k = ${MULT} pi  (k=${K})  tag=${TAG}"
     echo "=============================================================="
 
     python train_pinn.py \
         --k ${K} \
+        --source gaussian \
+        --x-s ${XS} --y-s ${YS} --sigma ${SIGMA} --amplitude ${AMP} \
         --epochs 50000 \
         --lr 3e-4 \
         --n-domain 20000 \
@@ -61,6 +69,8 @@ for MULT in 4 8 12; do
 
     python run_fem.py \
         --k ${K} \
+        --source gaussian \
+        --x-s ${XS} --y-s ${YS} --sigma ${SIGMA} --amplitude ${AMP} \
         --mesh-n 129 \
         --nx 201 --ny 201 \
         --tag ${TAG}

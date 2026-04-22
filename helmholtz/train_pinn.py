@@ -56,11 +56,16 @@ def u_star_tf(xy, k):
     return tf.sin(k * xy[:, 0:1]) * tf.sin(k * xy[:, 1:2])
 
 
-def f_source_tf(xy, k):
+def f_manufactured_tf(xy, k):
     return (k ** 2) * u_star_tf(xy, k)
 
 
-def compute_pde_residual(model, xy, k):
+def f_gaussian_tf(xy, x_s, y_s, sigma, amplitude):
+    r2 = (xy[:, 0:1] - x_s) ** 2 + (xy[:, 1:2] - y_s) ** 2
+    return amplitude * tf.exp(-r2 / (2.0 * sigma ** 2))
+
+
+def compute_pde_residual(model, xy, k, f_fn):
     """Residual of Delta u + k^2 u + f = 0 (equivalently -Delta u - k^2 u = f)."""
     with tf.GradientTape() as t2:
         t2.watch(xy)
@@ -71,7 +76,7 @@ def compute_pde_residual(model, xy, k):
     hess = t2.batch_jacobian(grads, xy)  # (N, 2, 2)
     uxx = hess[:, 0, 0:1]
     uyy = hess[:, 1, 1:2]
-    f = f_source_tf(xy, k)
+    f = f_fn(xy)
     return uxx + uyy + (k ** 2) * u + f
 
 
@@ -99,6 +104,12 @@ def main():
                         help='Std of Fourier freq matrix B. '
                              'Defaults to k/(2 pi) when None.')
     parser.add_argument('--fourier-seed', type=int, default=0)
+    parser.add_argument('--source', type=str, default='manufactured',
+                        choices=['manufactured', 'gaussian'])
+    parser.add_argument('--x-s', type=float, default=0.5)
+    parser.add_argument('--y-s', type=float, default=0.5)
+    parser.add_argument('--sigma', type=float, default=0.05)
+    parser.add_argument('--amplitude', type=float, default=1.0)
     parser.add_argument('--grad-clip', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--tag', type=str, default=None)
@@ -133,11 +144,25 @@ def main():
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
     k_tf = tf.constant(args.k, dtype=tf.float32)
+    if args.source == 'manufactured':
+        def f_fn(xy):
+            return f_manufactured_tf(xy, k_tf)
+        def bc_fn(xy_bd):
+            return u_star_tf(xy_bd, k_tf)
+    else:
+        xs_tf = tf.constant(args.x_s, dtype=tf.float32)
+        ys_tf = tf.constant(args.y_s, dtype=tf.float32)
+        sigma_tf = tf.constant(args.sigma, dtype=tf.float32)
+        amp_tf = tf.constant(args.amplitude, dtype=tf.float32)
+        def f_fn(xy):
+            return f_gaussian_tf(xy, xs_tf, ys_tf, sigma_tf, amp_tf)
+        def bc_fn(xy_bd):
+            return tf.zeros((tf.shape(xy_bd)[0], 1), dtype=tf.float32)
 
     @tf.function
     def train_step(xy_int, xy_bd, u_bd):
         with tf.GradientTape() as tape:
-            r = compute_pde_residual(model, xy_int, k_tf)
+            r = compute_pde_residual(model, xy_int, k_tf, f_fn)
             loss_pde = tf.reduce_mean(r ** 2)
             u_pred_bd = model(xy_bd, training=True)
             loss_bc = tf.reduce_mean((u_pred_bd - u_bd) ** 2)
@@ -153,7 +178,7 @@ def main():
     for epoch in range(args.epochs):
         xy_int = tf.constant(sample_interior(args.n_domain, rng))
         xy_bd = tf.constant(sample_boundary(args.n_boundary, rng))
-        u_bd = u_star_tf(xy_bd, k_tf)
+        u_bd = bc_fn(xy_bd)
 
         total, loss_pde, loss_bc = train_step(xy_int, xy_bd, u_bd)
         history['total'].append(float(total))
@@ -176,10 +201,15 @@ def main():
     u_pred = model.predict(xy_eval, batch_size=len(xy_eval), verbose=0)
     infer_time_s = time.perf_counter() - t0
     u_pred = u_pred.reshape(N, N)
-    u_exact = np.sin(args.k * X) * np.sin(args.k * Y)
-    rel_l2 = relative_l2(u_pred, u_exact)
     print(f"PINN inference time: {infer_time_s:.4f}s")
-    print(f"PINN relative L2 error on 201x201 grid: {rel_l2:.4e}")
+    if args.source == 'manufactured':
+        u_exact = np.sin(args.k * X) * np.sin(args.k * Y)
+        rel_l2 = relative_l2(u_pred, u_exact)
+        print(f"PINN relative L2 error vs u* on 201x201 grid: {rel_l2:.4e}")
+    else:
+        rel_l2 = None
+        print("Gaussian source: no analytic u*; use plot_sanity.py "
+              "to compare against FEM.")
 
     weights_path = os.path.join(
         args.output_dir, f'pinn_helmholtz_{tag}.weights.h5')
@@ -203,6 +233,11 @@ def main():
             'train_time_s': train_time_s,
             'infer_time_s': infer_time_s,
             'final_rel_l2': rel_l2,
+            'source': args.source,
+            'x_s': args.x_s,
+            'y_s': args.y_s,
+            'sigma': args.sigma,
+            'amplitude': args.amplitude,
             'tag': tag,
         }, f, indent=2)
     print(f"Saved training meta: {meta_path}")
