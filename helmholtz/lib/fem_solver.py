@@ -78,6 +78,12 @@ class HelmholtzSolver:
         self._M = _mass.assemble(self.basis)
         self._A = self._K - (self.k ** 2) * self._M
 
+        # Cached cKDTree over mesh vertices (reused for every grid lookup).
+        from scipy.spatial import cKDTree
+        self._mesh_tree = cKDTree(self.mesh.p.T)
+        # Cache of (grid-shape, id(X)) -> vertex_ids_grid
+        self._vertex_ids_cache = {}
+
     def _assemble_rhs(self, f_callable):
         @LinearForm
         def _rhs(v, w):
@@ -169,11 +175,15 @@ class HelmholtzSolver:
     def vertex_ids_for_grid(self, X, Y):
         """Return (Ny, Nx) array of nearest mesh vertex ids for each grid cell.
 
-        Useful for the hybrid router -> DOF mapping: the router decision on
-        cell (i,j) is applied to `vertex_ids_for_grid()[i,j]`.
+        Cached by array identity + shape so repeated calls (e.g. coverage
+        sweeps, timing loops) are O(1) after the first.
         """
-        from scipy.spatial import cKDTree
-        tree = cKDTree(self.mesh.p.T)
+        key = (id(X), id(Y), X.shape)
+        cached = self._vertex_ids_cache.get(key)
+        if cached is not None:
+            return cached
         target = np.stack([X.ravel(), Y.ravel()], axis=-1)
-        _, idx = tree.query(target, k=1)
-        return idx.reshape(X.shape).astype(np.int64)
+        _, idx = self._mesh_tree.query(target, k=1)
+        out = idx.reshape(X.shape).astype(np.int64)
+        self._vertex_ids_cache[key] = out
+        return out

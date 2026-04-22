@@ -142,7 +142,7 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax.plot(cov, errs, 'o-', label='Hybrid rel L2')
     ax.axhline(pinn_only, ls='--', color='C3',
                label=f'PINN-only ({pinn_only:.2e})')
-    ax.set_xlabel('Rejection coverage (%)'); ax.set_yscale('log')
+    ax.set_xlabel('FEM coverage (%)'); ax.set_yscale('log')
     ax.set_ylabel('Rel L2 vs full FEM')
     ax.set_title('Accuracy vs coverage')
     ax.grid(True, alpha=0.3); ax.legend()
@@ -150,7 +150,7 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax = fig.add_subplot(2, 3, 5)
     ax.plot(cov, speedup, 'o-', color='C2')
     ax.axhline(1.0, ls='--', color='k', alpha=0.5, label='FEM baseline')
-    ax.set_xlabel('Rejection coverage (%)')
+    ax.set_xlabel('FEM coverage (%)')
     ax.set_ylabel('Speedup  (FEM / hybrid wall)')
     ax.set_title('Speedup vs coverage')
     ax.grid(True, alpha=0.3); ax.legend()
@@ -159,7 +159,7 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax.plot(cov, wall * 1000, 'o-', color='C1', label='Hybrid total')
     ax.axhline(fem_mean * 1000, ls='--', color='k',
                label=f'FEM baseline ({fem_mean*1000:.1f} ms)')
-    ax.set_xlabel('Rejection coverage (%)')
+    ax.set_xlabel('FEM coverage (%)')
     ax.set_ylabel('Wall time (ms)')
     ax.set_title('Wall time vs coverage')
     ax.grid(True, alpha=0.3); ax.legend()
@@ -196,13 +196,32 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
     vmax = float(np.nanmax(np.abs(u_fem_m)))
     reject_field = (~accept_mask.astype(bool) & mask).astype(np.float32)
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+    # Row 1: solutions.
     for ax, data, title in zip(
-            axes,
+            axes[0],
             [u_pinn_m, u_hyb_m, u_fem_m],
-            ['PINN', 'Hybrid  (rejection outlined)', 'Full FEM']):
+            ['PINN', 'Hybrid  (FEM region outlined)', 'Full FEM']):
         im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
                            vmin=-vmax, vmax=vmax, shading='auto')
+        ax.contour(X, Y, reject_field, levels=[0.5],
+                   colors='lime', linewidths=1.5)
+        ax.set_title(title); ax.set_aspect('equal')
+        plt.colorbar(im, ax=ax, fraction=0.046)
+
+    # Row 2: signed errors vs full FEM.
+    err_pinn = _masked(pinn_u - u_fem)
+    err_hyb = _masked(u_hybrid - u_fem)
+    err_fem = _masked(np.zeros_like(u_fem))
+    all_errs = np.concatenate([np.abs(err_pinn[mask]),
+                               np.abs(err_hyb[mask])])
+    evmax = float(np.nanmax(all_errs)) + 1e-30
+    for ax, data, title in zip(
+            axes[1],
+            [err_pinn, err_hyb, err_fem],
+            ['PINN - FEM', 'Hybrid - FEM', 'FEM - FEM  (reference)']):
+        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
+                           vmin=-evmax, vmax=evmax, shading='auto')
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.5)
         ax.set_title(title); ax.set_aspect('equal')
@@ -213,7 +232,7 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
     cov_pct = 100.0 * reject_field.sum() / max(mask.sum(), 1)
     fig.suptitle(
         f'Solution comparison  k={summary["k"]:.3f}  '
-        f'rejection={cov_pct:.1f}%  '
+        f'FEM coverage={cov_pct:.1f}%  '
         f'PINN rel L2={rl_pinn:.2e}  Hybrid rel L2={rl_hyb:.2e}')
     fig.tight_layout()
     out = os.path.join(args.plots_dir, f'solution_comparison_{args.tag}.png')
@@ -364,7 +383,7 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
         ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
-    fig.suptitle(f'Hybrid solution vs rejection coverage  tag={args.tag}  '
+    fig.suptitle(f'Hybrid solution vs FEM coverage  tag={args.tag}  '
                  f'k={summary["k"]:.3f}')
     fig.tight_layout()
     out = os.path.join(args.plots_dir, f'coverage_evolution_{args.tag}.png')

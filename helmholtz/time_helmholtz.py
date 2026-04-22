@@ -152,14 +152,19 @@ def main():
                              threshold=0.0, reuse_logits=logits)
 
     # ---------- FEM baseline loop ----------
-    print("\nFEM baseline loop...")
+    # Time solve + interp_to_grid end-to-end so this matches the hybrid
+    # wall clock (which also returns a grid solution).
+    print("\nFEM baseline loop (solve + interp)...")
     fem_times = []
     u_fem_reference = None
     for i in range(N_RUNS):
-        u_dof, t_solve = solver.solve(f_callable, g_callable)
-        fem_times.append(t_solve)
+        t0 = time.perf_counter()
+        u_dof, _ = solver.solve(f_callable, g_callable)
+        u_grid = solver.interp_to_grid(u_dof, X, Y)
+        t_total = time.perf_counter() - t0
+        fem_times.append(t_total)
         if u_fem_reference is None:
-            u_fem_reference = solver.interp_to_grid(u_dof, X, Y)
+            u_fem_reference = u_grid
     fem_mean, fem_std = float(np.mean(fem_times)), float(np.std(fem_times))
     print(f"  mean={fem_mean:.4f}s  std={fem_std:.4f}s")
 
