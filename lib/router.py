@@ -11,7 +11,7 @@ Architecture:
         - Channel 1: Boundary condition mask
         - Channels 2-4: Boundary condition values [u, v, p]
         - Channels 5-7: PINN predictions [u, v, p] (allows CNN to learn error patterns)
-        - Channel 8: Directionally-smeared BC error (propagated along PINN velocity)
+        - Channel 8: ETE (error-transport estimate, linearized N-S ETE solve)
     
     Output: 200×100 tensor with values in [0, 1]
         - 0: Use PINN solution
@@ -458,7 +458,7 @@ class RouterTrainer:
                  beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
                  grad_clip_norm=1.0,
-                 residual_source='combined',
+                 learn_alpha=True, fixed_alpha=None,
                  residual_weights=None,
                  nu=0.01, rho=1.0,
                  x_domain=(0, 2), y_domain=(0, 1),
@@ -482,10 +482,15 @@ class RouterTrainer:
         grad_clip_norm : float
             Maximum gradient norm for clipping (stabilizes training).
             Set to None to disable. Recommended: 1.0-5.0.
-        residual_source : str
-            Source term used as R(x) in logistic loss.
-            Options: 'combined' (PDE + ETE), 'pde' (PDE only), 'ete' (ETE only).
-            Default: 'combined'.
+        learn_alpha : bool
+            If True, the mixture weight alpha in R(x) = alpha*r_tilde + (1-alpha)*e_tilde
+            is learned jointly with the router. r_tilde and e_tilde are the PDE residual
+            and ETE fields, each independently median-normalized on the fluid domain.
+            Default: True.
+        fixed_alpha : float or None
+            If set (in [0, 1]), overrides learn_alpha and fixes the mixture weight.
+            fixed_alpha=1.0 -> PDE only; fixed_alpha=0.0 -> ETE only; 0.5 -> equal mix.
+            Default: None.
         residual_weights : dict
             Weights for: continuity, momentum
         nu : float
@@ -506,14 +511,13 @@ class RouterTrainer:
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
-        self.residual_source = residual_source
+        self.learn_alpha = bool(learn_alpha) and (fixed_alpha is None)
+        self.fixed_alpha = fixed_alpha
+        # Parameterize alpha via sigmoid(alpha_raw); init alpha_raw=0 -> alpha=0.5.
+        self.alpha_raw = tf.Variable(0.0, dtype=tf.float32,
+                                     trainable=self.learn_alpha,
+                                     name='alpha_raw')
 
-        if self.residual_source not in {'combined', 'pde', 'ete'}:
-            raise ValueError(
-                f"Invalid residual_source='{self.residual_source}'. "
-                "Use one of: 'combined', 'pde', 'ete'."
-            )
-        
         # Default residual weights (PDE residuals only)
         self.residual_weights = residual_weights or {
             'continuity': 1.0,
@@ -537,6 +541,7 @@ class RouterTrainer:
         self.loss_history = []
         self.logistic_loss_history = []
         self.tv_loss_history = []
+        self.alpha_history = []
 
     def compute_total_variation(self, r):
         """
@@ -586,60 +591,62 @@ class RouterTrainer:
         bc_mask = inputs[0, :, :, 1]
         bc_u = inputs[0, :, :, 2]
         bc_v = inputs[0, :, :, 3]
-        # Extract smeared BC error (channel 8) if present
-        smeared_bc_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(bc_mask)
+        # Channel 8 carries the ETE (error-transport estimate) field.
+        ete_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(bc_mask)
+        layout_f = tf.cast(layout_mask, tf.float32)
+        num_fluid = tf.reduce_sum(layout_f) + 1e-10
+
+        # Helper: median of values where layout_f == 1.
+        def _masked_median(field):
+            flat = tf.reshape(field * layout_f, [-1])
+            flat = tf.boolean_mask(flat, tf.reshape(layout_f, [-1]) > 0.5)
+            sorted_vals = tf.sort(flat)
+            mid = tf.shape(sorted_vals)[0] // 2
+            return sorted_vals[mid]
+
+        # Collect trainable parameters (router + optional alpha_raw).
+        trainable_vars = list(self.router.trainable_variables)
+        if self.learn_alpha:
+            trainable_vars = trainable_vars + [self.alpha_raw]
 
         with tf.GradientTape() as tape:
-            # Forward pass: raw logits in R
-            s = self.router(inputs, training=True)  # Shape: (batch, H, W, 1)
-            s = s[0, :, :, 0]  # Remove batch and channel dims: (H, W)
+            s = self.router(inputs, training=True)[0, :, :, 0]  # (H, W)
 
-            layout_f = tf.cast(layout_mask, tf.float32)
-            num_fluid = tf.reduce_sum(layout_f) + 1e-10
-
-            # Compute raw PINN PDE residuals (unnormalized)
+            # Raw PINN PDE residual (unnormalized).
             pde_residual = self.residual_computer.compute_total_residual_with_bc(
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
 
-            # Choose residual source, then median-normalize
-            if self.residual_source == 'combined':
-                raw_residual = pde_residual + smeared_bc_err
-            elif self.residual_source == 'pde':
-                raw_residual = pde_residual
-            else:  # self.residual_source == 'ete'
-                raw_residual = smeared_bc_err
+            # Independently median-normalize each source on the fluid domain,
+            # so r_tilde and e_tilde both have median 1 (Assumption 2.7).
+            r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
+            e_tilde = ete_err / (_masked_median(ete_err) + 1e-10)
 
-            residual_flat = tf.reshape(raw_residual, [-1])
-            residual_median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
-            total_residual = raw_residual / (residual_median + 1e-10)
+            # Convex mixture R(x; alpha) = alpha * r_tilde + (1 - alpha) * e_tilde.
+            if self.fixed_alpha is not None:
+                alpha = tf.constant(float(self.fixed_alpha), dtype=tf.float32)
+            else:
+                alpha = tf.sigmoid(self.alpha_raw)
+            total_residual = alpha * r_tilde + (1.0 - alpha) * e_tilde
 
-            # Logistic loss: 1/N * sum(beta * phi(s,0) + R(x) * phi(s,1))
-            # Decision boundary: router assigns CFD where R(x) > beta
+            # Logistic routing loss (masked to fluid).
             logistic_loss = tf.reduce_sum(
-                (self.beta * tf.math.softplus(s) +
-                 total_residual * tf.math.softplus(-s)) * layout_f
+                (self.beta * tf.math.softplus(s)
+                 + total_residual * tf.math.softplus(-s)) * layout_f
             ) / num_fluid
 
-            # Total variation regularization (spatial smoothness)
+            # Total variation regularization on the logits.
             s_masked = s * layout_f
             s_4d = tf.reshape(s_masked, [1, tf.shape(s)[0], tf.shape(s)[1], 1])
             tv_loss = self.lambda_tv * self.compute_total_variation(s_4d)
 
-            # Total loss
             total_loss = logistic_loss + tv_loss
 
-        # Compute gradients
-        gradients = tape.gradient(total_loss, self.router.trainable_variables)
-
-        # Gradient clipping for stability
+        gradients = tape.gradient(total_loss, trainable_vars)
         if self.grad_clip_norm is not None:
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_norm)
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
 
-        # Apply gradients
-        self.optimizer.apply_gradients(zip(gradients, self.router.trainable_variables))
-
-        # Compute CFD fraction for logging (sigmoid of s gives probability)
         cfd_fraction = tf.reduce_sum(tf.sigmoid(s) * layout_f) / num_fluid
 
         metrics = {
@@ -647,6 +654,7 @@ class RouterTrainer:
             'logistic_loss': logistic_loss,
             'tv_loss': tv_loss,
             'cfd_fraction': cfd_fraction,
+            'alpha': alpha,
         }
 
         return total_loss, metrics
@@ -699,6 +707,7 @@ class RouterTrainer:
             self.loss_history.append(float(metrics['total_loss']))
             self.logistic_loss_history.append(float(metrics['logistic_loss']))
             self.tv_loss_history.append(float(metrics['tv_loss']))
+            self.alpha_history.append(float(metrics['alpha']))
 
             if verbose and (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
@@ -706,12 +715,14 @@ class RouterTrainer:
                       f"Logistic: {metrics['logistic_loss']:.4f}, "
                       f"TV: {metrics['tv_loss']:.4f}, "
                       f"CFD%: {metrics['cfd_fraction']*100:.1f}%, "
+                      f"alpha: {float(metrics['alpha']):.3f}, "
                       f"lr: {current_lr:.2e}")
 
         history = {
             'total_loss': self.loss_history,
             'logistic_loss': self.logistic_loss_history,
             'tv_loss': self.tv_loss_history,
+            'alpha': self.alpha_history,
         }
 
         return history
@@ -783,8 +794,6 @@ def compute_bc_error_field(bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout):
     return (bc_error * layout).astype(np.float32)
 
 
-# Keep old name as alias for backwards compatibility
-compute_smeared_bc_error = compute_bc_error_field
 
 
 def solve_error_transport(pinn_u, pinn_v, bc_error, layout, nu,
@@ -857,12 +866,13 @@ def solve_error_transport(pinn_u, pinn_v, bc_error, layout, nu,
 
 def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
                         pinn_u=None, pinn_v=None, pinn_p=None,
-                        smeared_bc_error=None):
+                        ete_error=None):
     """
     Create the 9-channel input tensor for the router.
 
-    By including PINN predictions and smeared BC error, the CNN can learn
-    spatial error patterns and understand downstream error propagation.
+    By including PINN predictions and the ETE (error-transport estimate), the
+    CNN can learn spatial error patterns and understand downstream error
+    propagation.
 
     Parameters:
     -----------
@@ -874,14 +884,14 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         Boundary condition values of shape (H, W)
     pinn_u, pinn_v, pinn_p : np.ndarray, optional
         PINN predictions of shape (H, W). If None, zeros are used.
-    smeared_bc_error : np.ndarray, optional
-        Directionally-smeared BC error of shape (H, W). If None, zeros are used.
+    ete_error : np.ndarray, optional
+        ETE (error-transport estimate) field of shape (H, W). If None, zeros are used.
 
     Returns:
     --------
     inputs : np.ndarray
         Stacked input of shape (1, H, W, 9)
-        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p, smeared_bc_error]
+        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p, ete_error]
     """
     H, W = layout.shape
 
@@ -892,8 +902,8 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         pinn_v = np.zeros((H, W), dtype=np.float32)
     if pinn_p is None:
         pinn_p = np.zeros((H, W), dtype=np.float32)
-    if smeared_bc_error is None:
-        smeared_bc_error = np.zeros((H, W), dtype=np.float32)
+    if ete_error is None:
+        ete_error = np.zeros((H, W), dtype=np.float32)
 
     inputs = np.stack([
         layout,           # Ch 0: Layout mask
@@ -904,7 +914,7 @@ def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
         pinn_u,           # Ch 5: PINN u prediction
         pinn_v,           # Ch 6: PINN v prediction
         pinn_p,           # Ch 7: PINN p prediction
-        smeared_bc_error, # Ch 8: Directionally-smeared BC error
+        ete_error,        # Ch 8: ETE (error-transport estimate)
     ], axis=-1)
 
     return inputs[np.newaxis, ...]  # Add batch dimension

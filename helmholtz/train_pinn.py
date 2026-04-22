@@ -119,10 +119,8 @@ def compute_pde_residual(model, xy, k, f_fn):
     return uxx + uyy + (k ** 2) * u + f
 
 
-def relative_l2(pred, exact):
-    num = np.sqrt(np.mean((pred - exact) ** 2))
-    den = np.sqrt(np.mean(exact ** 2))
-    return float(num / (den + 1e-12))
+def rmse(pred, exact):
+    return float(np.sqrt(np.mean((pred - exact) ** 2)))
 
 
 def main():
@@ -256,10 +254,10 @@ def main():
     print(f"PINN inference time: {infer_time_s:.4f}s")
     if args.source == 'manufactured':
         u_exact = np.sin(args.k * X) * np.sin(args.k * Y)
-        rel_l2 = relative_l2(u_pred, u_exact)
-        print(f"PINN relative L2 error vs u* on 201x201 grid: {rel_l2:.4e}")
+        err = rmse(u_pred, u_exact)
+        print(f"PINN RMSE vs u* on 201x201 grid: {err:.4e}")
     else:
-        rel_l2 = None
+        err = None
         print("Gaussian source: no analytic u*; use plot_sanity.py "
               "to compare against FEM.")
 
@@ -284,7 +282,7 @@ def main():
             'fourier_scale': fourier_scale,
             'train_time_s': train_time_s,
             'infer_time_s': infer_time_s,
-            'final_rel_l2': rel_l2,
+            'final_rmse': err,
             'source': args.source,
             'x_s': args.x_s,
             'y_s': args.y_s,

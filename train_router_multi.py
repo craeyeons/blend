@@ -65,8 +65,7 @@ def load_pinn_model(model_path):
     return model
 
 
-def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights,
-                   residual_source='combined'):
+def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     """
     Prepare a single domain configuration: load PINN, create domain setup,
     compute PINN predictions, and pre-compute residuals.
@@ -135,30 +134,35 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights,
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
 
-    # Choose residual source (matching train_router.py / RouterTrainer)
+    # Independently median-normalize PDE residual and ETE over the fluid
+    # region so that r_tilde and e_tilde each have unit median. This
+    # scale-fixing is what makes the learnable alpha well-posed (see proof.tex
+    # §2.4).
     ete_tf = tf.constant(error_transport, dtype=tf.float32)
-    if residual_source == 'combined':
-        raw_residual = pde_residual + ete_tf
-    elif residual_source == 'pde':
-        raw_residual = pde_residual
-    else:  # 'ete'
-        raw_residual = ete_tf
+    layout_tf = tf.constant(layout, dtype=tf.float32)
 
-    # Normalize by median (robust to heavy-tailed, right-skewed residuals)
-    residual_flat = tf.reshape(raw_residual, [-1])
-    median = tf.sort(residual_flat)[tf.shape(residual_flat)[0] // 2]
-    total_residual_norm = raw_residual / (median + 1e-10)
+    def _masked_median(field):
+        flat = tf.reshape(field * layout_tf, [-1])
+        flat = tf.boolean_mask(flat, tf.reshape(layout_tf, [-1]) > 0.5)
+        sorted_vals = tf.sort(flat)
+        return sorted_vals[tf.shape(sorted_vals)[0] // 2]
+
+    r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
+    e_tilde = ete_tf / (_masked_median(ete_tf) + 1e-10)
 
     fluid_points = np.sum(layout)
     print(f"    Fluid points: {fluid_points:.0f}/{layout.size} ({100*np.mean(layout):.1f}%)")
-    print(f"    Residual range: [{float(tf.reduce_min(total_residual_norm)):.4f}, "
-          f"{float(tf.reduce_max(total_residual_norm)):.4f}]")
+    print(f"    r_tilde range: [{float(tf.reduce_min(r_tilde)):.4f}, "
+          f"{float(tf.reduce_max(r_tilde)):.4f}]")
+    print(f"    e_tilde range: [{float(tf.reduce_min(e_tilde)):.4f}, "
+          f"{float(tf.reduce_max(e_tilde)):.4f}]")
 
     return {
         'label': label,
         'inputs': tf.constant(inputs, dtype=tf.float32),
         'layout': tf.constant(layout, dtype=tf.float32),
-        'residual': total_residual_norm,
+        'r_tilde': r_tilde,
+        'e_tilde': e_tilde,
         'X': X, 'Y': Y,
         'layout_np': layout,
         'cylinder_center': (cx, cy),
@@ -176,21 +180,26 @@ def compute_total_variation(r_4d):
 
 
 @tf.function
-def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm,
+def train_step_precomputed(router, optimizer, inputs, layout_mask,
+                            r_tilde, e_tilde, alpha_raw, learn_alpha,
                             beta, lambda_tv, lambda_entropy, grad_clip_norm):
     """
-    One training step using pre-computed residuals.
+    One training step using pre-computed, independently median-normalized
+    PDE residual (r_tilde) and ETE (e_tilde) fields. The mixture
+    R = alpha * r_tilde + (1 - alpha) * e_tilde, with alpha = sigmoid(alpha_raw),
+    is recomputed each step so gradients flow into alpha_raw when learn_alpha
+    is True.
 
-    This avoids re-computing PINN residuals each step (they're constant
-    since the PINN is frozen).
-
-    Uses logistic loss: 1/N * sum(beta * softplus(s) + residual * softplus(-s))
+    Uses logistic loss: 1/N * sum(beta * softplus(s) + R * softplus(-s))
     """
     with tf.GradientTape() as tape:
         s = router(inputs, training=True)
         s = s[0, :, :, 0]  # (H, W)
 
         num_fluid = tf.reduce_sum(layout_mask) + 1e-10
+
+        alpha = tf.sigmoid(alpha_raw)
+        residual_norm = alpha * r_tilde + (1.0 - alpha) * e_tilde
 
         # Logistic loss
         logistic_loss = tf.reduce_sum(
@@ -205,10 +214,13 @@ def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm
 
         total_loss = logistic_loss + tv_loss
 
-    gradients = tape.gradient(total_loss, router.trainable_variables)
+    trainable_vars = list(router.trainable_variables)
+    if learn_alpha:
+        trainable_vars = trainable_vars + [alpha_raw]
+    gradients = tape.gradient(total_loss, trainable_vars)
     if grad_clip_norm > 0:
         gradients, _ = tf.clip_by_global_norm(gradients, grad_clip_norm)
-    optimizer.apply_gradients(zip(gradients, router.trainable_variables))
+    optimizer.apply_gradients(zip(gradients, trainable_vars))
 
     cfd_fraction = tf.reduce_sum(tf.cast(s > 0, tf.float32) * layout_mask) / num_fluid
 
@@ -216,6 +228,7 @@ def train_step_precomputed(router, optimizer, inputs, layout_mask, residual_norm
         'total_loss': total_loss,
         'logistic_loss': logistic_loss,
         'tv_loss': tv_loss,
+        'alpha': alpha,
         'cfd_fraction': cfd_fraction,
     }
 
@@ -236,8 +249,10 @@ def evaluate_on_config(router, cfg_data, threshold=0.0):
     cfd_fraction = np.sum(mask[fluid_mask]) / num_fluid * 100
     pinn_fraction = 100 - cfd_fraction
 
-    # Residual in PINN region
-    residual_np = cfg_data['residual'].numpy()
+    # Residual in PINN region (evaluate mixture at alpha=0.5 for reporting;
+    # only used for diagnostics).
+    residual_np = (0.5 * cfg_data['r_tilde'].numpy() +
+                   0.5 * cfg_data['e_tilde'].numpy())
     pinn_region = (r < threshold) & fluid_mask
     if np.sum(pinn_region) > 0:
         mean_pinn_residual = np.mean(residual_np[pinn_region])
@@ -281,9 +296,10 @@ def main():
     # Residual weights
     parser.add_argument('--weight-continuity', type=float, default=1.0)
     parser.add_argument('--weight-momentum', type=float, default=1.0)
-    parser.add_argument('--residual-source', type=str, default='combined',
-                        choices=['combined', 'pde', 'ete'],
-                        help="Residual source for router loss: 'combined' (PDE+ETE), 'pde', or 'ete'")
+    parser.add_argument('--fixed-alpha', type=float, default=None,
+                        help="If set (in [0,1]), pin PDE/ETE mixing weight alpha in "
+                             "R = alpha*r_tilde + (1-alpha)*e_tilde. Otherwise alpha "
+                             "is learned via sigmoid(alpha_raw).")
     # Domain parameters (shared across all configs)
     parser.add_argument('--nx', type=int, default=200)
     parser.add_argument('--ny', type=int, default=100)
@@ -332,14 +348,16 @@ def main():
     # =========================================================================
     # Prepare all configs (load PINNs, compute residuals)
     # =========================================================================
-    print(f"\n  Residual source: {args.residual_source}")
+    if args.fixed_alpha is None:
+        print(f"\n  alpha: learned (sigmoid of trainable scalar)")
+    else:
+        print(f"\n  alpha: fixed at {args.fixed_alpha}")
     print("\n[Step 1] Preparing training configurations...")
     train_data = []
     for i, cfg in enumerate(train_cfgs):
         print(f"\n  Config {i+1}/{len(train_cfgs)}:")
         data = prepare_config(cfg, args.nx, args.ny, x_domain, y_domain,
-                              args.nu, args.rho, residual_weights,
-                              residual_source=args.residual_source)
+                              args.nu, args.rho, residual_weights)
         train_data.append(data)
 
     test_data = []
@@ -348,8 +366,7 @@ def main():
         for i, cfg in enumerate(test_cfgs):
             print(f"\n  Config {i+1}/{len(test_cfgs)}:")
             data = prepare_config(cfg, args.nx, args.ny, x_domain, y_domain,
-                                  args.nu, args.rho, residual_weights,
-                                  residual_source=args.residual_source)
+                                  args.nu, args.rho, residual_weights)
             test_data.append(data)
 
     # =========================================================================
@@ -363,6 +380,15 @@ def main():
     print(f"  Parameters: {router.count_params():,}")
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
+
+    # alpha variable: shared across configs; trainable when fixed_alpha is None.
+    learn_alpha = args.fixed_alpha is None
+    alpha_init = 0.0 if learn_alpha else float(
+        np.log(max(args.fixed_alpha, 1e-6) / max(1.0 - args.fixed_alpha, 1e-6))
+    )
+    alpha_raw = tf.Variable(alpha_init, trainable=learn_alpha,
+                            dtype=tf.float32, name='alpha_raw')
+    learn_alpha_tf = tf.constant(learn_alpha)
 
     print(f"\n  beta={args.beta}, lambda_tv={args.lambda_tv}")
     print(f"  lr={args.lr}, grad_clip={args.grad_clip}")
@@ -384,7 +410,7 @@ def main():
 
     history = {
         'total_loss': [], 'logistic_loss': [],
-        'tv_loss': []
+        'tv_loss': [], 'alpha': []
     }
 
     for epoch in range(args.epochs):
@@ -395,7 +421,8 @@ def main():
             d = train_data[ci]
             metrics = train_step_precomputed(
                 router, optimizer,
-                d['inputs'], d['layout'], d['residual'],
+                d['inputs'], d['layout'], d['r_tilde'], d['e_tilde'],
+                alpha_raw, learn_alpha_tf,
                 beta_tf, ltv_tf, lent_tf, gc_tf
             )
             epoch_losses.append(float(metrics['total_loss']))
@@ -405,12 +432,14 @@ def main():
         history['total_loss'].append(avg_loss)
         history['logistic_loss'].append(float(metrics['logistic_loss']))
         history['tv_loss'].append(float(metrics['tv_loss']))
+        history['alpha'].append(float(metrics['alpha']))
 
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{args.epochs} - "
                   f"AvgLoss: {avg_loss:.4f}, "
                   f"Logistic: {float(metrics['logistic_loss']):.4f}, "
                   f"TV: {float(metrics['tv_loss']):.4f}, "
+                  f"alpha: {float(metrics['alpha']):.3f}, "
                   f"CFD%: {float(metrics['cfd_fraction'])*100:.1f}%")
 
     training_time = (datetime.now() - start_time).total_seconds()

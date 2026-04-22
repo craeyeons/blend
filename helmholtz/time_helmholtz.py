@@ -6,7 +6,7 @@ Measures:
   * hybrid solve time at threshold 0 (N_RUNS=10), broken into
     PINN inference / router inference / FEM spsolve
   * coverage sweep: 11 rejection percentages in [0, 100], run once each,
-    record (coverage%, hybrid solve time, rel L2 vs full-FEM)
+    record (coverage%, hybrid solve time, RMSE vs full-FEM)
 
 Usage:
     python time_helmholtz.py --k 12.566 --tag exp2_hole_k4pi
@@ -35,7 +35,7 @@ from lib.fem_solver import HelmholtzSolver
 from lib.router import (RouterCNN, HelmholtzResidualComputer,
                         create_router_input, compute_ete_fft)
 from lib.hybrid import (solve_hybrid_schwarz, threshold_for_coverage,
-                        rel_l2)
+                        rmse)
 
 
 N_RUNS = 10
@@ -201,8 +201,8 @@ def main():
     print("\nCoverage sweep (11 targets)...")
     coverage_targets = np.linspace(0.0, 1.0, 11)
     sweep = []
-    # Also evaluate PINN-only rel L2 vs FEM reference for the plot.
-    pinn_rel_l2 = rel_l2(pinn_u, u_fem_reference)
+    # Also evaluate PINN-only RMSE vs FEM reference for the plot.
+    pinn_rmse = rmse(pinn_u, u_fem_reference)
     for cov in coverage_targets:
         thr = threshold_for_coverage(logits, layout, float(cov))
         t0 = time.perf_counter()
@@ -211,20 +211,20 @@ def main():
                                    ete_grid=ete,
                                    threshold=thr, reuse_logits=logits)
         wall = time.perf_counter() - t0
-        errl2 = rel_l2(res['u_grid'], u_fem_reference)
+        err = rmse(res['u_grid'], u_fem_reference)
         sweep.append({
             'target_coverage': float(cov),
             'threshold': float(thr),
             'actual_coverage_pct': float(res['coverage_pct']),
             'hybrid_total_s': float(wall),
             'hybrid_solve_only_s': float(res['solve_time_s']),
-            'rel_l2_vs_fem': float(errl2),
+            'rmse_vs_fem': float(err),
             'n_accepted_dofs': int(res['n_accepted_dofs']),
         })
         print(f"  target={cov*100:5.1f}%  "
               f"actual={res['coverage_pct']:5.1f}%  "
               f"solve={res['solve_time_s']*1000:6.1f}ms  "
-              f"rel_L2={errl2:.3e}")
+              f"RMSE={err:.3e}")
 
     summary = {
         'k': args.k,
@@ -238,7 +238,7 @@ def main():
         'hybrid_pin_mean_s': float(np.mean(hyb_pinn)),
         'hybrid_solve_mean_s': float(np.mean(hyb_solve)),
         'speedup': fem_mean / max(hyb_mean, 1e-12),
-        'pinn_rel_l2_vs_fem': pinn_rel_l2,
+        'pinn_rmse_vs_fem': pinn_rmse,
         'coverage_sweep': sweep,
     }
 

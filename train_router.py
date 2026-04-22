@@ -72,9 +72,10 @@ def main():
                         help='Weight for continuity residual')
     parser.add_argument('--weight-momentum', type=float, default=1.0,
                         help='Weight for momentum residual')
-    parser.add_argument('--residual-source', type=str, default='combined',
-                        choices=['combined', 'pde', 'ete'],
-                        help="Residual source for router loss: 'combined' (PDE+ETE), 'pde', or 'ete'")
+    parser.add_argument('--fixed-alpha', type=float, default=None,
+                        help="If set (in [0,1]), fixes the PDE-vs-ETE mixture weight. "
+                             "alpha=1 => PDE only, alpha=0 => ETE only. "
+                             "If omitted, alpha is learned jointly with the router.")
     # Domain parameters (matching cylinder flow setup)
     parser.add_argument('--nx', type=int, default=200,
                         help='Grid points in x direction')
@@ -244,7 +245,8 @@ def main():
         beta=args.beta,
         lambda_tv=args.lambda_tv,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
-        residual_source=args.residual_source,
+        learn_alpha=(args.fixed_alpha is None),
+        fixed_alpha=args.fixed_alpha,
         residual_weights=residual_weights,
         nu=args.nu,
         rho=args.rho,
@@ -260,7 +262,10 @@ def main():
     print(f"  λ_tv (TV reg): {args.lambda_tv}")
     print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
-    print(f"  Residual source: {args.residual_source}")
+    if args.fixed_alpha is None:
+        print(f"  Mixture weight alpha: learned jointly (init 0.5)")
+    else:
+        print(f"  Mixture weight alpha: fixed at {args.fixed_alpha}")
     print(f"  Residual weights: {residual_weights}")
     
     # =========================================================================
@@ -332,7 +337,8 @@ def main():
         f.write(f"    --beta {args.beta} \\\n")
         f.write(f"    --lambda-tv {args.lambda_tv} \\\n")
         f.write(f"    --lr {args.lr} \\\n")
-        f.write(f"    --residual-source {args.residual_source} \\\n")
+        if args.fixed_alpha is not None:
+            f.write(f"    --fixed-alpha {args.fixed_alpha} \\\n")
         f.write(f"    --weight-continuity {args.weight_continuity} \\\n")
         f.write(f"    --weight-momentum {args.weight_momentum} \\\n")
         f.write(f"    --nx {args.nx} \\\n")

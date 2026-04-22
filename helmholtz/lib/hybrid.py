@@ -130,7 +130,5 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
     }
 
 
-def rel_l2(pred, ref):
-    num = np.sqrt(np.mean((pred - ref) ** 2))
-    den = np.sqrt(np.mean(ref ** 2))
-    return float(num / (den + 1e-12))
+def rmse(pred, ref):
+    return float(np.sqrt(np.mean((pred - ref) ** 2)))

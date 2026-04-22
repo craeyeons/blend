@@ -24,7 +24,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from lib.hybrid import solve_hybrid_schwarz, threshold_for_coverage, rel_l2
+from lib.hybrid import solve_hybrid_schwarz, threshold_for_coverage, rmse
 from lib.fem_solver import HelmholtzSolver
 from lib.network import build_pinn
 from lib.router import RouterCNN, create_router_input, median_normalize
@@ -109,11 +109,11 @@ def _plot_summary(args, summary, ref, u_hybrid):
 
     sweep = summary['coverage_sweep']
     cov = np.array([s['actual_coverage_pct'] for s in sweep])
-    errs = np.array([s['rel_l2_vs_fem'] for s in sweep])
+    errs = np.array([s['rmse_vs_fem'] for s in sweep])
     wall = np.array([s['hybrid_total_s'] for s in sweep])
     fem_mean = summary['fem_mean_s']
     speedup = fem_mean / np.maximum(wall, 1e-12)
-    pinn_only = summary['pinn_rel_l2_vs_fem']
+    pinn_only = summary['pinn_rmse_vs_fem']
 
     fig = plt.figure(figsize=(18, 10))
     vmax = float(np.nanmax(np.abs(u_fem_m)))
@@ -134,17 +134,17 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ev = float(np.nanmax(np.abs(err))) + 1e-30
     im = ax.pcolormesh(X, Y, err, cmap='RdBu_r',
                        vmin=-ev, vmax=ev, shading='auto')
-    rl = rel_l2(u_hybrid, u_fem)
-    ax.set_title(f'u_hybrid - u_FEM  (rel L2 = {rl:.3e})')
+    rl = rmse(u_hybrid, u_fem)
+    ax.set_title(f'u_hybrid - u_FEM  (RMSE = {rl:.3e})')
     ax.set_aspect('equal')
     plt.colorbar(im, ax=ax, fraction=0.046)
 
     ax = fig.add_subplot(2, 3, 4)
-    ax.plot(cov, errs, 'o-', label='Hybrid rel L2')
+    ax.plot(cov, errs, 'o-', label='Hybrid RMSE')
     ax.axhline(pinn_only, ls='--', color='C3',
                label=f'PINN-only ({pinn_only:.2e})')
     ax.set_xlabel('FEM coverage (%)'); ax.set_yscale('log')
-    ax.set_ylabel('Rel L2 vs full FEM')
+    ax.set_ylabel('RMSE vs full FEM')
     ax.set_title('Accuracy vs coverage')
     ax.grid(True, alpha=0.3); ax.legend()
 
@@ -161,7 +161,7 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax.axhline(pinn_only, ls='--', color='C3', alpha=0.7,
                label=f'PINN-only ({pinn_only:.2e})')
     ax.set_xlabel('Wall time (ms)'); ax.set_yscale('log')
-    ax.set_ylabel('Rel L2 vs full FEM')
+    ax.set_ylabel('RMSE vs full FEM')
     ax.set_title('Accuracy vs time  (labels = FEM coverage %)')
     plt.colorbar(sc, ax=ax, label='FEM coverage (%)', fraction=0.046)
     ax.grid(True, alpha=0.3); ax.legend(loc='best', fontsize=8)
@@ -238,13 +238,13 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
         ax.set_title(title); ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
-    rl_pinn = rel_l2(pinn_u, u_fem)
-    rl_hyb = rel_l2(u_hybrid, u_fem)
+    rl_pinn = rmse(pinn_u, u_fem)
+    rl_hyb = rmse(u_hybrid, u_fem)
     cov_pct = 100.0 * reject_field.sum() / max(mask.sum(), 1)
     fig.suptitle(
         f'Solution comparison  k={summary["k"]:.3f}  '
         f'FEM coverage={cov_pct:.1f}%  '
-        f'PINN rel L2={rl_pinn:.2e}  Hybrid rel L2={rl_hyb:.2e}')
+        f'PINN RMSE={rl_pinn:.2e}  Hybrid RMSE={rl_hyb:.2e}')
     fig.tight_layout()
     out = os.path.join(args.plots_dir, f'solution_comparison_{args.tag}.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
@@ -386,7 +386,7 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
             ax.contour(X, Y, outer, levels=[0.5],
                        colors='lime', linewidths=1.0)
             ax.set_title('target 100%  actual 100.0%\n'
-                         'rel L2 = 0.00e+00  (= full FEM)')
+                         'RMSE = 0.00e+00  (= full FEM)')
             ax.set_aspect('equal')
             plt.colorbar(im, ax=ax, fraction=0.046)
             continue
@@ -403,10 +403,10 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
             np.float32)
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.0)
-        errl2 = rel_l2(res['u_grid'], u_fem)
+        err = rmse(res['u_grid'], u_fem)
         ax.set_title(
             f'target {cov*100:.0f}%  actual {res["coverage_pct"]:.1f}%\n'
-            f'rel L2 = {errl2:.2e}')
+            f'RMSE = {err:.2e}')
         ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
@@ -486,15 +486,15 @@ def main():
         'fem_baseline_ms': summary['fem_mean_s'] * 1000,
         'hybrid_threshold0_ms': summary['hybrid_mean_s'] * 1000,
         'speedup_at_threshold0': summary['speedup'],
-        'pinn_only_rel_l2': summary['pinn_rel_l2_vs_fem'],
-        'hybrid_threshold0_rel_l2': float(rl),
+        'pinn_only_rmse': summary['pinn_rmse_vs_fem'],
+        'hybrid_threshold0_rmse': float(rl),
         'beta': float(beta),
         'optimal_coverage_pct': float(opt_cov),
         'optimal_training_loss': float(opt_loss),
         'coverage_pct': [s['actual_coverage_pct']
                          for s in summary['coverage_sweep']],
-        'hybrid_rel_l2': [s['rel_l2_vs_fem']
-                          for s in summary['coverage_sweep']],
+        'hybrid_rmse': [s['rmse_vs_fem']
+                        for s in summary['coverage_sweep']],
         'hybrid_wall_ms': [s['hybrid_total_s'] * 1000
                            for s in summary['coverage_sweep']],
     }

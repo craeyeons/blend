@@ -27,9 +27,8 @@ import matplotlib.pyplot as plt
 from lib.network import build_pinn
 
 
-def rel_l2(pred, exact):
-    return float(np.sqrt(np.mean((pred - exact) ** 2))
-                 / (np.sqrt(np.mean(exact ** 2)) + 1e-12))
+def rmse(pred, exact):
+    return float(np.sqrt(np.mean((pred - exact) ** 2)))
 
 
 def rel_h1(pred, exact, dx, dy):
@@ -103,10 +102,10 @@ def main():
     dx = float(X[0, 1] - X[0, 0])
     dy = float(Y[1, 0] - Y[0, 0])
 
-    pinn_l2 = rel_l2(u_pinn, u_ref)
+    pinn_l2 = rmse(u_pinn, u_ref)
     pinn_h1 = rel_h1(u_pinn, u_ref, dx, dy)
     if has_exact:
-        fem_l2 = rel_l2(u_fem, u_exact)
+        fem_l2 = rmse(u_fem, u_exact)
         fem_h1 = rel_h1(u_fem, u_exact, dx, dy)
     else:
         fem_l2 = float('nan')
@@ -121,9 +120,9 @@ def main():
     metrics = {
         'k': k,
         'tag': tag,
-        'pinn_L2_rel': pinn_l2,
+        'pinn_rmse': pinn_l2,
         'pinn_H1_rel': pinn_h1,
-        'fem_L2_rel': fem_l2,
+        'fem_rmse': fem_l2,
         'fem_H1_rel': fem_h1,
         'pinn_train_time_s': pinn_train_time_s,
         'pinn_infer_time_s': pinn_infer_time_s,
@@ -171,13 +170,13 @@ def main():
     ref_lbl = 'u*' if has_exact else 'u_FEM'
     im11 = axes[1, 1].pcolormesh(X, Y, err_pinn, shading='auto',
                                  cmap='RdBu_r', vmin=-emax, vmax=emax)
-    axes[1, 1].set_title(f'PINN - {ref_lbl}  (rel L2 = {pinn_l2:.2e})')
+    axes[1, 1].set_title(f'PINN - {ref_lbl}  (RMSE = {pinn_l2:.2e})')
     plt.colorbar(im11, ax=axes[1, 1])
 
     if has_exact:
         im12 = axes[1, 2].pcolormesh(X, Y, err_fem, shading='auto',
                                      cmap='RdBu_r', vmin=-emax, vmax=emax)
-        axes[1, 2].set_title(f'FEM - u*  (rel L2 = {fem_l2:.2e})')
+        axes[1, 2].set_title(f'FEM - u*  (RMSE = {fem_l2:.2e})')
         plt.colorbar(im12, ax=axes[1, 2])
     else:
         axes[1, 2].axis('off')

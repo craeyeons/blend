@@ -15,10 +15,8 @@ from lib.fem_solver import HelmholtzSolver
 from lib.domains import manufactured_solution, gaussian_source
 
 
-def relative_norm(pred, exact):
-    num = np.sqrt(np.mean((pred - exact) ** 2))
-    den = np.sqrt(np.mean(exact ** 2))
-    return float(num / (den + 1e-12))
+def rmse(pred, exact):
+    return float(np.sqrt(np.mean((pred - exact) ** 2)))
 
 
 def main():
@@ -105,10 +103,10 @@ def main():
     )
     if args.source == 'manufactured':
         u_exact, _ = manufactured_solution(X, Y, args.k)
-        rel_l2 = relative_norm(u_fem, u_exact)
-        print(f"FEM relative L2 error vs u*: {rel_l2:.4e}")
+        err = rmse(u_fem, u_exact)
+        print(f"FEM RMSE vs u*: {err:.4e}")
         save_kw['u_exact'] = u_exact
-        save_kw['fem_rel_l2'] = np.float32(rel_l2)
+        save_kw['fem_rmse'] = np.float32(err)
     else:
         print(f"Gaussian source: no analytic u*; FEM will serve as reference.")
         save_kw['x_s'] = np.float32(args.x_s)

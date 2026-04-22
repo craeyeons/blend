@@ -58,6 +58,9 @@ def main():
     p.add_argument('--beta', type=float, default=0.1)
     p.add_argument('--lambda-tv', type=float, default=0.01)
     p.add_argument('--base-filters', type=int, default=32)
+    p.add_argument('--fixed-alpha', type=float, default=None,
+                   help='If set (in [0,1]), pin PDE/ETE mixing weight alpha. '
+                        'Otherwise alpha is learned via sigmoid(alpha_raw).')
     args = p.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -126,7 +129,11 @@ def main():
 
     # Router input (5 channels: layout, f, u, |r|, |e_ete|)
     inputs = create_router_input(layout, f_grid, pinn_u, residual, ete=ete)
-    residual_norm = median_normalize(residual, layout)
+
+    # Independently median-normalize each label source so their medians are
+    # both 1 on the solid region (scale-fixing; see proof.tex §2.4).
+    r_tilde = median_normalize(residual, layout)
+    e_tilde = median_normalize(ete, layout)
 
     # Router
     router = RouterCNN(base_filters=args.base_filters)
@@ -134,10 +141,16 @@ def main():
     print(f"Router params: {router.count_params():,}")
 
     trainer = RouterTrainer(router, pinn, args.k,
-                            beta=args.beta, lambda_tv=args.lambda_tv)
+                            beta=args.beta, lambda_tv=args.lambda_tv,
+                            learn_alpha=(args.fixed_alpha is None),
+                            fixed_alpha=args.fixed_alpha)
+    if args.fixed_alpha is None:
+        print("alpha: learned (sigmoid of trainable scalar)")
+    else:
+        print(f"alpha: fixed at {args.fixed_alpha}")
 
     t0 = time.perf_counter()
-    history = trainer.train(inputs, residual_norm, layout,
+    history = trainer.train(inputs, r_tilde, e_tilde, layout,
                             epochs=args.epochs, lr=args.lr,
                             lr_min=args.lr_min, verbose=True)
     train_time_s = time.perf_counter() - t0
@@ -167,6 +180,8 @@ def main():
             'beta': args.beta,
             'lambda_tv': args.lambda_tv,
             'base_filters': args.base_filters,
+            'fixed_alpha': args.fixed_alpha,
+            'alpha_final': history['alpha'][-1] if history.get('alpha') else None,
             'train_time_s': train_time_s,
             'residual_time_s': residual_time_s,
         }, f, indent=2)
