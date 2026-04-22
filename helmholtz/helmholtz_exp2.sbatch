@@ -46,7 +46,7 @@ TAG="exp2_hole_k4pi"
 XS=0.7
 YS=0.5
 SIGMA=0.05
-AMP=1.0
+AMP=250.0
 HCX=0.5
 HCY=0.5
 HR=0.15
@@ -69,7 +69,7 @@ python train_pinn.py \
     --n-boundary 4000 \
     --w-bc 100.0 \
     --layers 256 256 256 256 256 \
-    --fourier-m 64 \
+    --fourier-m 128 \
     --tag ${TAG}
 
 # 2) FEM reference
