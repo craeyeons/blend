@@ -33,7 +33,7 @@ from lib.domains import (create_square, create_square_with_hole,
 from lib.network import build_pinn
 from lib.fem_solver import HelmholtzSolver
 from lib.router import (RouterCNN, HelmholtzResidualComputer,
-                        create_router_input)
+                        create_router_input, compute_ete_fft)
 from lib.hybrid import (solve_hybrid_schwarz, threshold_for_coverage,
                         rel_l2)
 
@@ -127,13 +127,16 @@ def main():
     pinn_u = pinn.predict(xy, batch_size=len(xy), verbose=0).reshape(X.shape)
     pinn_u = pinn_u * layout
 
-    # PDE residual (precomputed for router input; fixed for all thresholds)
-    residual = HelmholtzResidualComputer(pinn, args.k).compute_residual(
-        X, Y, f_grid) * layout
+    # PDE residual + FFT-ETE channel (precomputed; fixed for all thresholds).
+    rcomp = HelmholtzResidualComputer(pinn, args.k)
+    residual_signed = rcomp.compute_signed_residual(X, Y, f_grid) * layout
+    residual = np.abs(residual_signed)
+    ete = compute_ete_fft(residual_signed, args.k, layout=layout)
 
     # Router
     router = RouterCNN(base_filters=args.base_filters)
-    dummy_inputs = create_router_input(layout, f_grid, pinn_u, residual)
+    dummy_inputs = create_router_input(layout, f_grid, pinn_u, residual,
+                                       ete=ete)
     _ = router(tf.constant(dummy_inputs, dtype=tf.float32))
     router.load_weights(os.path.join(
         args.router_dir, f'router_helmholtz_{args.tag}.weights.h5'))
@@ -149,6 +152,7 @@ def main():
         solver.solve(f_callable, g_callable)
         solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                              X, Y, layout, f_grid, pinn_u, residual,
+                             ete_grid=ete,
                              threshold=0.0, reuse_logits=logits)
 
     # ---------- FEM baseline loop ----------
@@ -179,6 +183,7 @@ def main():
         # Time the router call fresh here (don't reuse_logits)
         res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                    X, Y, layout, f_grid, pinn_u, residual,
+                                   ete_grid=ete,
                                    threshold=0.0)
         total = time.perf_counter() - t0
         hyb_total.append(total)
@@ -203,6 +208,7 @@ def main():
         t0 = time.perf_counter()
         res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                    X, Y, layout, f_grid, pinn_u, residual,
+                                   ete_grid=ete,
                                    threshold=thr, reuse_logits=logits)
         wall = time.perf_counter() - t0
         errl2 = rel_l2(res['u_grid'], u_fem_reference)
@@ -245,7 +251,7 @@ def main():
     ref_path = os.path.join(args.output_dir, f'reference_{args.tag}.npz')
     np.savez(ref_path, X=X, Y=Y, layout=layout,
              u_fem=u_fem_reference, logits=logits,
-             pinn_u=pinn_u, residual=residual, f_grid=f_grid)
+             pinn_u=pinn_u, residual=residual, f_grid=f_grid, ete=ete)
     print(f"Saved reference arrays: {ref_path}")
 
 

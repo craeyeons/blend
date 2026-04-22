@@ -8,11 +8,12 @@ problem: 4 input channels instead of 9, PDE residual
     r = uxx + uyy + k^2 u + f
 instead of the elastic equilibrium residuals.
 
-Input (Ny, Nx, 4):
+Input (Ny, Nx, 5):
     0: layout mask (1 = solid, 0 = inside hole)
     1: source f(x, y), normalized by max|f|
     2: PINN prediction u(x, y), normalized by max|u|
     3: |PDE residual|, median-normalized
+    4: |ETE estimate| from FFT pseudo-inverse of L e = r, median-normalized
 
 Output: (Ny, Nx, 1) raw logits — positive logit = "reject PINN (use FEM)",
 negative logit = "accept PINN". A caller thresholds at 0 by default.
@@ -143,11 +144,11 @@ class HelmholtzResidualComputer:
         hess = t2.batch_jacobian(grads, xy_flat)  # (N, 2, 2)
         uxx = hess[:, 0, 0:1]
         uyy = hess[:, 1, 1:2]
-        r = uxx + uyy + (self.k ** 2) * u + f_flat
-        return tf.reshape(tf.abs(r), [-1])
+        r = uxx + uyy + (self.k ** 2) * u + f_flat  # signed residual
+        return tf.reshape(r, [-1])
 
-    def compute_residual(self, X, Y, f_grid):
-        """Return |residual| on the (Ny, Nx) grid."""
+    def compute_signed_residual(self, X, Y, f_grid):
+        """Return the signed residual `Δu + k²u + f` on the (Ny, Nx) grid."""
         shape = X.shape
         xy = np.stack([X.ravel(), Y.ravel()], axis=-1).astype(np.float32)
         f_flat = f_grid.ravel().astype(np.float32).reshape(-1, 1)
@@ -156,36 +157,95 @@ class HelmholtzResidualComputer:
         r_flat = self._compute_flat(xy_tf, f_tf).numpy()
         return r_flat.reshape(shape).astype(np.float32)
 
+    def compute_residual(self, X, Y, f_grid):
+        """Return |residual| on the (Ny, Nx) grid."""
+        return np.abs(self.compute_signed_residual(X, Y, f_grid))
+
+
+# ----------------------------------------------------------------------
+# Cheap ETE via FFT pseudo-inverse of L e = r
+# ----------------------------------------------------------------------
+
+def compute_ete_fft(signed_residual, k, layout=None,
+                    domain_size=(1.0, 1.0), eps_frac=0.01):
+    """FFT pseudo-inverse of the Helmholtz error-transport equation.
+
+    For L = -Δ - k², the Fourier symbol is σ(ξ) = |ξ|² - k². Inverting gives
+        ê(ξ) = r̂(ξ) / (σ(ξ) + i·ε·k²)
+    with a small imaginary regularizer around the resonance ring |ξ|=k.
+
+    Ignores domain BCs (free-space approximation). The `layout` mask zeroes
+    the residual inside the hole before transforming, and zeroes the output
+    there afterwards. Returns the non-negative estimate |e_est| on the grid.
+
+    Parameters
+    ----------
+    signed_residual : (Ny, Nx) float
+        Signed PDE residual r (not |r|).
+    k : float
+        Wavenumber.
+    layout : (Ny, Nx) float or bool, optional
+        1 inside the solid domain, 0 inside holes. Both masks input and output.
+    domain_size : (Lx, Ly), optional
+        Physical extents of the grid.
+    eps_frac : float, optional
+        Imaginary regularizer (fraction of k²). Default 1%.
+    """
+    r = np.asarray(signed_residual, dtype=np.float64)
+    if layout is not None:
+        r = r * (np.asarray(layout) > 0).astype(r.dtype)
+
+    Ny, Nx = r.shape
+    Lx, Ly = domain_size
+    kx = 2.0 * np.pi * np.fft.fftfreq(Nx, d=Lx / Nx)
+    ky = 2.0 * np.pi * np.fft.fftfreq(Ny, d=Ly / Ny)
+    KX, KY = np.meshgrid(kx, ky, indexing='xy')
+    sym = KX ** 2 + KY ** 2 - k ** 2
+    eps = eps_frac * (k ** 2 + 1e-10)
+    denom = sym + 1j * eps
+
+    r_hat = np.fft.fft2(r)
+    e_hat = r_hat / denom
+    e = np.fft.ifft2(e_hat).real
+    out = np.abs(e).astype(np.float32)
+    if layout is not None:
+        out = out * (np.asarray(layout) > 0).astype(out.dtype)
+    return out
+
 
 # ----------------------------------------------------------------------
 # Router input builder
 # ----------------------------------------------------------------------
 
-def create_router_input(layout, f_source, pinn_u, residual):
-    """Assemble (1, Ny, Nx, 4) tensor for the router.
+def create_router_input(layout, f_source, pinn_u, residual, ete=None):
+    """Assemble (1, Ny, Nx, C) tensor for the router.
 
-    Normalization:
+    C = 5 when `ete` is supplied (FFT-ETE channel), else 4.
+
+    Normalization (on solid cells):
       - `f_source / max|f|`
       - `pinn_u / max|u|`
-      - `residual / median(|residual|)` (on solid cells)
+      - `residual / median(|residual|)`
+      - `ete / median(|ete|)` (if provided)
     """
     H, W = layout.shape
     f_max = np.max(np.abs(f_source)) + 1e-10
     u_max = np.max(np.abs(pinn_u)) + 1e-10
     solid = layout > 0
-    if np.any(solid):
-        res_vals = np.abs(residual[solid])
-        res_median = np.median(res_vals) + 1e-10
-    else:
-        res_median = 1.0
+    res_median = (float(np.median(np.abs(residual[solid]))) + 1e-10
+                  if np.any(solid) else 1.0)
 
-    channels = np.stack([
+    channels = [
         layout.astype(np.float32),
         (f_source / f_max).astype(np.float32),
         (pinn_u / u_max).astype(np.float32),
         (residual / res_median).astype(np.float32),
-    ], axis=-1)
-    return channels[np.newaxis, ...]
+    ]
+    if ete is not None:
+        ete_median = (float(np.median(np.abs(ete[solid]))) + 1e-10
+                      if np.any(solid) else 1.0)
+        channels.append((ete / ete_median).astype(np.float32))
+    return np.stack(channels, axis=-1)[np.newaxis, ...]
 
 
 # ----------------------------------------------------------------------

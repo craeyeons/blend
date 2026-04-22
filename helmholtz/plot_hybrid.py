@@ -63,6 +63,7 @@ def _load_models(args, summary, ref):
     pinn_u = ref['pinn_u']
     residual = ref['residual']
     f_grid = ref['f_grid']
+    ete = ref['ete'] if 'ete' in ref.files else None
 
     dirichlet_predicate, f_callable, g_callable = _build_callables(summary)
 
@@ -85,7 +86,7 @@ def _load_models(args, summary, ref):
         args.pinn_dir, f'pinn_helmholtz_{args.tag}.weights.h5'))
 
     router = RouterCNN(base_filters=args.base_filters)
-    dummy = create_router_input(layout, f_grid, pinn_u, residual)
+    dummy = create_router_input(layout, f_grid, pinn_u, residual, ete=ete)
     _ = router(tf.constant(dummy, dtype=tf.float32))
     router.load_weights(os.path.join(
         args.router_dir, f'router_helmholtz_{args.tag}.weights.h5'))
@@ -368,6 +369,8 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
         thr = threshold_for_coverage(logits, layout, float(cov))
         res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                    X, Y, layout, f_grid, pinn_u, residual,
+                                   ete_grid=(ref['ete'] if 'ete' in ref.files
+                                             else None),
                                    threshold=thr, reuse_logits=logits)
         u = np.where(mask, res['u_grid'], np.nan)
         im = ax.pcolormesh(X, Y, u, cmap='RdBu_r',
@@ -440,6 +443,8 @@ def main():
     f_grid = ref['f_grid']
     res0 = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                 X, Y, layout, f_grid, pinn_u, residual,
+                                ete_grid=(ref['ete'] if 'ete' in ref.files
+                                          else None),
                                 threshold=0.0, reuse_logits=ref['logits'])
     u_hybrid0 = res0['u_grid']
     accept_mask0 = res0['accept_mask']

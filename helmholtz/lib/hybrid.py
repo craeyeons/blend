@@ -49,6 +49,7 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
                          f_callable, g_callable,
                          X, Y, layout,
                          f_grid, pinn_u_grid, residual_grid,
+                         ete_grid=None,
                          threshold=0.0,
                          reuse_logits=None):
     """Run one hybrid solve.
@@ -78,7 +79,8 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
 
     t0 = time.perf_counter()
     if reuse_logits is None:
-        inputs = create_router_input(layout, f_grid, pinn_u_grid, residual_grid)
+        inputs = create_router_input(layout, f_grid, pinn_u_grid,
+                                     residual_grid, ete=ete_grid)
         logits = router_model(tf.constant(inputs, dtype=tf.float32),
                               training=False)[0, :, :, 0].numpy()
     else:

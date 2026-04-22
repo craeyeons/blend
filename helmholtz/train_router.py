@@ -28,7 +28,7 @@ from lib.domains import (create_square, create_square_with_hole,
 from lib.network import build_pinn
 from lib.router import (RouterCNN, RouterTrainer,
                         HelmholtzResidualComputer, create_router_input,
-                        median_normalize)
+                        median_normalize, compute_ete_fft)
 
 
 def main():
@@ -106,19 +106,26 @@ def main():
     # Mask hole interior to zero so it doesn't pollute channel normalization.
     pinn_u = pinn_u * layout
 
-    # PDE residual
+    # PDE residual (signed, so we can feed it to the FFT ETE; |r| is the
+    # router channel and the training label).
     residual_comp = HelmholtzResidualComputer(pinn, args.k)
     t0 = time.perf_counter()
-    residual = residual_comp.compute_residual(X, Y, f_grid)
-    residual = residual * layout
+    residual_signed = residual_comp.compute_signed_residual(X, Y, f_grid)
+    residual_signed = residual_signed * layout
+    residual = np.abs(residual_signed)
     residual_time_s = time.perf_counter() - t0
     print(f"Residual field time: {residual_time_s:.3f}s  "
           f"median (solid)={float(np.median(residual[layout>0])):.3e}")
 
-    # Router input (for training; residual is median-normalized inside the
-    # channel builder but we also pass a pre-normalized target label to
-    # train_step).
-    inputs = create_router_input(layout, f_grid, pinn_u, residual)
+    # FFT-based ETE channel (free-space pseudo-inverse of L e = r).
+    t0 = time.perf_counter()
+    ete = compute_ete_fft(residual_signed, args.k, layout=layout)
+    ete_time_s = time.perf_counter() - t0
+    print(f"FFT-ETE channel time: {ete_time_s*1000:.2f}ms  "
+          f"median (solid)={float(np.median(ete[layout>0])):.3e}")
+
+    # Router input (5 channels: layout, f, u, |r|, |e_ete|)
+    inputs = create_router_input(layout, f_grid, pinn_u, residual, ete=ete)
     residual_norm = median_normalize(residual, layout)
 
     # Router
