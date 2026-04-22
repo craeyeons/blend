@@ -91,8 +91,14 @@ def main():
     parser.add_argument('--n-boundary', type=int, default=2000)
     parser.add_argument('--w-bc', type=float, default=100.0)
     parser.add_argument('--layers', type=int, nargs='+',
-                        default=[64, 64, 64, 64])
+                        default=[128, 128, 128, 128])
     parser.add_argument('--activation', type=str, default='tanh')
+    parser.add_argument('--fourier-m', type=int, default=64,
+                        help='Number of Fourier features (0 disables)')
+    parser.add_argument('--fourier-scale', type=float, default=None,
+                        help='Std of Fourier freq matrix B. '
+                             'Defaults to k/(2 pi) when None.')
+    parser.add_argument('--fourier-seed', type=int, default=0)
     parser.add_argument('--grad-clip', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--tag', type=str, default=None)
@@ -112,9 +118,14 @@ def main():
     print(f"PINN TRAINING: Helmholtz  k={args.k:.4f}  tag={tag}")
     print("=" * 60)
 
+    fourier_scale = (args.fourier_scale if args.fourier_scale is not None
+                     else args.k / (2.0 * np.pi))
     model = build_pinn(num_inputs=2, layers=tuple(args.layers),
                        activation=args.activation,
-                       input_range=((0.0, 1.0), (0.0, 1.0)))
+                       input_range=((0.0, 1.0), (0.0, 1.0)),
+                       fourier_m=args.fourier_m,
+                       fourier_scale=fourier_scale,
+                       fourier_seed=args.fourier_seed)
     print(f"Params: {model.count_params():,}")
 
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
@@ -187,6 +198,8 @@ def main():
             'lr': args.lr,
             'layers': args.layers,
             'w_bc': args.w_bc,
+            'fourier_m': args.fourier_m,
+            'fourier_scale': fourier_scale,
             'train_time_s': train_time_s,
             'infer_time_s': infer_time_s,
             'final_rel_l2': rel_l2,

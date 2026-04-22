@@ -72,9 +72,21 @@ def main():
     k = float(d['k'])
     fem_solve_time_s = float(d['solve_time_s'])
 
-    model = build_pinn(num_inputs=2, layers=tuple(args.layers),
+    fourier_m = 64
+    fourier_scale = k / (2.0 * np.pi)
+    layers = args.layers
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            _meta_preview = json.load(f)
+        fourier_m = int(_meta_preview.get('fourier_m', fourier_m))
+        fourier_scale = float(_meta_preview.get('fourier_scale', fourier_scale))
+        layers = list(_meta_preview.get('layers', layers))
+
+    model = build_pinn(num_inputs=2, layers=tuple(layers),
                        activation=args.activation,
-                       input_range=((0.0, 1.0), (0.0, 1.0)))
+                       input_range=((0.0, 1.0), (0.0, 1.0)),
+                       fourier_m=fourier_m,
+                       fourier_scale=fourier_scale)
     _ = model(tf.zeros((1, 2)))
     model.load_weights(pinn_path)
 
