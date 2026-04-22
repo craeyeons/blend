@@ -366,6 +366,20 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
     covs = np.arange(0.1, 1.01, 0.1)  # 10% .. 100%
     fig, axes = plt.subplots(2, 5, figsize=(22, 9))
     for ax, cov in zip(axes.ravel(), covs):
+        if cov >= 1.0:
+            # At 100% FEM coverage the hybrid is identical to full FEM by
+            # construction (no PINN pins). Display u_fem directly.
+            u = np.where(mask, u_fem, np.nan)
+            im = ax.pcolormesh(X, Y, u, cmap='RdBu_r',
+                               vmin=-vmax, vmax=vmax, shading='auto')
+            outer = mask.astype(np.float32)
+            ax.contour(X, Y, outer, levels=[0.5],
+                       colors='lime', linewidths=1.0)
+            ax.set_title('target 100%  actual 100.0%\n'
+                         'rel L2 = 0.00e+00  (= full FEM)')
+            ax.set_aspect('equal')
+            plt.colorbar(im, ax=ax, fraction=0.046)
+            continue
         thr = threshold_for_coverage(logits, layout, float(cov))
         res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                    X, Y, layout, f_grid, pinn_u, residual,
