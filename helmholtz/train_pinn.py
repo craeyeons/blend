@@ -29,15 +29,49 @@ if gpus:
 from lib.network import build_pinn
 
 
-def sample_interior(n, rng):
-    xy = rng.uniform(0.0, 1.0, size=(n, 2)).astype(np.float32)
-    return xy
+def sample_interior(n, rng, hole=None):
+    """Uniform samples in [0,1]^2; if `hole=(cx, cy, r)`, rejection-sample
+    to exclude points inside the circular hole."""
+    if hole is None:
+        return rng.uniform(0.0, 1.0, size=(n, 2)).astype(np.float32)
+    cx, cy, r = hole
+    out = np.empty((n, 2), dtype=np.float32)
+    filled = 0
+    while filled < n:
+        batch = rng.uniform(0.0, 1.0, size=(2 * (n - filled), 2))
+        d2 = (batch[:, 0] - cx) ** 2 + (batch[:, 1] - cy) ** 2
+        keep = batch[d2 > r ** 2]
+        take = min(len(keep), n - filled)
+        out[filled:filled + take] = keep[:take]
+        filled += take
+    return out
 
 
-def sample_boundary(n, rng):
-    per_edge = n // 4
+def sample_boundary(n, rng, hole=None):
+    """Uniformly sample outer-square boundary (4 edges) and, if hole, the
+    hole circle. Total returned ~ `n` (may round down slightly)."""
+    if hole is None:
+        per_edge = n // 4
+        parts = []
+        for edge in range(4):
+            t = rng.uniform(0.0, 1.0, size=(per_edge,)).astype(np.float32)
+            if edge == 0:
+                xy = np.stack([t, np.zeros_like(t)], axis=-1)
+            elif edge == 1:
+                xy = np.stack([t, np.ones_like(t)], axis=-1)
+            elif edge == 2:
+                xy = np.stack([np.zeros_like(t), t], axis=-1)
+            else:
+                xy = np.stack([np.ones_like(t), t], axis=-1)
+            parts.append(xy)
+        return np.concatenate(parts, axis=0)
+
+    cx, cy, r = hole
+    # Split: half on outer boundary (4 edges), half on hole circle.
+    n_outer = n // 2
+    n_hole = n - n_outer
+    per_edge = n_outer // 4
     parts = []
-    # bottom (y=0), top (y=1), left (x=0), right (x=1)
     for edge in range(4):
         t = rng.uniform(0.0, 1.0, size=(per_edge,)).astype(np.float32)
         if edge == 0:
@@ -49,6 +83,11 @@ def sample_boundary(n, rng):
         else:
             xy = np.stack([np.ones_like(t), t], axis=-1)
         parts.append(xy)
+    theta = rng.uniform(0.0, 2.0 * np.pi, size=(n_hole,)).astype(np.float32)
+    xy_hole = np.stack(
+        [cx + r * np.cos(theta), cy + r * np.sin(theta)], axis=-1
+    ).astype(np.float32)
+    parts.append(xy_hole)
     return np.concatenate(parts, axis=0)
 
 
@@ -110,6 +149,11 @@ def main():
     parser.add_argument('--y-s', type=float, default=0.5)
     parser.add_argument('--sigma', type=float, default=0.05)
     parser.add_argument('--amplitude', type=float, default=1.0)
+    parser.add_argument('--domain', type=str, default='square',
+                        choices=['square', 'square_hole'])
+    parser.add_argument('--hole-center-x', type=float, default=0.5)
+    parser.add_argument('--hole-center-y', type=float, default=0.5)
+    parser.add_argument('--hole-radius', type=float, default=0.15)
     parser.add_argument('--grad-clip', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--tag', type=str, default=None)
@@ -173,11 +217,19 @@ def main():
         optimizer.apply_gradients(zip(grads, model.trainable_variables))
         return total, loss_pde, loss_bc
 
+    hole = None
+    if args.domain == 'square_hole':
+        hole = (args.hole_center_x, args.hole_center_y, args.hole_radius)
+        # In hole mode, BC target is always zero (homogeneous Dirichlet),
+        # regardless of --source setting.
+        def bc_fn(xy_bd):
+            return tf.zeros((tf.shape(xy_bd)[0], 1), dtype=tf.float32)
+
     history = {'total': [], 'pde': [], 'bc': []}
     t_train_start = time.perf_counter()
     for epoch in range(args.epochs):
-        xy_int = tf.constant(sample_interior(args.n_domain, rng))
-        xy_bd = tf.constant(sample_boundary(args.n_boundary, rng))
+        xy_int = tf.constant(sample_interior(args.n_domain, rng, hole=hole))
+        xy_bd = tf.constant(sample_boundary(args.n_boundary, rng, hole=hole))
         u_bd = bc_fn(xy_bd)
 
         total, loss_pde, loss_bc = train_step(xy_int, xy_bd, u_bd)
@@ -238,6 +290,10 @@ def main():
             'y_s': args.y_s,
             'sigma': args.sigma,
             'amplitude': args.amplitude,
+            'domain': args.domain,
+            'hole_center_x': args.hole_center_x,
+            'hole_center_y': args.hole_center_y,
+            'hole_radius': args.hole_radius,
             'tag': tag,
         }, f, indent=2)
     print(f"Saved training meta: {meta_path}")

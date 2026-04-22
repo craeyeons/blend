@@ -50,6 +50,47 @@ def manufactured_solution(X, Y, k):
     return u_star.astype(np.float32), f_source.astype(np.float32)
 
 
+def create_square_with_hole(Nx=201, Ny=201,
+                            x_domain=(0.0, 1.0), y_domain=(0.0, 1.0),
+                            hole_center=(0.5, 0.5), hole_radius=0.15):
+    """Regular-grid square with a circular hole cut out.
+
+    Returns
+    -------
+    X, Y : (Ny, Nx) meshgrid
+    layout : (Ny, Nx) binary; 1 = solid cell, 0 = inside hole
+    dirichlet_mask : (Ny, Nx) binary; 1 on the 4 outer edges AND on solid
+        cells adjacent to the hole (discrete hole boundary ring)
+    bc_u : (Ny, Nx) float32; Dirichlet values (zeros — homogeneous Dirichlet)
+    """
+    x = np.linspace(x_domain[0], x_domain[1], Nx, dtype=np.float32)
+    y = np.linspace(y_domain[0], y_domain[1], Ny, dtype=np.float32)
+    X, Y = np.meshgrid(x, y)
+
+    cx, cy = hole_center
+    r2 = (X - cx) ** 2 + (Y - cy) ** 2
+    inside_hole = r2 <= hole_radius ** 2
+    layout = (~inside_hole).astype(np.float32)
+
+    dirichlet_mask = np.zeros((Ny, Nx), dtype=np.float32)
+    dirichlet_mask[0, :] = 1.0
+    dirichlet_mask[-1, :] = 1.0
+    dirichlet_mask[:, 0] = 1.0
+    dirichlet_mask[:, -1] = 1.0
+    # Solid cells adjacent to the hole (4-connectivity).
+    hole = inside_hole.astype(np.float32)
+    neighbor_hole = np.zeros_like(hole)
+    neighbor_hole[1:, :] += hole[:-1, :]
+    neighbor_hole[:-1, :] += hole[1:, :]
+    neighbor_hole[:, 1:] += hole[:, :-1]
+    neighbor_hole[:, :-1] += hole[:, 1:]
+    boundary_ring = (neighbor_hole > 0) & (layout > 0)
+    dirichlet_mask[boundary_ring] = 1.0
+
+    bc_u = np.zeros((Ny, Nx), dtype=np.float32)
+    return X, Y, layout, dirichlet_mask, bc_u
+
+
 def gaussian_source(X, Y, x_s=0.5, y_s=0.5, sigma=0.05, amplitude=1.0):
     """Localized Gaussian forcing for Helmholtz with homogeneous Dirichlet BC.
 

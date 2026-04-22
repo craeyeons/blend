@@ -37,6 +37,11 @@ def main():
     p.add_argument('--y-s', type=float, default=0.5)
     p.add_argument('--sigma', type=float, default=0.05)
     p.add_argument('--amplitude', type=float, default=1.0)
+    p.add_argument('--domain', type=str, default='square',
+                   choices=['square', 'square_hole'])
+    p.add_argument('--hole-center-x', type=float, default=0.5)
+    p.add_argument('--hole-center-y', type=float, default=0.5)
+    p.add_argument('--hole-radius', type=float, default=0.15)
     args = p.parse_args()
 
     tag = args.tag or f'k{args.k:.3f}'.replace('.', 'p')
@@ -46,7 +51,19 @@ def main():
     print(f"FEM SOLVE: Helmholtz  k={args.k:.4f}  mesh_n={args.mesh_n}")
     print("=" * 60)
 
-    solver = HelmholtzSolver(k=args.k, mesh_n=args.mesh_n)
+    dirichlet_predicate = None
+    if args.domain == 'square_hole':
+        cx, cy, r = args.hole_center_x, args.hole_center_y, args.hole_radius
+        def dirichlet_predicate(x, y):
+            return (x - cx) ** 2 + (y - cy) ** 2 <= r ** 2
+
+    solver = HelmholtzSolver(k=args.k, mesh_n=args.mesh_n,
+                             dirichlet_predicate=dirichlet_predicate)
+
+    if args.domain == 'square_hole' and args.source == 'manufactured':
+        raise ValueError(
+            "square_hole domain does not have an analytic solution; use "
+            "--source gaussian.")
 
     if args.source == 'manufactured':
         def f_callable(x, y):
@@ -54,7 +71,7 @@ def main():
 
         def g_callable(x, y):
             return np.sin(args.k * x) * np.sin(args.k * y)
-    else:  # gaussian
+    else:  # gaussian, homogeneous Dirichlet everywhere
         def f_callable(x, y):
             r2 = (x - args.x_s) ** 2 + (y - args.y_s) ** 2
             return args.amplitude * np.exp(-r2 / (2.0 * args.sigma ** 2))
@@ -81,6 +98,10 @@ def main():
         solve_time_s=np.float32(solve_time_s),
         assemble_plus_solve_s=np.float32(assemble_plus_solve),
         source=np.array(args.source),
+        domain=np.array(args.domain),
+        hole_center_x=np.float32(args.hole_center_x),
+        hole_center_y=np.float32(args.hole_center_y),
+        hole_radius=np.float32(args.hole_radius),
     )
     if args.source == 'manufactured':
         u_exact, _ = manufactured_solution(X, Y, args.k)
