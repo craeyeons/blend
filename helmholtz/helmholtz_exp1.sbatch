@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres="gpu:h100-96:1"
 #SBATCH --mem=32G
-#SBATCH --time=3:00:00
+#SBATCH --time=8:00:00
 #SBATCH --export=NONE
 
 echo "=== Job Info ==="
@@ -50,11 +50,13 @@ for MULT in 4 8 12; do
 
     python train_pinn.py \
         --k ${K} \
-        --epochs 20000 \
+        --epochs 50000 \
         --lr 3e-4 \
-        --n-domain 10000 \
-        --n-boundary 2000 \
+        --n-domain 20000 \
+        --n-boundary 4000 \
         --w-bc 100.0 \
+        --layers 256 256 256 256 256 \
+        --fourier-m 128 \
         --tag ${TAG}
 
     python run_fem.py \

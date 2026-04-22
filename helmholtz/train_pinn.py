@@ -85,15 +85,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--k', type=float, required=True,
                         help='Wavenumber')
-    parser.add_argument('--epochs', type=int, default=20000)
+    parser.add_argument('--epochs', type=int, default=50000)
     parser.add_argument('--lr', type=float, default=3e-4)
-    parser.add_argument('--n-domain', type=int, default=10000)
-    parser.add_argument('--n-boundary', type=int, default=2000)
+    parser.add_argument('--n-domain', type=int, default=20000)
+    parser.add_argument('--n-boundary', type=int, default=4000)
     parser.add_argument('--w-bc', type=float, default=100.0)
     parser.add_argument('--layers', type=int, nargs='+',
-                        default=[128, 128, 128, 128])
+                        default=[256, 256, 256, 256, 256])
     parser.add_argument('--activation', type=str, default='tanh')
-    parser.add_argument('--fourier-m', type=int, default=64,
+    parser.add_argument('--fourier-m', type=int, default=128,
                         help='Number of Fourier features (0 disables)')
     parser.add_argument('--fourier-scale', type=float, default=None,
                         help='Std of Fourier freq matrix B. '

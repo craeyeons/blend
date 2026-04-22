@@ -126,31 +126,49 @@ def main():
         json.dump(metrics, f, indent=2)
     print(json.dumps(metrics, indent=2))
 
-    # Plot: u_exact, PINN error, FEM error
+    # Plot: top row = solutions (exact, PINN, FEM) on shared scale;
+    # bottom row = errors (blank, PINN-u*, FEM-u*) on shared scale.
     err_pinn = u_pinn - u_exact
     err_fem = u_fem - u_exact
     emax = max(np.abs(err_pinn).max(), np.abs(err_fem).max(), 1e-12)
+    umax = max(np.abs(u_exact).max(), np.abs(u_pinn).max(),
+               np.abs(u_fem).max(), 1e-12)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
-    im0 = axes[0].pcolormesh(X, Y, u_exact, shading='auto', cmap='RdBu_r')
-    axes[0].set_title(f'u* = sin(kx)sin(ky),  k={k:.3f}')
-    plt.colorbar(im0, ax=axes[0])
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8.4))
 
-    im1 = axes[1].pcolormesh(X, Y, err_pinn, shading='auto',
-                             cmap='RdBu_r', vmin=-emax, vmax=emax)
-    axes[1].set_title(f'PINN - u*  (rel L2 = {pinn_l2:.2e})')
-    plt.colorbar(im1, ax=axes[1])
+    im00 = axes[0, 0].pcolormesh(X, Y, u_exact, shading='auto',
+                                 cmap='RdBu_r', vmin=-umax, vmax=umax)
+    axes[0, 0].set_title(f'u* = sin(kx)sin(ky),  k={k:.3f}')
+    plt.colorbar(im00, ax=axes[0, 0])
 
-    im2 = axes[2].pcolormesh(X, Y, err_fem, shading='auto',
-                             cmap='RdBu_r', vmin=-emax, vmax=emax)
-    axes[2].set_title(f'FEM - u*  (rel L2 = {fem_l2:.2e})')
-    plt.colorbar(im2, ax=axes[2])
+    im01 = axes[0, 1].pcolormesh(X, Y, u_pinn, shading='auto',
+                                 cmap='RdBu_r', vmin=-umax, vmax=umax)
+    axes[0, 1].set_title('PINN u')
+    plt.colorbar(im01, ax=axes[0, 1])
 
-    for ax in axes:
-        ax.set_aspect('equal')
-        ax.set_xlabel('x'); ax.set_ylabel('y')
+    im02 = axes[0, 2].pcolormesh(X, Y, u_fem, shading='auto',
+                                 cmap='RdBu_r', vmin=-umax, vmax=umax)
+    axes[0, 2].set_title('FEM u')
+    plt.colorbar(im02, ax=axes[0, 2])
 
-    fig.suptitle(f'Helmholtz manufactured solution (tag={tag})', y=1.02)
+    axes[1, 0].axis('off')
+
+    im11 = axes[1, 1].pcolormesh(X, Y, err_pinn, shading='auto',
+                                 cmap='RdBu_r', vmin=-emax, vmax=emax)
+    axes[1, 1].set_title(f'PINN - u*  (rel L2 = {pinn_l2:.2e})')
+    plt.colorbar(im11, ax=axes[1, 1])
+
+    im12 = axes[1, 2].pcolormesh(X, Y, err_fem, shading='auto',
+                                 cmap='RdBu_r', vmin=-emax, vmax=emax)
+    axes[1, 2].set_title(f'FEM - u*  (rel L2 = {fem_l2:.2e})')
+    plt.colorbar(im12, ax=axes[1, 2])
+
+    for ax in axes.ravel():
+        if ax.has_data():
+            ax.set_aspect('equal')
+            ax.set_xlabel('x'); ax.set_ylabel('y')
+
+    fig.suptitle(f'Helmholtz manufactured solution (tag={tag})', y=1.00)
     fig.tight_layout()
     out_png = os.path.join(args.output_dir, f'plot_sanity_{tag}.png')
     fig.savefig(out_png, dpi=150, bbox_inches='tight')
