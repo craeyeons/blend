@@ -257,9 +257,9 @@ class CavityRouterTrainer:
     Trainer for cavity flow router.
     """
     
-    def __init__(self, router, pinn_model, beta=0.1, lambda_tv=0.01,
+    def __init__(self, router, pinn_model, beta=0.2, lambda_tv=0.01,
                  lambda_entropy=0.1,
-                 grad_clip_norm=None, learn_alpha=True, fixed_alpha=None,
+                 grad_clip_norm=None,
                  residual_weights=None,
                  nu=0.01, rho=1.0, x_domain=(0, 1), y_domain=(0, 1)):
         self.router = router
@@ -267,13 +267,6 @@ class CavityRouterTrainer:
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
-        self.learn_alpha = learn_alpha and (fixed_alpha is None)
-        self.fixed_alpha = fixed_alpha
-
-        # alpha mixing weight in R(x) = alpha * r_tilde + (1-alpha) * e_tilde.
-        # Parameterized via sigmoid so alpha in (0, 1). Initialize at 0.5.
-        self.alpha_raw = tf.Variable(0.0, trainable=self.learn_alpha,
-                                     dtype=tf.float32, name='alpha_raw')
 
         if residual_weights is None:
             residual_weights = {
@@ -313,9 +306,8 @@ class CavityRouterTrainer:
         # Extract ETE (error transport estimate) from input channel 8
         ete_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(layout_mask_tf)
 
-        # Independently median-normalize each source over the fluid region
-        # so that r_tilde and e_tilde each have unit median. This scale-fixing
-        # prevents the joint (s, alpha) optimum from collapsing to R -> 0.
+        # Independently median-normalize each source on the fluid region so
+        # r_tilde and e_tilde each have unit median; combine via equal sum.
         def _masked_median(field):
             flat = tf.reshape(field * layout_mask_tf, [-1])
             flat = tf.boolean_mask(flat, tf.reshape(layout_mask_tf, [-1]) > 0.5)
@@ -325,12 +317,7 @@ class CavityRouterTrainer:
         r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
         e_tilde = ete_err / (_masked_median(ete_err) + 1e-10)
 
-        if self.fixed_alpha is not None:
-            alpha = tf.constant(float(self.fixed_alpha), dtype=tf.float32)
-        else:
-            alpha = tf.sigmoid(self.alpha_raw)
-
-        residual = alpha * r_tilde + (1.0 - alpha) * e_tilde
+        residual = r_tilde + e_tilde
         residual_fluid = residual * layout_mask_tf
         n_fluid = tf.reduce_sum(layout_mask_tf) + 1e-10
 
@@ -348,39 +335,30 @@ class CavityRouterTrainer:
 
         total_loss = logistic_loss + tv_loss
 
-        if self.fixed_alpha is not None:
-            alpha_out = tf.constant(float(self.fixed_alpha), dtype=tf.float32)
-        else:
-            alpha_out = tf.sigmoid(self.alpha_raw)
-
-        return total_loss, logistic_loss, tv_loss, alpha_out
+        return total_loss, logistic_loss, tv_loss
 
     @tf.function
     def train_step(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v):
         """Single training step."""
         with tf.GradientTape() as tape:
-            total_loss, logistic_loss, tv_loss, alpha = \
+            total_loss, logistic_loss, tv_loss = \
                 self.compute_loss(inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v)
 
-        trainable_vars = list(self.router.trainable_variables)
-        if self.learn_alpha:
-            trainable_vars = trainable_vars + [self.alpha_raw]
-
-        gradients = tape.gradient(total_loss, trainable_vars)
+        gradients = tape.gradient(total_loss, self.router.trainable_variables)
 
         if self.grad_clip_norm is not None:
             gradients, _ = tf.clip_by_global_norm(gradients, self.grad_clip_norm)
 
-        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        self.optimizer.apply_gradients(zip(gradients, self.router.trainable_variables))
 
-        return total_loss, logistic_loss, tv_loss, alpha
+        return total_loss, logistic_loss, tv_loss
 
     def train(self, inputs, X, Y, layout_mask, bc_mask, bc_u, bc_v,
               epochs=200, verbose=True, lr=1e-3, lr_min=1e-5):
         """Train the router with cosine LR schedule."""
         history = {
             'total_loss': [], 'logistic_loss': [],
-            'tv_loss': [], 'alpha': []
+            'tv_loss': []
         }
 
         X_tf = tf.constant(X, dtype=tf.float32)
@@ -399,13 +377,12 @@ class CavityRouterTrainer:
             current_lr = lr_min + 0.5 * (lr - lr_min) * (1 + np.cos(np.pi * progress))
             self.optimizer.learning_rate.assign(current_lr)
 
-            total_loss, logistic_loss, tv_loss, alpha = \
+            total_loss, logistic_loss, tv_loss = \
                 self.train_step(inputs_tf, X_tf, Y_tf, layout_tf, bc_mask_tf, bc_u_tf, bc_v_tf)
 
             history['total_loss'].append(float(total_loss))
             history['logistic_loss'].append(float(logistic_loss))
             history['tv_loss'].append(float(tv_loss))
-            history['alpha'].append(float(alpha))
 
             if verbose and (epoch + 1) % 10 == 0:
                 s = self.router(inputs_tf, training=False)
@@ -415,7 +392,6 @@ class CavityRouterTrainer:
                 print(f"Epoch {epoch+1:4d} | Loss: {float(total_loss):.4f} | "
                       f"Logistic: {float(logistic_loss):.4f} | "
                       f"TV: {float(tv_loss):.4f} | "
-                      f"alpha: {float(alpha):.3f} | "
                       f"CFD%: {cfd_frac:.1f}%, "
                       f"lr: {current_lr:.2e}")
 
@@ -459,8 +435,9 @@ def main():
     # Training parameters
     parser.add_argument('--epochs', type=int, default=200,
                         help='Number of training epochs')
-    parser.add_argument('--beta', type=float, default=0.1,
-                        help='CFD cost coefficient (higher = less CFD)')
+    parser.add_argument('--beta', type=float, default=0.2,
+                        help='CFD cost coefficient (higher = less CFD). '
+                             'Default 0.2 for R = r_tilde + e_tilde.')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,
@@ -473,10 +450,6 @@ def main():
                         help='Weight for continuity residual')
     parser.add_argument('--weight-momentum', type=float, default=1.0,
                         help='Weight for momentum residual')
-    parser.add_argument('--fixed-alpha', type=float, default=None,
-                        help="If set (in [0,1]), pin the PDE/ETE mixing weight alpha in "
-                             "R = alpha*r_tilde + (1-alpha)*e_tilde. If omitted, alpha is "
-                             "learned jointly with router via sigmoid(alpha_raw).")
     # Domain parameters (cavity is square)
     parser.add_argument('--N', type=int, default=100,
                         help='Grid size (N x N)')
@@ -634,8 +607,6 @@ def main():
         beta=args.beta,
         lambda_tv=args.lambda_tv,
         grad_clip_norm=args.grad_clip if args.grad_clip > 0 else None,
-        learn_alpha=(args.fixed_alpha is None),
-        fixed_alpha=args.fixed_alpha,
         residual_weights=residual_weights,
         nu=args.nu,
         rho=args.rho,
@@ -648,10 +619,6 @@ def main():
     print(f"  λ_tv (TV reg): {args.lambda_tv}")
     print(f"  Grad clip: {args.grad_clip if args.grad_clip > 0 else 'disabled'}")
     print(f"  Learning rate: {args.lr}")
-    if args.fixed_alpha is None:
-        print(f"  alpha: learned (sigmoid of trainable scalar)")
-    else:
-        print(f"  alpha: fixed at {args.fixed_alpha}")
     
     # =========================================================================
     # Step 5: Train router

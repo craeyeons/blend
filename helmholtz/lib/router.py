@@ -253,35 +253,23 @@ def create_router_input(layout, f_source, pinn_u, residual, ete=None):
 # ----------------------------------------------------------------------
 
 class RouterTrainer:
-    """Trains a RouterCNN against a learnable convex mixture of the
-    independently median-normalized PDE residual and ETE estimate.
+    """Trains a RouterCNN against R(x) = r_tilde(x) + e_tilde(x),
+    where r_tilde and e_tilde are the PDE residual and ETE estimate each
+    independently median-normalized on the solid region.
 
     Loss (per solid pixel):
-        beta * softplus(s) + R(x; alpha) * softplus(-s)
-    plus total-variation regularization on s, where
-        R(x; alpha) = alpha * r_tilde(x) + (1 - alpha) * e_tilde(x),
-        alpha = sigmoid(alpha_raw).
-
-    When `learn_alpha=True`, alpha_raw is jointly optimized with the router
-    weights. When `fixed_alpha` is given, alpha is pinned to that value.
+        beta * softplus(s) + R(x) * softplus(-s)
+    plus total-variation regularization on s.
     """
 
     def __init__(self, router, pinn_model, k,
-                 beta=0.1, lambda_tv=0.01, grad_clip_norm=1.0,
-                 learn_alpha=True, fixed_alpha=None):
+                 beta=0.2, lambda_tv=0.01, grad_clip_norm=1.0):
         self.router = router
         self.pinn_model = pinn_model
         self.k = float(k)
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
-        self.learn_alpha = learn_alpha and (fixed_alpha is None)
-        self.fixed_alpha = fixed_alpha
-
-        # alpha in R = alpha * r_tilde + (1 - alpha) * e_tilde, parameterized
-        # via sigmoid(alpha_raw). Initialize at 0.5 (alpha_raw=0).
-        self.alpha_raw = tf.Variable(0.0, trainable=self.learn_alpha,
-                                     dtype=tf.float32, name='alpha_raw')
 
         self.residual_computer = HelmholtzResidualComputer(pinn_model, k)
         self.optimizer = keras.optimizers.Adam(learning_rate=1e-3)
@@ -289,7 +277,6 @@ class RouterTrainer:
         self.loss_history = []
         self.logistic_loss_history = []
         self.tv_loss_history = []
-        self.alpha_history = []
 
     def _tv(self, r):
         tv_h = tf.reduce_mean(tf.abs(r[:, :, 1:, :] - r[:, :, :-1, :]))
@@ -297,17 +284,12 @@ class RouterTrainer:
         return tv_h + tv_v
 
     @tf.function
-    def train_step(self, inputs, r_tilde, e_tilde, layout_mask):
+    def train_step(self, inputs, residual_field, layout_mask):
         """One gradient step.
 
         inputs : (1, Ny, Nx, C) router input tensor
-        r_tilde : (Ny, Nx) PDE residual, independently median-normalized
-        e_tilde : (Ny, Nx) ETE estimate, independently median-normalized
+        residual_field : (Ny, Nx) precomputed R = r_tilde + e_tilde
         layout_mask : (Ny, Nx) float (1=solid, 0=hole)
-
-        Effective residual label is R = alpha * r_tilde + (1 - alpha) * e_tilde
-        with alpha = sigmoid(alpha_raw), optionally learned jointly with the
-        router (see proof.tex §2.4).
         """
         with tf.GradientTape() as tape:
             s = self.router(inputs, training=True)
@@ -315,13 +297,6 @@ class RouterTrainer:
 
             layout_f = tf.cast(layout_mask, tf.float32)
             num = tf.reduce_sum(layout_f) + 1e-10
-
-            if self.fixed_alpha is not None:
-                alpha = tf.constant(float(self.fixed_alpha), dtype=tf.float32)
-            else:
-                alpha = tf.sigmoid(self.alpha_raw)
-
-            residual_field = alpha * r_tilde + (1.0 - alpha) * e_tilde
 
             logistic = tf.reduce_sum(
                 (self.beta * tf.math.softplus(s)
@@ -334,35 +309,30 @@ class RouterTrainer:
 
             total = logistic + tv_loss
 
-        trainable_vars = list(self.router.trainable_variables)
-        if self.learn_alpha:
-            trainable_vars = trainable_vars + [self.alpha_raw]
-
-        grads = tape.gradient(total, trainable_vars)
+        grads = tape.gradient(total, self.router.trainable_variables)
         if self.grad_clip_norm is not None:
             grads, _ = tf.clip_by_global_norm(grads, self.grad_clip_norm)
-        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        self.optimizer.apply_gradients(
+            zip(grads, self.router.trainable_variables))
 
         rejected = tf.reduce_sum(tf.cast(s > 0, tf.float32) * layout_f) / num
         return total, {
             'total_loss': total,
             'logistic_loss': logistic,
             'tv_loss': tv_loss,
-            'alpha': alpha,
             'reject_fraction': rejected,
         }
 
-    def train(self, inputs, r_tilde, e_tilde, layout_mask,
+    def train(self, inputs, residual_field, layout_mask,
               epochs=2000, lr=1e-3, lr_min=1e-5, verbose=True):
         """Static training data: the router overfits to the current
         (PINN, geometry, k, source) tuple. Cosine-decay LR.
 
-        r_tilde and e_tilde must each be independently median-normalized on
-        the solid region (unit median); see `median_normalize`.
+        `residual_field` should be R = r_tilde + e_tilde, with each summand
+        independently median-normalized on the solid region.
         """
         inputs_tf = tf.constant(inputs, dtype=tf.float32)
-        r_tf = tf.constant(r_tilde, dtype=tf.float32)
-        e_tf = tf.constant(e_tilde, dtype=tf.float32)
+        res_tf = tf.constant(residual_field, dtype=tf.float32)
         layout_tf = tf.constant(layout_mask, dtype=tf.float32)
 
         self.optimizer.learning_rate.assign(lr)
@@ -372,18 +342,16 @@ class RouterTrainer:
             cur_lr = lr_min + 0.5 * (lr - lr_min) * (1 + np.cos(np.pi * progress))
             self.optimizer.learning_rate.assign(cur_lr)
 
-            total, metrics = self.train_step(inputs_tf, r_tf, e_tf, layout_tf)
+            total, metrics = self.train_step(inputs_tf, res_tf, layout_tf)
             self.loss_history.append(float(metrics['total_loss']))
             self.logistic_loss_history.append(float(metrics['logistic_loss']))
             self.tv_loss_history.append(float(metrics['tv_loss']))
-            self.alpha_history.append(float(metrics['alpha']))
 
             if verbose and (epoch + 1) % 100 == 0:
                 print(f"Epoch {epoch+1}/{epochs}  "
                       f"L={float(metrics['total_loss']):.4f}  "
                       f"logistic={float(metrics['logistic_loss']):.4f}  "
                       f"tv={float(metrics['tv_loss']):.4f}  "
-                      f"alpha={float(metrics['alpha']):.3f}  "
                       f"reject%={float(metrics['reject_fraction'])*100:.1f}  "
                       f"lr={cur_lr:.2e}")
 
@@ -391,7 +359,6 @@ class RouterTrainer:
             'total_loss': self.loss_history,
             'logistic_loss': self.logistic_loss_history,
             'tv_loss': self.tv_loss_history,
-            'alpha': self.alpha_history,
         }
 
     def predict(self, inputs, threshold=0.0):

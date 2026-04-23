@@ -455,10 +455,9 @@ class RouterTrainer:
     """
 
     def __init__(self, router, pinn_model,
-                 beta=0.1, lambda_tv=0.01,
+                 beta=0.2, lambda_tv=0.01,
                  lambda_entropy=0.1,
                  grad_clip_norm=1.0,
-                 learn_alpha=True, fixed_alpha=None,
                  residual_weights=None,
                  nu=0.01, rho=1.0,
                  x_domain=(0, 2), y_domain=(0, 1),
@@ -482,15 +481,6 @@ class RouterTrainer:
         grad_clip_norm : float
             Maximum gradient norm for clipping (stabilizes training).
             Set to None to disable. Recommended: 1.0-5.0.
-        learn_alpha : bool
-            If True, the mixture weight alpha in R(x) = alpha*r_tilde + (1-alpha)*e_tilde
-            is learned jointly with the router. r_tilde and e_tilde are the PDE residual
-            and ETE fields, each independently median-normalized on the fluid domain.
-            Default: True.
-        fixed_alpha : float or None
-            If set (in [0, 1]), overrides learn_alpha and fixes the mixture weight.
-            fixed_alpha=1.0 -> PDE only; fixed_alpha=0.0 -> ETE only; 0.5 -> equal mix.
-            Default: None.
         residual_weights : dict
             Weights for: continuity, momentum
         nu : float
@@ -511,12 +501,6 @@ class RouterTrainer:
         self.beta = beta
         self.lambda_tv = lambda_tv
         self.grad_clip_norm = grad_clip_norm
-        self.learn_alpha = bool(learn_alpha) and (fixed_alpha is None)
-        self.fixed_alpha = fixed_alpha
-        # Parameterize alpha via sigmoid(alpha_raw); init alpha_raw=0 -> alpha=0.5.
-        self.alpha_raw = tf.Variable(0.0, dtype=tf.float32,
-                                     trainable=self.learn_alpha,
-                                     name='alpha_raw')
 
         # Default residual weights (PDE residuals only)
         self.residual_weights = residual_weights or {
@@ -541,7 +525,6 @@ class RouterTrainer:
         self.loss_history = []
         self.logistic_loss_history = []
         self.tv_loss_history = []
-        self.alpha_history = []
 
     def compute_total_variation(self, r):
         """
@@ -604,10 +587,7 @@ class RouterTrainer:
             mid = tf.shape(sorted_vals)[0] // 2
             return sorted_vals[mid]
 
-        # Collect trainable parameters (router + optional alpha_raw).
         trainable_vars = list(self.router.trainable_variables)
-        if self.learn_alpha:
-            trainable_vars = trainable_vars + [self.alpha_raw]
 
         with tf.GradientTape() as tape:
             s = self.router(inputs, training=True)[0, :, :, 0]  # (H, W)
@@ -618,16 +598,12 @@ class RouterTrainer:
             )
 
             # Independently median-normalize each source on the fluid domain,
-            # so r_tilde and e_tilde both have median 1 (Assumption 2.7).
+            # so r_tilde and e_tilde both have median 1.
             r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
             e_tilde = ete_err / (_masked_median(ete_err) + 1e-10)
 
-            # Convex mixture R(x; alpha) = alpha * r_tilde + (1 - alpha) * e_tilde.
-            if self.fixed_alpha is not None:
-                alpha = tf.constant(float(self.fixed_alpha), dtype=tf.float32)
-            else:
-                alpha = tf.sigmoid(self.alpha_raw)
-            total_residual = alpha * r_tilde + (1.0 - alpha) * e_tilde
+            # Combined residual label: R(x) = r_tilde(x) + e_tilde(x).
+            total_residual = r_tilde + e_tilde
 
             # Logistic routing loss (masked to fluid).
             logistic_loss = tf.reduce_sum(
@@ -654,7 +630,6 @@ class RouterTrainer:
             'logistic_loss': logistic_loss,
             'tv_loss': tv_loss,
             'cfd_fraction': cfd_fraction,
-            'alpha': alpha,
         }
 
         return total_loss, metrics
@@ -707,7 +682,6 @@ class RouterTrainer:
             self.loss_history.append(float(metrics['total_loss']))
             self.logistic_loss_history.append(float(metrics['logistic_loss']))
             self.tv_loss_history.append(float(metrics['tv_loss']))
-            self.alpha_history.append(float(metrics['alpha']))
 
             if verbose and (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} - "
@@ -715,14 +689,12 @@ class RouterTrainer:
                       f"Logistic: {metrics['logistic_loss']:.4f}, "
                       f"TV: {metrics['tv_loss']:.4f}, "
                       f"CFD%: {metrics['cfd_fraction']*100:.1f}%, "
-                      f"alpha: {float(metrics['alpha']):.3f}, "
                       f"lr: {current_lr:.2e}")
 
         history = {
             'total_loss': self.loss_history,
             'logistic_loss': self.logistic_loss_history,
             'tv_loss': self.tv_loss_history,
-            'alpha': self.alpha_history,
         }
 
         return history
