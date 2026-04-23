@@ -211,7 +211,7 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
     # PINN and Full-FEM columns are fully one or the other by construction.
     def _shade_hybrid(ax):
         ax.contourf(X, Y, reject_field, levels=[0.5, 1.5],
-                    colors=['black'], alpha=0.12)
+                    colors=['black'], alpha=0.30)
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.5)
 
@@ -267,21 +267,23 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
 # Plot 3: training-loss curve vs coverage with optimal star + bar breakdown.
 # ---------------------------------------------------------------------------
 
-def _training_loss_curve(logits, residual, layout, beta):
+def _training_loss_curve(logits, residual, ete, layout, beta):
     """Evaluate the router's decision-version training loss at many thresholds.
 
     At inference, the router makes a hard accept/reject decision per cell.
     Replacing softplus(s), softplus(-s) with the indicators 1_{reject},
-    1_{accept} gives the deployed loss:
+    1_{accept} gives the deployed loss with the same residual label used at
+    training time: R(x) = normalize(|r|(x) + |e|(x)).
 
         L(thr) = mean_solid [ beta * 1_{logit >= thr}
-                              + R_bar * 1_{logit < thr} ].
+                              + R(x) * 1_{logit < thr} ].
 
     Returns (coverage_fracs, total_loss, reject_cost, accept_cost).
     """
     solid = layout > 0
     lv = logits[solid]
-    r_bar = median_normalize(residual, layout)[solid]
+    raw_sum = residual + (ete if ete is not None else 0.0)
+    r_bar = median_normalize(raw_sum, layout)[solid]
 
     # Sweep thresholds at each sorted logit percentile to get a smooth curve.
     sorted_logits = np.sort(lv)
@@ -309,15 +311,16 @@ def _plot_loss_vs_coverage(args, summary, ref, beta):
     logits = ref['logits']
     residual = ref['residual']
     layout = ref['layout']
+    ete = ref['ete'] if 'ete' in ref.files else None
 
     cov, total, rej_c, acc_c = _training_loss_curve(
-        logits, residual, layout, beta)
+        logits, residual, ete, layout, beta)
     cov_pct = cov * 100.0
 
-    # Endpoints: all-PINN (cov=0, loss = mean(R_bar)) and all-FEM (cov=1, loss=beta).
+    # Endpoints: all-PINN (cov=0, loss = mean(R)) and all-FEM (cov=1, loss=beta).
     solid = layout > 0
-    r_bar_mean = float(median_normalize(residual, layout)[solid].mean())
-    all_pinn = r_bar_mean
+    raw_sum = residual + (ete if ete is not None else 0.0)
+    all_pinn = float(median_normalize(raw_sum, layout)[solid].mean())
     all_fem = beta
 
     i_opt = int(np.argmin(total))
@@ -396,12 +399,10 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
             # Whole domain is FEM: shade everything.
             fem_field = mask.astype(np.float32)
             ax.contourf(X, Y, fem_field, levels=[0.5, 1.5],
-                        colors=['none'], hatches=['///'], alpha=0.0)
-            ax.contourf(X, Y, fem_field, levels=[0.5, 1.5],
-                        colors=['black'], alpha=0.12)
+                        colors=['black'], alpha=0.30)
             outer = mask.astype(np.float32)
             ax.contour(X, Y, outer, levels=[0.5],
-                       colors='lime', linewidths=1.0)
+                       colors='lime', linewidths=1.2)
             ax.set_title('target 100%  actual 100.0%\n'
                          'RMSE = 0.00e+00  (= full FEM)')
             ax.set_aspect('equal')
@@ -420,9 +421,9 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
             np.float32)
         # Translucent shade over FEM region (rejected cells).
         ax.contourf(X, Y, reject_field, levels=[0.5, 1.5],
-                    colors=['black'], alpha=0.12)
+                    colors=['black'], alpha=0.30)
         ax.contour(X, Y, reject_field, levels=[0.5],
-                   colors='lime', linewidths=1.0)
+                   colors='lime', linewidths=1.2)
         err = rmse(res['u_grid'], u_fem)
         ax.set_title(
             f'target {cov*100:.0f}%  actual {res["coverage_pct"]:.1f}%\n'
@@ -434,8 +435,8 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
     from matplotlib.patches import Patch
     legend_handles = [
         Patch(facecolor='white', edgecolor='lime', label='PINN (unshaded)'),
-        Patch(facecolor='black', alpha=0.12, edgecolor='lime',
-              label='FEM (shaded)'),
+        Patch(facecolor='black', alpha=0.30, edgecolor='lime',
+              label='FEM (shaded dark)'),
     ]
     fig.legend(handles=legend_handles, loc='lower center', ncol=2,
                bbox_to_anchor=(0.5, -0.01), frameon=False)

@@ -58,9 +58,9 @@ def main():
     # Training parameters
     parser.add_argument('--epochs', type=int, default=200,
                         help='Number of training epochs')
-    parser.add_argument('--beta', type=float, default=0.2,
+    parser.add_argument('--beta', type=float, default=0.1,
                         help='CFD cost coefficient (higher = less CFD). '
-                             'Default 0.2 for R = r_tilde + e_tilde (median ~ 2).')
+                             'Default 0.1 for R = normalize(r + e) (median = 1).')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,

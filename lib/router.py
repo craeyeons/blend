@@ -455,7 +455,7 @@ class RouterTrainer:
     """
 
     def __init__(self, router, pinn_model,
-                 beta=0.2, lambda_tv=0.01,
+                 beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
                  grad_clip_norm=1.0,
                  residual_weights=None,
@@ -597,13 +597,9 @@ class RouterTrainer:
                 X, Y, bc_mask, bc_u, bc_v, self.residual_weights
             )
 
-            # Independently median-normalize each source on the fluid domain,
-            # so r_tilde and e_tilde both have median 1.
-            r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
-            e_tilde = ete_err / (_masked_median(ete_err) + 1e-10)
-
-            # Combined residual label: R(x) = r_tilde(x) + e_tilde(x).
-            total_residual = r_tilde + e_tilde
+            # Sum raw sources, then median-normalize so R has median 1 on fluid.
+            raw_sum = pde_residual + ete_err
+            total_residual = raw_sum / (_masked_median(raw_sum) + 1e-10)
 
             # Logistic routing loss (masked to fluid).
             logistic_loss = tf.reduce_sum(

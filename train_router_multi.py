@@ -134,10 +134,7 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
 
-    # Independently median-normalize PDE residual and ETE over the fluid
-    # region so that r_tilde and e_tilde each have unit median. This
-    # scale-fixing is what makes the learnable alpha well-posed (see proof.tex
-    # §2.4).
+    # Sum raw PDE residual + ETE, then median-normalize on fluid region.
     ete_tf = tf.constant(error_transport, dtype=tf.float32)
     layout_tf = tf.constant(layout, dtype=tf.float32)
 
@@ -147,13 +144,12 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
         sorted_vals = tf.sort(flat)
         return sorted_vals[tf.shape(sorted_vals)[0] // 2]
 
-    r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
-    e_tilde = ete_tf / (_masked_median(ete_tf) + 1e-10)
-    total_residual_norm = r_tilde + e_tilde
+    raw_sum = pde_residual + ete_tf
+    total_residual_norm = raw_sum / (_masked_median(raw_sum) + 1e-10)
 
     fluid_points = np.sum(layout)
     print(f"    Fluid points: {fluid_points:.0f}/{layout.size} ({100*np.mean(layout):.1f}%)")
-    print(f"    R = r_tilde + e_tilde range: "
+    print(f"    R = normalize(r + e) range: "
           f"[{float(tf.reduce_min(total_residual_norm)):.4f}, "
           f"{float(tf.reduce_max(total_residual_norm)):.4f}]")
 
@@ -270,9 +266,9 @@ def main():
     # Training parameters
     parser.add_argument('--epochs', type=int, default=500,
                         help='Number of training epochs')
-    parser.add_argument('--beta', type=float, default=2.0,
-                        help='CFD cost coefficient. Default 2.0 for '
-                             'R = r_tilde + e_tilde (median ~ 2).')
+    parser.add_argument('--beta', type=float, default=1.0,
+                        help='CFD cost coefficient. Default 1.0 for '
+                             'R = normalize(r + e) (median = 1).')
     parser.add_argument('--lambda-tv', type=float, default=0.1,
                         help='Total variation regularization weight')
     parser.add_argument('--lr', type=float, default=1e-4,

@@ -55,9 +55,9 @@ def main():
     p.add_argument('--epochs', type=int, default=2000)
     p.add_argument('--lr', type=float, default=1e-3)
     p.add_argument('--lr-min', type=float, default=1e-5)
-    p.add_argument('--beta', type=float, default=0.2,
-                   help='Cost coefficient (higher = less FEM). Default 0.2 '
-                        'for R = r_tilde + e_tilde (median ~ 2).')
+    p.add_argument('--beta', type=float, default=0.1,
+                   help='Cost coefficient (higher = less FEM). Default 0.1 '
+                        'for R = normalize(|r| + |e|) (median = 1).')
     p.add_argument('--lambda-tv', type=float, default=0.01)
     p.add_argument('--base-filters', type=int, default=32)
     args = p.parse_args()
@@ -129,11 +129,8 @@ def main():
     # Router input (5 channels: layout, f, u, |r|, |e_ete|)
     inputs = create_router_input(layout, f_grid, pinn_u, residual, ete=ete)
 
-    # Independently median-normalize each source on the solid region and sum:
-    # R = r_tilde + e_tilde.
-    r_tilde = median_normalize(residual, layout)
-    e_tilde = median_normalize(ete, layout)
-    residual_label = (r_tilde + e_tilde).astype(np.float32)
+    # R = normalize(|r| + |e_ete|): sum first, then median-normalize on solid.
+    residual_label = median_normalize(residual + ete, layout).astype(np.float32)
 
     # Router
     router = RouterCNN(base_filters=args.base_filters)

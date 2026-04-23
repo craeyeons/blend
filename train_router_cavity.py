@@ -257,7 +257,7 @@ class CavityRouterTrainer:
     Trainer for cavity flow router.
     """
     
-    def __init__(self, router, pinn_model, beta=0.2, lambda_tv=0.01,
+    def __init__(self, router, pinn_model, beta=0.1, lambda_tv=0.01,
                  lambda_entropy=0.1,
                  grad_clip_norm=None,
                  residual_weights=None,
@@ -306,18 +306,15 @@ class CavityRouterTrainer:
         # Extract ETE (error transport estimate) from input channel 8
         ete_err = inputs[0, :, :, 8] if inputs.shape[-1] > 8 else tf.zeros_like(layout_mask_tf)
 
-        # Independently median-normalize each source on the fluid region so
-        # r_tilde and e_tilde each have unit median; combine via equal sum.
+        # Sum raw sources, then median-normalize on the fluid region.
         def _masked_median(field):
             flat = tf.reshape(field * layout_mask_tf, [-1])
             flat = tf.boolean_mask(flat, tf.reshape(layout_mask_tf, [-1]) > 0.5)
             sorted_vals = tf.sort(flat)
             return sorted_vals[tf.shape(sorted_vals)[0] // 2]
 
-        r_tilde = pde_residual / (_masked_median(pde_residual) + 1e-10)
-        e_tilde = ete_err / (_masked_median(ete_err) + 1e-10)
-
-        residual = r_tilde + e_tilde
+        raw_sum = pde_residual + ete_err
+        residual = raw_sum / (_masked_median(raw_sum) + 1e-10)
         residual_fluid = residual * layout_mask_tf
         n_fluid = tf.reduce_sum(layout_mask_tf) + 1e-10
 
@@ -435,9 +432,9 @@ def main():
     # Training parameters
     parser.add_argument('--epochs', type=int, default=200,
                         help='Number of training epochs')
-    parser.add_argument('--beta', type=float, default=0.2,
+    parser.add_argument('--beta', type=float, default=0.1,
                         help='CFD cost coefficient (higher = less CFD). '
-                             'Default 0.2 for R = r_tilde + e_tilde.')
+                             'Default 0.1 for R = normalize(r + e).')
     parser.add_argument('--lambda-tv', type=float, default=0.01,
                         help='Total variation regularization weight')
     parser.add_argument('--lr', type=float, default=5e-5,

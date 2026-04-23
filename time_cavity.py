@@ -319,7 +319,7 @@ def main():
                 Re=args.Re, N=args.N,
                 max_iter=args.max_iter, tol=args.tol,
             )
-            sim.solve()
+            uh_opt, vh_opt, ph_opt = sim.solve()
             t1 = time.perf_counter()
         hybrid_times.append(t1 - t0)
         print(f"  Hybrid run {i + 1}/{N_RUNS}: {hybrid_times[-1]:.4f} s")
@@ -327,6 +327,11 @@ def main():
     # Keep last CFD solution as ground truth for RMSE
     fluid_mask = layout > 0
     p_range = np.max(np.abs(p_cfd[fluid_mask])) + 1e-10
+
+    uh_opt = np.array(uh_opt); vh_opt = np.array(vh_opt); ph_opt = np.array(ph_opt)
+    error_opt = ((uh_opt - u_cfd)**2 + (vh_opt - v_cfd)**2
+                 + ((ph_opt - p_cfd) / p_range)**2)
+    rmse_opt = float(np.sqrt(np.mean(error_opt[fluid_mask])))
 
     # ================================================================
     # COVERAGE SWEEP (single run at each 10% increment)
@@ -388,6 +393,12 @@ def main():
     for i, (t, r, c) in enumerate(zip(sweep_time, sweep_rmse, sweep_cov)):
         ax.annotate(f'{c*100:.0f}%', (t, r), textcoords='offset points',
                     xytext=(5, 5), fontsize=7)
+
+    hyb_mean_time = float(np.mean(hybrid_times))
+    ax.scatter([hyb_mean_time], [rmse_opt], marker='*', s=250,
+               color='red', zorder=5,
+               label=f'Optimal (cov={actual_coverage*100:.0f}%)')
+    ax.legend(loc='best')
 
     ax.set_xlabel('Solve Time (s)')
     ax.set_ylabel('RMSE (vs CFD)')
