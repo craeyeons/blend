@@ -207,16 +207,26 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
     vmax = float(np.nanmax(np.abs(u_fem_m)))
     reject_field = (~accept_mask.astype(bool) & mask).astype(np.float32)
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
-    # Row 1: solutions.
-    for ax, data, title in zip(
-            axes[0],
-            [u_pinn_m, u_hyb_m, u_fem_m],
-            ['PINN', 'Hybrid  (FEM region outlined)', 'Full FEM']):
-        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
-                           vmin=-vmax, vmax=vmax, shading='auto')
+    # Only the Hybrid column has a PINN/FEM split; shade the FEM region there.
+    # PINN and Full-FEM columns are fully one or the other by construction.
+    def _shade_hybrid(ax):
+        ax.contourf(X, Y, reject_field, levels=[0.5, 1.5],
+                    colors=['black'], alpha=0.12)
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.5)
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+    # Row 1: solutions.
+    for j, (ax, data, title) in enumerate(zip(
+            axes[0],
+            [u_pinn_m, u_hyb_m, u_fem_m],
+            ['PINN  (entire domain)',
+             'Hybrid  (shaded = FEM, unshaded = PINN)',
+             'Full FEM  (entire domain)'])):
+        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
+                           vmin=-vmax, vmax=vmax, shading='auto')
+        if j == 1:
+            _shade_hybrid(ax)
         ax.set_title(title); ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
@@ -227,14 +237,15 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
     all_errs = np.concatenate([np.abs(err_pinn[mask]),
                                np.abs(err_hyb[mask])])
     evmax = float(np.nanmax(all_errs)) + 1e-30
-    for ax, data, title in zip(
+    for j, (ax, data, title) in enumerate(zip(
             axes[1],
             [err_pinn, err_hyb, err_fem],
-            ['PINN - FEM', 'Hybrid - FEM', 'FEM - FEM  (reference)']):
+            ['PINN - FEM', 'Hybrid - FEM  (shaded = FEM region)',
+             'FEM - FEM  (reference)'])):
         im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
                            vmin=-evmax, vmax=evmax, shading='auto')
-        ax.contour(X, Y, reject_field, levels=[0.5],
-                   colors='lime', linewidths=1.5)
+        if j == 1:
+            _shade_hybrid(ax)
         ax.set_title(title); ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
@@ -382,6 +393,12 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
             u = np.where(mask, u_fem, np.nan)
             im = ax.pcolormesh(X, Y, u, cmap='RdBu_r',
                                vmin=-vmax, vmax=vmax, shading='auto')
+            # Whole domain is FEM: shade everything.
+            fem_field = mask.astype(np.float32)
+            ax.contourf(X, Y, fem_field, levels=[0.5, 1.5],
+                        colors=['none'], hatches=['///'], alpha=0.0)
+            ax.contourf(X, Y, fem_field, levels=[0.5, 1.5],
+                        colors=['black'], alpha=0.12)
             outer = mask.astype(np.float32)
             ax.contour(X, Y, outer, levels=[0.5],
                        colors='lime', linewidths=1.0)
@@ -401,6 +418,9 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
                            vmin=-vmax, vmax=vmax, shading='auto')
         reject_field = (~res['accept_mask'].astype(bool) & mask).astype(
             np.float32)
+        # Translucent shade over FEM region (rejected cells).
+        ax.contourf(X, Y, reject_field, levels=[0.5, 1.5],
+                    colors=['black'], alpha=0.12)
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.0)
         err = rmse(res['u_grid'], u_fem)
@@ -410,6 +430,15 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
         ax.set_aspect('equal')
         plt.colorbar(im, ax=ax, fraction=0.046)
 
+    # Shared legend: unshaded = PINN, shaded = FEM.
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor='white', edgecolor='lime', label='PINN (unshaded)'),
+        Patch(facecolor='black', alpha=0.12, edgecolor='lime',
+              label='FEM (shaded)'),
+    ]
+    fig.legend(handles=legend_handles, loc='lower center', ncol=2,
+               bbox_to_anchor=(0.5, -0.01), frameon=False)
     fig.suptitle(f'Hybrid solution vs FEM coverage  tag={args.tag}  '
                  f'k={summary["k"]:.3f}')
     fig.tight_layout()
