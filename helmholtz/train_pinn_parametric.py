@@ -130,8 +130,9 @@ def main():
                         default=[256, 256, 256, 256, 256])
     parser.add_argument('--activation', type=str, default='tanh')
     parser.add_argument('--fourier-m', type=int, default=128)
-    parser.add_argument('--fourier-scale', type=float, default=None,
-                        help='Defaults to k_max/(2 pi).')
+    parser.add_argument('--fourier-scale', type=float, default=1.0,
+                        help='Std of B for k-modulated Fourier features. '
+                             'Default 1.0 (k carries the magnitude).')
     parser.add_argument('--fourier-seed', type=int, default=0)
     parser.add_argument('--k-min', type=float, default=2.0 * np.pi)
     parser.add_argument('--k-max', type=float, default=6.0 * np.pi)
@@ -144,9 +145,9 @@ def main():
     parser.add_argument('--hole-center-x', type=float, default=0.5)
     parser.add_argument('--hole-center-y', type=float, default=0.5)
     parser.add_argument('--hole-radius', type=float, default=0.15)
-    parser.add_argument('--resample-every', type=int, default=100,
+    parser.add_argument('--resample-every', type=int, default=1,
                         help='Re-sample configs this often (1 = every step).')
-    parser.add_argument('--grad-clip', type=float, default=1.0)
+    parser.add_argument('--grad-clip', type=float, default=0.5)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--tag', type=str, default='exp3_parametric')
     parser.add_argument('--output-dir', type=str, default='./models')
@@ -170,8 +171,7 @@ def main():
           f"n_bd={args.n_boundary_per_config}")
     print("=" * 60)
 
-    fourier_scale = (args.fourier_scale if args.fourier_scale is not None
-                     else args.k_max / (2.0 * np.pi))
+    fourier_scale = float(args.fourier_scale)
     model = build_parametric_pinn(
         layers=tuple(args.layers),
         activation=args.activation,

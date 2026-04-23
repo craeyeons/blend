@@ -68,7 +68,8 @@ python train_pinn_parametric.py \
     --w-bc 100.0 \
     --layers 256 256 256 256 256 \
     --fourier-m 128 \
-    --resample-every 100 \
+    --resample-every 1 \
+    --grad-clip 0.5 \
     --tag ${PINN_TAG}
 
 # 2) FEM references for every config
