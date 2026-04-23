@@ -42,6 +42,44 @@ N_RUNS = 10
 N_WARMUP = 2
 
 
+def _run_hybrid_once(solver, pinn, router, rcomp, k,
+                     X, Y, layout, f_grid,
+                     f_callable, g_callable, threshold,
+                     xy_flat):
+    """Honest full-inference hybrid call: times PINN-on-grid, autodiff
+    residual, FFT-ETE, router build+forward, mesh-vertex PINN pin, FEM
+    spsolve, and DOF→grid interpolation. Returns (res, breakdown_dict)."""
+    t_total0 = time.perf_counter()
+
+    t0 = time.perf_counter()
+    pinn_u = pinn.predict(xy_flat, batch_size=len(xy_flat),
+                          verbose=0).reshape(X.shape) * layout
+    t_pinn_grid = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    residual_signed = rcomp.compute_signed_residual(X, Y, f_grid) * layout
+    residual = np.abs(residual_signed)
+    t_residual = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    ete = compute_ete_fft(residual_signed, k, layout=layout)
+    t_ete = time.perf_counter() - t0
+
+    res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
+                               X, Y, layout, f_grid, pinn_u, residual,
+                               ete_grid=ete, threshold=threshold)
+    t_total = time.perf_counter() - t_total0
+    return res, {
+        'pinn_grid_s': t_pinn_grid,
+        'residual_s': t_residual,
+        'ete_s': t_ete,
+        'router_s': float(res['router_time_s']),
+        'pin_s': float(res['pinn_pin_time_s']),
+        'solve_s': float(res['solve_time_s']),
+        'total_s': t_total,
+    }
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--k', type=float, required=True)
@@ -146,14 +184,15 @@ def main():
     logits = router(tf.constant(dummy_inputs, dtype=tf.float32),
                     training=False)[0, :, :, 0].numpy()
 
+    xy_flat = np.stack([X.ravel(), Y.ravel()], axis=-1).astype(np.float32)
+
     # ---------- Warmup ----------
     print("\nWarmup...")
     for _ in range(N_WARMUP):
         solver.solve(f_callable, g_callable)
-        solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
-                             X, Y, layout, f_grid, pinn_u, residual,
-                             ete_grid=ete,
-                             threshold=0.0, reuse_logits=logits)
+        _run_hybrid_once(solver, pinn, router, rcomp, args.k,
+                         X, Y, layout, f_grid,
+                         f_callable, g_callable, 0.0, xy_flat)
 
     # ---------- FEM baseline loop ----------
     # Time solve + interp_to_grid end-to-end so this matches the hybrid
@@ -173,29 +212,34 @@ def main():
     print(f"  mean={fem_mean:.4f}s  std={fem_std:.4f}s")
 
     # ---------- Hybrid loop at threshold 0 ----------
-    print("\nHybrid loop (threshold=0)...")
+    print("\nHybrid loop (threshold=0) — full inference wall clock...")
     hyb_total = []
-    hyb_pinn = []  # includes pinn_pin_time_s (vertex evaluation)
+    hyb_pinn_grid = []
+    hyb_residual = []
+    hyb_ete = []
     hyb_router = []
+    hyb_pin = []
     hyb_solve = []
     for i in range(N_RUNS):
-        t0 = time.perf_counter()
-        # Time the router call fresh here (don't reuse_logits)
-        res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
-                                   X, Y, layout, f_grid, pinn_u, residual,
-                                   ete_grid=ete,
-                                   threshold=0.0)
-        total = time.perf_counter() - t0
-        hyb_total.append(total)
-        hyb_router.append(res['router_time_s'])
-        hyb_pinn.append(res['pinn_pin_time_s'])
-        hyb_solve.append(res['solve_time_s'])
+        _, br = _run_hybrid_once(solver, pinn, router, rcomp, args.k,
+                                 X, Y, layout, f_grid,
+                                 f_callable, g_callable, 0.0, xy_flat)
+        hyb_total.append(br['total_s'])
+        hyb_pinn_grid.append(br['pinn_grid_s'])
+        hyb_residual.append(br['residual_s'])
+        hyb_ete.append(br['ete_s'])
+        hyb_router.append(br['router_s'])
+        hyb_pin.append(br['pin_s'])
+        hyb_solve.append(br['solve_s'])
     hyb_mean = float(np.mean(hyb_total))
     hyb_std = float(np.std(hyb_total))
     print(f"  mean total={hyb_mean:.4f}s  std={hyb_std:.4f}s  "
           f"speedup={fem_mean / max(hyb_mean, 1e-12):.2f}x")
+    print(f"  pinn_grid={np.mean(hyb_pinn_grid):.4f}s  "
+          f"residual={np.mean(hyb_residual):.4f}s  "
+          f"ete={np.mean(hyb_ete):.4f}s")
     print(f"  router={np.mean(hyb_router):.4f}s  "
-          f"pin={np.mean(hyb_pinn):.4f}s  solve={np.mean(hyb_solve):.4f}s")
+          f"pin={np.mean(hyb_pin):.4f}s  solve={np.mean(hyb_solve):.4f}s")
 
     # ---------- Coverage sweep ----------
     print("\nCoverage sweep (11 targets)...")
@@ -234,19 +278,22 @@ def main():
             })
             print(f"  target=100.0%  (pure FEM)         RMSE={0.0:.3e}")
             continue
-        t0 = time.perf_counter()
-        res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
-                                   X, Y, layout, f_grid, pinn_u, residual,
-                                   ete_grid=ete,
-                                   threshold=thr, reuse_logits=logits)
-        wall = time.perf_counter() - t0
+        res, br = _run_hybrid_once(solver, pinn, router, rcomp, args.k,
+                                   X, Y, layout, f_grid,
+                                   f_callable, g_callable, float(thr),
+                                   xy_flat)
         err = rmse(res['u_grid'], u_fem_reference)
         sweep.append({
             'target_coverage': float(cov),
             'threshold': float(thr),
             'actual_coverage_pct': float(res['coverage_pct']),
-            'hybrid_total_s': float(wall),
+            'hybrid_total_s': float(br['total_s']),
             'hybrid_solve_only_s': float(res['solve_time_s']),
+            'hybrid_pinn_grid_s': float(br['pinn_grid_s']),
+            'hybrid_residual_s': float(br['residual_s']),
+            'hybrid_ete_s': float(br['ete_s']),
+            'hybrid_router_s': float(br['router_s']),
+            'hybrid_pin_s': float(br['pin_s']),
             'rmse_vs_fem': float(err),
             'n_accepted_dofs': int(res['n_accepted_dofs']),
         })
@@ -263,8 +310,11 @@ def main():
         'x_s': args.x_s, 'y_s': args.y_s,
         'fem_mean_s': fem_mean, 'fem_std_s': fem_std,
         'hybrid_mean_s': hyb_mean, 'hybrid_std_s': hyb_std,
+        'hybrid_pinn_grid_mean_s': float(np.mean(hyb_pinn_grid)),
+        'hybrid_residual_mean_s': float(np.mean(hyb_residual)),
+        'hybrid_ete_mean_s': float(np.mean(hyb_ete)),
         'hybrid_router_mean_s': float(np.mean(hyb_router)),
-        'hybrid_pin_mean_s': float(np.mean(hyb_pinn)),
+        'hybrid_pin_mean_s': float(np.mean(hyb_pin)),
         'hybrid_solve_mean_s': float(np.mean(hyb_solve)),
         'speedup': fem_mean / max(hyb_mean, 1e-12),
         'pinn_rmse_vs_fem': pinn_rmse,
