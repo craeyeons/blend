@@ -15,6 +15,7 @@ linear system -> faster solve.
 import time
 import numpy as np
 import tensorflow as tf
+from scipy.ndimage import binary_opening
 
 
 def _predict_pinn_on_points(pinn_model, pts_xy, batch_size=65536):
@@ -88,7 +89,16 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
     router_time_s = time.perf_counter() - t0
 
     # Binary decision per cell. Only solid cells can be accepted.
-    accept_mask = (logits < threshold) & (layout > 0)
+    # Apply morphological opening to the reject mask to remove isolated
+    # speckle — small scattered FEM cells produce thin rings of pinned
+    # PINN BCs around 1-cell interiors, which reproduces PINN's error
+    # instead of correcting it. Opening (erode then dilate) with a 3x3
+    # cross absorbs these back into the PINN-accepted region.
+    solid = layout > 0
+    reject_raw = (logits >= threshold) & solid
+    reject_opened = binary_opening(reject_raw, structure=np.ones((3, 3)),
+                                   iterations=1)
+    accept_mask = solid & ~reject_opened
 
     # Map accepted grid cells -> nearest FEM vertex ids.
     t1 = time.perf_counter()
@@ -113,9 +123,8 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
 
     u_grid = solver.interp_to_grid(u_dof, X, Y)
 
-    n_solid = int((layout > 0).sum())
-    coverage_pct = 100.0 * float((logits >= threshold)[layout > 0].sum()) \
-        / max(n_solid, 1)
+    n_solid = int(solid.sum())
+    coverage_pct = 100.0 * float(reject_opened[solid].sum()) / max(n_solid, 1)
 
     return {
         'u_grid': u_grid,

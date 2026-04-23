@@ -127,7 +127,7 @@ def _plot_summary(args, summary, ref, u_hybrid):
     ax = fig.add_subplot(2, 3, 2)
     im = ax.pcolormesh(X, Y, u_hyb_m, cmap='RdBu_r',
                        vmin=-vmax, vmax=vmax, shading='auto')
-    ax.set_title('Hybrid  u  (threshold=0)'); ax.set_aspect('equal')
+    ax.set_title('Hybrid  u  (optimal threshold)'); ax.set_aspect('equal')
     plt.colorbar(im, ax=ax, fraction=0.046)
 
     ax = fig.add_subplot(2, 3, 3)
@@ -305,6 +305,29 @@ def _training_loss_curve(logits, residual, ete, layout, beta):
         accept_cost[i] = (r_bar * (~rej)).mean()
     total = reject_cost + accept_cost
     return cov_fracs, total, reject_cost, accept_cost
+
+
+def _find_optimal_threshold(ref, beta):
+    """Return (opt_threshold, opt_coverage_pct, opt_loss) for the decision-
+    version training loss. Sweeps every unique logit value on solid cells."""
+    logits = ref['logits']
+    residual = ref['residual']
+    layout = ref['layout']
+    ete = ref['ete'] if 'ete' in ref.files else None
+
+    solid = layout > 0
+    lv = logits[solid]
+    raw_sum = residual + (ete if ete is not None else 0.0)
+    r_bar = median_normalize(raw_sum, layout)[solid]
+
+    thresholds = np.unique(np.sort(lv))
+    best = (None, None, np.inf)
+    for thr in thresholds:
+        rej = lv >= thr
+        loss = beta * rej.mean() + (r_bar * (~rej)).mean()
+        if loss < best[2]:
+            best = (float(thr), float(rej.mean()) * 100.0, float(loss))
+    return best
 
 
 def _plot_loss_vs_coverage(args, summary, ref, beta):
@@ -489,24 +512,29 @@ def main():
     solver, pinn, router, f_callable, g_callable = _load_models(
         args, summary, ref)
 
-    # Hybrid at threshold=0 for comparison plots.
+    # Hybrid at the loss-optimal threshold for all comparison plots.
+    opt_thr, opt_cov_pct, opt_loss = _find_optimal_threshold(ref, beta)
+    print(f"Optimal threshold: {opt_thr:.4f}  "
+          f"coverage={opt_cov_pct:.1f}%  loss={opt_loss:.4f}")
+
     X, Y = ref['X'], ref['Y']
     layout = ref['layout']
     pinn_u = ref['pinn_u']
     residual = ref['residual']
     f_grid = ref['f_grid']
-    res0 = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
-                                X, Y, layout, f_grid, pinn_u, residual,
-                                ete_grid=(ref['ete'] if 'ete' in ref.files
-                                          else None),
-                                threshold=0.0, reuse_logits=ref['logits'])
-    u_hybrid0 = res0['u_grid']
-    accept_mask0 = res0['accept_mask']
+    res_opt = solve_hybrid_schwarz(
+        solver, pinn, router, f_callable, g_callable,
+        X, Y, layout, f_grid, pinn_u, residual,
+        ete_grid=(ref['ete'] if 'ete' in ref.files else None),
+        threshold=opt_thr, reuse_logits=ref['logits'])
+    u_hybrid_opt = res_opt['u_grid']
+    accept_mask_opt = res_opt['accept_mask']
 
     # Plots.
-    rl = _plot_summary(args, summary, ref, u_hybrid0)
-    _plot_solution_comparison(args, summary, ref, u_hybrid0, accept_mask0)
-    opt_cov, opt_loss = _plot_loss_vs_coverage(args, summary, ref, beta)
+    rl = _plot_summary(args, summary, ref, u_hybrid_opt)
+    _plot_solution_comparison(args, summary, ref, u_hybrid_opt,
+                              accept_mask_opt)
+    _plot_loss_vs_coverage(args, summary, ref, beta)
     _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
                              f_callable, g_callable)
 
@@ -514,13 +542,14 @@ def main():
         'tag': args.tag,
         'k': summary['k'],
         'fem_baseline_ms': summary['fem_mean_s'] * 1000,
-        'hybrid_threshold0_ms': summary['hybrid_mean_s'] * 1000,
-        'speedup_at_threshold0': summary['speedup'],
+        'hybrid_optimal_ms': summary['hybrid_mean_s'] * 1000,
+        'speedup_at_optimal': summary['speedup'],
         'pinn_only_rmse': summary['pinn_rmse_vs_fem'],
-        'hybrid_threshold0_rmse': float(rl),
-        'beta': float(beta),
-        'optimal_coverage_pct': float(opt_cov),
+        'hybrid_optimal_rmse': float(rl),
+        'optimal_threshold': float(opt_thr),
+        'optimal_coverage_pct': float(opt_cov_pct),
         'optimal_training_loss': float(opt_loss),
+        'beta': float(beta),
         'coverage_pct': [s['actual_coverage_pct']
                          for s in summary['coverage_sweep']],
         'hybrid_rmse': [s['rmse_vs_fem']

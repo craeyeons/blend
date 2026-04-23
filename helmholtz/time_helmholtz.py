@@ -205,6 +205,35 @@ def main():
     pinn_rmse = rmse(pinn_u, u_fem_reference)
     for cov in coverage_targets:
         thr = threshold_for_coverage(logits, layout, float(cov))
+        # At target=0 (pure PINN) and target=1 (pure FEM), skip the hybrid
+        # path entirely: the hybrid routes through nearest-vertex snapping
+        # and FEM interpolation even when nothing is solved, which makes
+        # it diverge from the actual PINN-only / FEM-only baselines.
+        if cov <= 0.0:
+            err = rmse(pinn_u, u_fem_reference)
+            sweep.append({
+                'target_coverage': 0.0,
+                'threshold': float(thr),
+                'actual_coverage_pct': 0.0,
+                'hybrid_total_s': 0.0,
+                'hybrid_solve_only_s': 0.0,
+                'rmse_vs_fem': float(err),
+                'n_accepted_dofs': 0,
+            })
+            print(f"  target=  0.0%  (pure PINN)        RMSE={err:.3e}")
+            continue
+        if cov >= 1.0:
+            sweep.append({
+                'target_coverage': 1.0,
+                'threshold': float(thr),
+                'actual_coverage_pct': 100.0,
+                'hybrid_total_s': float(fem_mean),
+                'hybrid_solve_only_s': float(fem_mean),
+                'rmse_vs_fem': 0.0,
+                'n_accepted_dofs': 0,
+            })
+            print(f"  target=100.0%  (pure FEM)         RMSE={0.0:.3e}")
+            continue
         t0 = time.perf_counter()
         res = solve_hybrid_schwarz(solver, pinn, router, f_callable, g_callable,
                                    X, Y, layout, f_grid, pinn_u, residual,
