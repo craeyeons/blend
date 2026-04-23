@@ -93,7 +93,7 @@ python train_router.py \
     --epochs 2000 \
     --lr 1e-3 \
     --beta 1.1 \
-    --lambda-tv 0.5 \
+    --lambda-tv 1.0 \
     --base-filters 32 \
     --tag ${TAG}
 
