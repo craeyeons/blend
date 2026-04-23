@@ -1,0 +1,11 @@
+[
+  {"name": "id_k3pi_c",   "k": 9.4248,  "x_s": 0.70, "y_s": 0.50, "split": "id"},
+  {"name": "id_k4pi_c",   "k": 12.5664, "x_s": 0.30, "y_s": 0.30, "split": "id"},
+  {"name": "id_k5pi_c",   "k": 15.7080, "x_s": 0.80, "y_s": 0.75, "split": "id"},
+  {"name": "id_k4pi_d",   "k": 12.5664, "x_s": 0.25, "y_s": 0.75, "split": "id"},
+  {"name": "id_k3p5pi_c", "k": 10.9956, "x_s": 0.20, "y_s": 0.50, "split": "id"},
+
+  {"name": "ood_klow",    "k": 5.6549,  "x_s": 0.70, "y_s": 0.50, "split": "ood"},
+  {"name": "ood_khigh",   "k": 21.9912, "x_s": 0.70, "y_s": 0.50, "split": "ood"},
+  {"name": "ood_source_corner", "k": 12.5664, "x_s": 0.95, "y_s": 0.95, "split": "ood"}
+]
