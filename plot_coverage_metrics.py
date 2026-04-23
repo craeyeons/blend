@@ -133,35 +133,41 @@ def compute_cfd_solution(args):
     return u_cfd, v_cfd, p_cfd, sim.X, sim.Y, cfd_time
 
 
-def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true, layout):
+def compute_l2_error_field(u_pred, v_pred, p_pred, u_true, v_true, p_true,
+                            layout, X=None, Y=None, interface_mask=None):
+    """Per-point gauge-invariant L2 error.
+
+    Uses |∇p - ∇p_true|² (gauge-free) instead of (p - p_true)², normalized by
+    the CFD pressure-gradient scale. Excludes a 1-cell ring around the fluid
+    boundary and, if `interface_mask` is provided (e.g. hybrid PINN/CFD
+    split), a 1-cell ring around that interface too.
     """
-    Compute per-point L2 error between prediction and ground truth.
-    
-    Parameters:
-    -----------
-    u_pred, v_pred, p_pred : ndarray
-        Predicted solution
-    u_true, v_true, p_true : ndarray
-        Ground truth (CFD) solution
-    layout : ndarray
-        Fluid domain mask
-        
-    Returns:
-    --------
-    error_field : ndarray
-        L2 error at each point
-    """
-    # Velocity error (main focus)
+    from scipy.ndimage import binary_erosion, binary_dilation
+
     error_u = (u_pred - u_true) ** 2
     error_v = (v_pred - v_true) ** 2
-    
-    # Normalize pressure by its range for fair comparison
-    p_range = np.max(np.abs(p_true[layout > 0])) + 1e-10
-    error_p = ((p_pred - p_true) / p_range) ** 2
-    
-    # Combined L2 error (can weight differently if needed)
+
+    if X is not None and Y is not None:
+        dx = float(X[0, 1] - X[0, 0])
+        dy = float(Y[1, 0] - Y[0, 0])
+    else:
+        dx = dy = 1.0
+
+    fluid = layout > 0
+    pxp, pyp = np.gradient(p_pred, dy, dx)
+    pxt, pyt = np.gradient(p_true, dy, dx)
+    gradp_scale = float(np.max(pxt[fluid] ** 2 + pyt[fluid] ** 2)) + 1e-10
+    error_p = ((pxp - pxt) ** 2 + (pyp - pyt) ** 2) / gradp_scale
+
     error_field = np.sqrt(error_u + error_v + error_p) * layout
-    
+
+    # Mask out boundary-gradient artifacts.
+    valid = binary_erosion(fluid, iterations=1)
+    if interface_mask is not None:
+        m = interface_mask.astype(bool) & fluid
+        ring = binary_dilation(m, iterations=1) & ~binary_erosion(m, iterations=1)
+        valid = valid & ~ring
+    error_field = np.where(valid, error_field, 0.0)
     return error_field
 
 
@@ -505,64 +511,75 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                              X, Y, layout, cfd_mask,
                              cylinder_center, cylinder_radius,
                              save_path=None):
-    """
-    Side-by-side comparison of PINN, Hybrid, and CFD solutions.
-    Shows velocity magnitude and pressure for each.
+    """5x3 panel: rows = p, u, v, |velocity|, error; cols = PINN, Hybrid, CFD.
+
+    Each row shares a colour scale across the three columns. Pressure is
+    gauge-aligned via fluid-median subtraction. The hybrid column is shaded
+    to mark the CFD-solved subdomain.
     """
     from matplotlib.colors import Normalize
 
     cx, cy = cylinder_center
+    fluid = layout > 0
+
+    # Align pressures by fluid median (gauge).
+    p_pinn_c = p_pinn - np.median(p_pinn[fluid])
+    p_hyb_c = p_hybrid - np.median(p_hybrid[fluid])
+    p_cfd_c = p_cfd - np.median(p_cfd[fluid])
 
     vel_pinn = np.sqrt(u_pinn**2 + v_pinn**2)
-    vel_hybrid = np.sqrt(u_hybrid**2 + v_hybrid**2)
+    vel_hyb = np.sqrt(u_hybrid**2 + v_hybrid**2)
     vel_cfd = np.sqrt(u_cfd**2 + v_cfd**2)
 
-    # Shared colour limits from CFD
-    fluid = layout > 0
-    vel_min, vel_max = vel_cfd[fluid].min(), vel_cfd[fluid].max()
+    err_pinn = compute_l2_error_field(u_pinn, v_pinn, p_pinn,
+                                      u_cfd, v_cfd, p_cfd,
+                                      layout, X=X, Y=Y)
+    err_hyb = compute_l2_error_field(u_hybrid, v_hybrid, p_hybrid,
+                                     u_cfd, v_cfd, p_cfd,
+                                     layout, X=X, Y=Y,
+                                     interface_mask=cfd_mask)
+    err_cfd = np.zeros_like(u_cfd)
 
-    # Pressure has gauge freedom; align all fields to a common reference
-    # before comparing so color differences reflect structure, not offset.
-    p_pinn_cmp = p_pinn - np.median(p_pinn[fluid])
-    p_hybrid_cmp = p_hybrid - np.median(p_hybrid[fluid])
-    p_cfd_cmp = p_cfd - np.median(p_cfd[fluid])
-    p_min = min(p_pinn_cmp[fluid].min(), p_hybrid_cmp[fluid].min(), p_cfd_cmp[fluid].min())
-    p_max = max(p_pinn_cmp[fluid].max(), p_hybrid_cmp[fluid].max(), p_cfd_cmp[fluid].max())
+    rows = [
+        ('p',     [p_pinn_c, p_hyb_c, p_cfd_c],  'coolwarm', False),
+        ('u',     [u_pinn,   u_hybrid, u_cfd],   'coolwarm', False),
+        ('v',     [v_pinn,   v_hybrid, v_cfd],   'coolwarm', False),
+        ('|u|',   [vel_pinn, vel_hyb, vel_cfd],  'viridis',  True),
+        ('error', [err_pinn, err_hyb, err_cfd],  'magma',    True),
+    ]
+    col_titles = ['PINN', 'Hybrid', 'CFD']
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+    fig, axes = plt.subplots(len(rows), 3, figsize=(16, 4 * len(rows)))
 
-    titles_top = ['PINN', 'Hybrid', 'CFD']
-    vel_fields = [vel_pinn, vel_hybrid, vel_cfd]
-    p_fields = [p_pinn_cmp, p_hybrid_cmp, p_cfd_cmp]
+    for i, (label, fields, cmap, nonneg) in enumerate(rows):
+        stacked = np.concatenate([f[fluid] for f in fields])
+        if nonneg:
+            vmin, vmax = 0.0, float(np.max(stacked))
+        else:
+            absmax = float(np.max(np.abs(stacked)))
+            vmin, vmax = -absmax, absmax
 
-    for j, (title, vel, p) in enumerate(zip(titles_top, vel_fields, p_fields)):
-        # Velocity magnitude (top row)
-        ax = axes[0, j]
-        data = np.ma.masked_where(layout == 0, vel)
-        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
-                         norm=Normalize(vmin=vel_min, vmax=vel_max))
-        plt.colorbar(cf, ax=ax, label='|u|')
-        circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
-        ax.add_patch(circle)
-        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
-                   colors='lime', linewidths=1.5, linestyles='--')
-        ax.set_aspect('equal')
-        ax.set_title(f'{title} — Velocity Magnitude')
-        ax.set_xlabel('x'); ax.set_ylabel('y')
-
-        # Pressure (bottom row)
-        ax = axes[1, j]
-        data = np.ma.masked_where(layout == 0, p)
-        cf = ax.contourf(X, Y, data, levels=50, cmap='coolwarm',
-                         norm=Normalize(vmin=p_min, vmax=p_max))
-        plt.colorbar(cf, ax=ax, label='p')
-        circle = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
-        ax.add_patch(circle)
-        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
-                   colors='lime', linewidths=1.5, linestyles='--')
-        ax.set_aspect('equal')
-        ax.set_title(f'{title} — Pressure')
-        ax.set_xlabel('x'); ax.set_ylabel('y')
+        for j, f in enumerate(fields):
+            ax = axes[i, j]
+            data = np.ma.masked_where(layout == 0, f)
+            cf = ax.contourf(X, Y, data, levels=50, cmap=cmap,
+                             norm=Normalize(vmin=vmin, vmax=vmax))
+            plt.colorbar(cf, ax=ax, label=label)
+            circle = plt.Circle((cx, cy), cylinder_radius,
+                                color='gray', fill=True, zorder=5)
+            ax.add_patch(circle)
+            if j == 1:
+                ax.contourf(X, Y, cfd_mask.astype(float),
+                            levels=[0.5, 1.5], colors=['black'], alpha=0.25)
+                ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                           colors='lime', linewidths=1.5)
+            ax.set_aspect('equal')
+            if i == 0:
+                ax.set_title(col_titles[j])
+            if j == 0:
+                ax.set_ylabel(label)
+            if i == len(rows) - 1:
+                ax.set_xlabel('x')
 
     plt.tight_layout()
     if save_path:
@@ -1293,7 +1310,7 @@ def main():
         error_field_proxy = compute_l2_error_field(
             u_pinn, v_pinn, p_pinn,
             u_cfd, v_cfd, p_cfd,
-            layout
+            layout, X=X, Y=Y
         )
         # Normalize to [0, 1]
         max_err = np.max(error_field_proxy[layout > 0])
@@ -1348,7 +1365,7 @@ def main():
     error_field = compute_l2_error_field(
         u_pinn, v_pinn, p_pinn,
         u_cfd, v_cfd, p_cfd,
-        layout
+        layout, X=X, Y=Y
     )
     print(f"  Mean L2 error (PINN vs CFD): {np.mean(error_field[layout > 0]):.6f}")
     print(f"  Max L2 error: {np.max(error_field):.6f}")

@@ -15,6 +15,30 @@ import time
 import numpy as np
 import cv2
 import tensorflow as tf
+from scipy.ndimage import binary_erosion, binary_dilation
+
+
+def _gauge_free_rmse(u_p, v_p, p_p, u_r, v_r, p_r,
+                     valid_mask, dx, dy, gradp_scale):
+    """Velocity + gauge-invariant pressure-gradient RMSE on valid cells.
+
+    Replaces (p - p_ref) with (∇p - ∇p_ref) so a constant pressure offset
+    (PINN vs CFD gauge) does not contribute. The gradient term is
+    normalized by the CFD pressure-gradient scale so it is comparable to
+    the velocity terms.
+    """
+    px, py = np.gradient(p_p, dy, dx)
+    pxr, pyr = np.gradient(p_r, dy, dx)
+    err = ((u_p - u_r)**2 + (v_p - v_r)**2
+           + ((px - pxr)**2 + (py - pyr)**2) / gradp_scale)
+    return float(np.sqrt(np.mean(err[valid_mask])))
+
+
+def _interface_ring(mask, iterations=1):
+    """Ring of `iterations` cells on both sides of a binary mask boundary."""
+    m = mask.astype(bool)
+    return binary_dilation(m, iterations=iterations) & \
+           ~binary_erosion(m, iterations=iterations)
 
 # Configure TensorFlow GPU memory growth
 gpus = tf.config.list_physical_devices('GPU')
@@ -317,13 +341,24 @@ def main():
 
     # Keep last CFD solution as ground truth for RMSE
     fluid_mask = layout > 0
-    p_range = np.max(np.abs(p_cfd[fluid_mask])) + 1e-10
+
+    # Gauge-invariant error: compare ∇p instead of p. Exclude a 1-cell ring
+    # around the fluid boundary (gradient artifacts) and, for hybrid fields,
+    # a 1-cell ring around the PINN/CFD interface.
+    dx = float(X[0, 1] - X[0, 0])
+    dy = float(Y[1, 0] - Y[0, 0])
+    pxc, pyc = np.gradient(p_cfd, dy, dx)
+    gradp_scale = float(np.max(pxc[fluid_mask]**2 + pyc[fluid_mask]**2)) + 1e-10
+    interior = binary_erosion(fluid_mask, iterations=1)
+
+    def _hybrid_valid(cfd_mask):
+        ring = _interface_ring(cfd_mask.astype(bool) & fluid_mask, iterations=1)
+        return interior & ~ring
 
     # RMSE of hybrid at optimal threshold (from last timed run)
     uh_opt = np.array(uh_opt); vh_opt = np.array(vh_opt); ph_opt = np.array(ph_opt)
-    error_opt = ((uh_opt - u_cfd)**2 + (vh_opt - v_cfd)**2
-                 + ((ph_opt - p_cfd) / p_range)**2)
-    rmse_opt = float(np.sqrt(np.mean(error_opt[fluid_mask])))
+    rmse_opt = _gauge_free_rmse(uh_opt, vh_opt, ph_opt, u_cfd, v_cfd, p_cfd,
+                                _hybrid_valid(cfd_mask_opt), dx, dy, gradp_scale)
 
     # ================================================================
     # COVERAGE SWEEP (single run at each 10% increment)
@@ -333,9 +368,9 @@ def main():
 
     sweep_cov = [0.0]  # start with PINN-only
     sweep_time = [0.0]  # PINN inference is ~instant relative to CFD
-    error_pinn = ((pinn_u - u_cfd)**2 + (pinn_v - v_cfd)**2
-                  + ((pinn_p - p_cfd) / p_range)**2)
-    rmse_pinn = np.sqrt(np.mean(error_pinn[fluid_mask]))
+    rmse_pinn = _gauge_free_rmse(pinn_u, pinn_v, pinn_p,
+                                 u_cfd, v_cfd, p_cfd,
+                                 interior, dx, dy, gradp_scale)
     sweep_rmse = [rmse_pinn]
 
     for target_cov in target_coverages:
@@ -352,9 +387,8 @@ def main():
         elapsed = t1 - t0
 
         uh, vh, ph = np.array(uh), np.array(vh), np.array(ph)
-        error_hyb = ((uh - u_cfd)**2 + (vh - v_cfd)**2
-                     + ((ph - p_cfd) / p_range)**2)
-        rmse = np.sqrt(np.mean(error_hyb[fluid_mask]))
+        rmse = _gauge_free_rmse(uh, vh, ph, u_cfd, v_cfd, p_cfd,
+                                _hybrid_valid(mask), dx, dy, gradp_scale)
 
         sweep_cov.append(cov)
         sweep_time.append(elapsed)
