@@ -57,13 +57,15 @@ print('Default backend:', jax.default_backend())
 
 rm -rf threshold_plots router_hybrid_outputs
 
+BETA = 2.0
+
 # Train router
 echo "=== Training Router ==="
 python train_router.py \
    --model-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
    --output-dir ./router_output \
    --epochs 2000 \
-   --beta 1.1 \
+   --beta ${BETA} \
    --lambda-tv 1.0 \
    --lr 1e-3 \
    --weight-continuity 1.0 \
@@ -97,7 +99,7 @@ python plot_coverage_metrics.py \
     --router-weights ./router_output/router.weights.h5 \
     --compute-cfd \
     --save-cfd ./cfd_mid_cylinder_solution.npz \
-    --beta 1.1 \
+    --beta ${BETA} \
     --cylinder-y 0.5
 
 echo "=== Job completed ==="

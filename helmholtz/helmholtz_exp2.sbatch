@@ -92,8 +92,8 @@ python train_router.py \
     --x-s ${XS} --y-s ${YS} --sigma ${SIGMA} --amplitude ${AMP} \
     --epochs 2000 \
     --lr 1e-3 \
-    --beta 1.1 \
-    --lambda-tv 1 \
+    --beta 2.0 \
+    --lambda-tv 0.5 \
     --base-filters 32 \
     --tag ${TAG}
 
