@@ -29,7 +29,7 @@ import tensorflow as tf
 
 from lib.domains import create_square_with_hole, gaussian_source
 from lib.fem_solver import HelmholtzSolver
-from lib.network import build_parametric_pinn
+from lib.network import build_parametric_pinn, make_xy_callable
 from lib.router import RouterCNN, create_router_input, median_normalize
 from lib.hybrid import solve_hybrid_schwarz, rmse
 
@@ -235,8 +235,9 @@ def main():
             accept_mask = (layout > 0).astype(np.int32)
             note = '(short-circuit: opt_cov≤0.5% → pure PINN)'
         else:
+            pinn_xy = make_xy_callable(pinn, k, xs, ys)
             res_opt = solve_hybrid_schwarz(
-                solver, pinn, router, f_callable, g_callable,
+                solver, pinn_xy, router, f_callable, g_callable,
                 X, Y, layout, ref['f_grid'], ref['pinn_u'], ref['residual'],
                 ete_grid=(ref['ete'] if 'ete' in ref.files else None),
                 threshold=float(opt_thr), reuse_logits=ref['logits'])

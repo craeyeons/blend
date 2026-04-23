@@ -128,3 +128,23 @@ def build_parametric_pinn(layers=(256, 256, 256, 256, 256),
     out = tf.keras.layers.Dense(1, activation=None,
                                 kernel_initializer='glorot_normal')(h)
     return tf.keras.Model(inp, out)
+
+
+def make_xy_callable(parametric_pinn, k, xs, ys):
+    """Wrap a 5-input parametric PINN into a 2-input callable that looks
+    like a scalar PINN. `(k, x_s, y_s)` are baked in. Useful for passing
+    to solver/hybrid code that expects a `(N, 2) -> (N, 1)` model."""
+    k_f = float(k); xs_f = float(xs); ys_f = float(ys)
+    k_tf = tf.constant(k_f, dtype=tf.float32)
+    xs_tf = tf.constant(xs_f, dtype=tf.float32)
+    ys_tf = tf.constant(ys_f, dtype=tf.float32)
+
+    def fn(xy, training=False):
+        xy = tf.convert_to_tensor(xy, dtype=tf.float32)
+        N = tf.shape(xy)[0]
+        k_col = tf.fill([N, 1], k_tf)
+        xs_col = tf.fill([N, 1], xs_tf)
+        ys_col = tf.fill([N, 1], ys_tf)
+        inp5 = tf.concat([xy, k_col, xs_col, ys_col], axis=-1)
+        return parametric_pinn(inp5, training=training)
+    return fn

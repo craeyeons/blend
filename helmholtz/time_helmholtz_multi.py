@@ -31,7 +31,7 @@ if gpus:
 
 from lib.domains import create_square_with_hole, gaussian_source
 from lib.fem_solver import HelmholtzSolver
-from lib.network import build_parametric_pinn
+from lib.network import build_parametric_pinn, make_xy_callable
 from lib.router import (RouterCNN, create_router_input, compute_ete_fft)
 from lib.hybrid import (solve_hybrid_schwarz, threshold_for_coverage, rmse)
 
@@ -192,8 +192,9 @@ def main():
                               'n_accepted_dofs': 0})
                 continue
             t0 = time.perf_counter()
+            pinn_xy = make_xy_callable(pinn, k, xs, ys)
             res = solve_hybrid_schwarz(
-                solver, pinn, router, f_callable, g_callable,
+                solver, pinn_xy, router, f_callable, g_callable,
                 X, Y, layout, f_grid, pinn_u, residual,
                 ete_grid=ete, threshold=float(thr), reuse_logits=logits)
             wall = time.perf_counter() - t0
