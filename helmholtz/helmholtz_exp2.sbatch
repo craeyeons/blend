@@ -57,20 +57,20 @@ echo "=== Exp 2  k=4pi (${K})  tag=${TAG}"
 echo "=============================================================="
 
 # 1) PINN
-python train_pinn.py \
-    --k ${K} \
-    --domain square_hole \
-    --hole-center-x ${HCX} --hole-center-y ${HCY} --hole-radius ${HR} \
-    --source gaussian \
-    --x-s ${XS} --y-s ${YS} --sigma ${SIGMA} --amplitude ${AMP} \
-    --epochs 50000 \
-    --lr 3e-4 \
-    --n-domain 20000 \
-    --n-boundary 4000 \
-    --w-bc 100.0 \
-    --layers 256 256 256 256 256 \
-    --fourier-m 128 \
-    --tag ${TAG}
+# python train_pinn.py \
+#     --k ${K} \
+#     --domain square_hole \
+#     --hole-center-x ${HCX} --hole-center-y ${HCY} --hole-radius ${HR} \
+#     --source gaussian \
+#     --x-s ${XS} --y-s ${YS} --sigma ${SIGMA} --amplitude ${AMP} \
+#     --epochs 50000 \
+#     --lr 3e-4 \
+#     --n-domain 20000 \
+#     --n-boundary 4000 \
+#     --w-bc 100.0 \
+#     --layers 256 256 256 256 256 \
+#     --fourier-m 128 \
+#     --tag ${TAG}
 
 # 2) FEM reference
 python run_fem.py \
