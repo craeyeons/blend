@@ -46,7 +46,7 @@ PREFIX="exp3"
 
 PI=3.141592653589793
 K_MIN=$(python -c "print(2.0 * ${PI})")
-K_MAX=$(python -c "print(6.0 * ${PI})")
+K_MAX=$(python -c "print(4.0 * ${PI})")
 
 echo ""
 echo "=============================================================="
@@ -55,9 +55,10 @@ echo "=============================================================="
 
 # 1) Parametric PINN
 python train_pinn_parametric.py \
+    --configs-json ${CONFIGS} \
     --k-min ${K_MIN} --k-max ${K_MAX} \
-    --xs-min 0.05 --xs-max 0.95 \
-    --ys-min 0.05 --ys-max 0.95 \
+    --xs-min 0.70 --xs-max 0.85 \
+    --ys-min 0.70 --ys-max 0.85 \
     --sigma 0.05 --amplitude 250.0 \
     --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
     --epochs 80000 \

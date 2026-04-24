@@ -53,6 +53,18 @@ def sample_configs(n, rng, k_range, xs_range, ys_range, hole):
     return k, out_xs, out_ys
 
 
+def sample_configs_discrete(n, rng, pool):
+    """Sample n rows by drawing (k, x_s, y_s) with replacement from pool.
+
+    pool : (M, 3) float32 array with columns (k, x_s, y_s).
+    """
+    idx = rng.integers(0, pool.shape[0], size=(n,))
+    sel = pool[idx]
+    return (sel[:, 0].astype(np.float32),
+            sel[:, 1].astype(np.float32),
+            sel[:, 2].astype(np.float32))
+
+
 def sample_interior(n, rng, hole):
     cx, cy, r = hole
     out = np.empty((n, 2), dtype=np.float32)
@@ -150,6 +162,11 @@ def main():
                         help='Re-sample configs this often (1 = every step).')
     parser.add_argument('--grad-clip', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--configs-json', type=str, default=None,
+                        help='Optional JSON listing configs; if given, '
+                             'ID entries are used as the discrete training '
+                             'pool and continuous k/xs/ys ranges are ignored '
+                             'for sampling (param_range still uses hull).')
     parser.add_argument('--tag', type=str, default='exp3_parametric')
     parser.add_argument('--output-dir', type=str, default='./models')
     parser.add_argument('--history-dir', type=str, default='./history')
@@ -172,6 +189,32 @@ def main():
           f"n_bd={args.n_boundary_per_config}")
     print("=" * 60)
 
+    hole = (args.hole_center_x, args.hole_center_y, args.hole_radius)
+
+    discrete_pool = None
+    if args.configs_json is not None:
+        with open(args.configs_json) as f:
+            _cfgs = json.load(f)
+        _id = [(float(c['k']), float(c['x_s']), float(c['y_s']))
+               for c in _cfgs if c.get('split', 'id') == 'id']
+        discrete_pool = np.asarray(_id, dtype=np.float32)
+        print(f"Discrete training pool: {discrete_pool.shape[0]} ID configs")
+        k_lo = float(discrete_pool[:, 0].min())
+        k_hi = float(discrete_pool[:, 0].max())
+        xs_lo = float(discrete_pool[:, 1].min())
+        xs_hi = float(discrete_pool[:, 1].max())
+        ys_lo = float(discrete_pool[:, 2].min())
+        ys_hi = float(discrete_pool[:, 2].max())
+        if k_hi == k_lo: k_hi = k_lo + 1e-3
+        if xs_hi == xs_lo: xs_hi = xs_lo + 1e-3
+        if ys_hi == ys_lo: ys_hi = ys_lo + 1e-3
+        args.k_min, args.k_max = k_lo, k_hi
+        args.xs_min, args.xs_max = xs_lo, xs_hi
+        args.ys_min, args.ys_max = ys_lo, ys_hi
+        print(f"  hull: k=[{k_lo:.3f}, {k_hi:.3f}]  "
+              f"xs=[{xs_lo:.3f}, {xs_hi:.3f}]  "
+              f"ys=[{ys_lo:.3f}, {ys_hi:.3f}]")
+
     fourier_scale = float(args.fourier_scale)
     model = build_parametric_pinn(
         layers=tuple(args.layers),
@@ -189,7 +232,6 @@ def main():
         initial_learning_rate=args.lr, decay_steps=args.epochs, alpha=1e-2)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
 
-    hole = (args.hole_center_x, args.hole_center_y, args.hole_radius)
     k_range = (args.k_min, args.k_max)
     xs_range = (args.xs_min, args.xs_max)
     ys_range = (args.ys_min, args.ys_max)
@@ -216,7 +258,11 @@ def main():
         B = args.n_configs
         n_int = args.n_domain_per_config
         n_bd = args.n_boundary_per_config
-        k_c, xs_c, ys_c = sample_configs(B, rng, k_range, xs_range, ys_range, hole)
+        if discrete_pool is not None:
+            k_c, xs_c, ys_c = sample_configs_discrete(B, rng, discrete_pool)
+        else:
+            k_c, xs_c, ys_c = sample_configs(B, rng, k_range, xs_range,
+                                             ys_range, hole)
         int_xy = np.concatenate(
             [sample_interior(n_int, rng, hole) for _ in range(B)], axis=0)
         bd_xy = np.concatenate(
