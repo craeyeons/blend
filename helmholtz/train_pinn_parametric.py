@@ -130,10 +130,10 @@ def main():
                         default=[256, 256, 256, 256, 256])
     parser.add_argument('--activation', type=str, default='tanh')
     parser.add_argument('--fourier-m', type=int, default=128)
-    parser.add_argument('--fourier-scale', type=float, default=3.0,
+    parser.add_argument('--fourier-scale', type=float, default=1.0,
                         help='Std of B for k-modulated Fourier features. '
-                             '~3 covers both wave-scale (|B|~1) and '
-                             'source-scale (|B|~6) spatial structure.')
+                             'Default 1.0 (k carries the magnitude; '
+                             'wider scales hurt conditioning at init).')
     parser.add_argument('--fourier-seed', type=int, default=0)
     parser.add_argument('--k-min', type=float, default=2.0 * np.pi)
     parser.add_argument('--k-max', type=float, default=6.0 * np.pi)
