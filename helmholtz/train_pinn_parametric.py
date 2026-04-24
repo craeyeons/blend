@@ -148,7 +148,7 @@ def main():
     parser.add_argument('--hole-radius', type=float, default=0.15)
     parser.add_argument('--resample-every', type=int, default=1,
                         help='Re-sample configs this often (1 = every step).')
-    parser.add_argument('--grad-clip', type=float, default=0.5)
+    parser.add_argument('--grad-clip', type=float, default=1.0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--tag', type=str, default='exp3_parametric')
     parser.add_argument('--output-dir', type=str, default='./models')
