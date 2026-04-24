@@ -64,10 +64,10 @@ python train_pinn_parametric.py \
     --lr 3e-4 \
     --n-configs 16 \
     --n-domain-per-config 1024 \
-    --n-boundary-per-config 256 \
+    --n-boundary-per-config 512 \
     --w-bc 100.0 \
     --layers 256 256 256 256 256 \
-    --fourier-m 128 \
+    --fourier-m 192 \
     --resample-every 1 \
     --grad-clip 1.0 \
     --tag ${PINN_TAG}
@@ -86,8 +86,8 @@ python train_router_multi.py \
     --tag ${ROUTER_TAG} \
     --epochs 4000 \
     --lr 1e-3 \
-    --beta 0.1 \
-    --lambda-tv 0.01 \
+    --beta 1.0 \
+    --lambda-tv 1.0 \
     --base-filters 32
 
 # 4) Multi-config timing + coverage sweep (ID + OOD)
