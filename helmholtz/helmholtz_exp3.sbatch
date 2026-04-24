@@ -27,8 +27,6 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TF_GPU_ALLOCATOR=cuda_malloc_async
 
 python -c "import skfem" 2>/dev/null || pip install --no-input scikit-fem
-
-echo "=== Verifying GPU + scikit-fem ==="
 python -c "
 import tensorflow as tf
 print('TF:', tf.__version__, 'GPU:', tf.config.list_physical_devices('GPU'))
@@ -36,74 +34,48 @@ import skfem; print('scikit-fem:', skfem.__version__)
 "
 
 # ============================================================
-# Exp 3: parametric PINN u(x, y, k, x_s, y_s) + multi-config
-# router + hybrid eval across ID/OOD configs.
+# Exp 3: N independent single-case Helmholtz PINNs (Exp 2 recipe,
+# one per train config) + ONE shared router trained across all of
+# them, evaluated on held-out OOD configs (each with its own
+# pre-trained PINN). Mirrors the CFD multi-cylinder setup.
 # ============================================================
-PINN_TAG="exp3_parametric"
-ROUTER_TAG="exp3"
 CONFIGS="configs_exp3.json"
-PREFIX="exp3"
-
-PI=3.141592653589793
-K_MIN=$(python -c "print(2.0 * ${PI})")
-K_MAX=$(python -c "print(4.0 * ${PI})")
+TAG="exp3"
 
 echo ""
 echo "=============================================================="
-echo "=== Exp 3  parametric   k in [${K_MIN}, ${K_MAX}]"
+echo "=== Exp 3 (multi-PINN + shared router)  tag=${TAG}"
 echo "=============================================================="
 
-# 1) Parametric PINN
-python train_pinn_parametric.py \
-    --configs-json ${CONFIGS} \
-    --k-min ${K_MIN} --k-max ${K_MAX} \
-    --xs-min 0.70 --xs-max 0.85 \
-    --ys-min 0.70 --ys-max 0.85 \
-    --sigma 0.05 --amplitude 250.0 \
-    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
-    --epochs 80000 \
+# 1) Train one scalar PINN per config (train split AND test split —
+#    test PINNs are needed so the router sees a novel PINN at eval).
+python train_pinns_multi.py \
+    --configs ${CONFIGS} \
+    --also-train-test \
+    --skip-existing \
+    --epochs 50000 \
     --lr 3e-4 \
-    --n-configs 16 \
-    --n-domain-per-config 1024 \
-    --n-boundary-per-config 512 \
+    --n-domain 20000 \
+    --n-boundary 4000 \
     --w-bc 100.0 \
     --layers 256 256 256 256 256 \
-    --fourier-m 192 \
-    --resample-every 1 \
-    --grad-clip 1.0 \
-    --tag ${PINN_TAG}
+    --fourier-m 128 \
+    --sigma 0.05 --amplitude 250.0 \
+    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
+    --grad-clip 1.0
 
-# 2) FEM references for every config
-python run_fem_multi.py \
-    --configs ${CONFIGS} \
-    --tag-prefix ${PREFIX} \
-    --parametric-meta ./history/training_meta_${PINN_TAG}.json \
-    --mesh-n 129 --nx 201 --ny 201
-
-# 3) Train shared router on ID configs
+# 2) Train shared router + run full analysis (FEM refs, coverage
+#    sweep, per-config plots, summary CSV + MD).
 python train_router_multi.py \
-    --pinn-tag ${PINN_TAG} \
     --configs ${CONFIGS} \
-    --tag ${ROUTER_TAG} \
-    --epochs 4000 \
+    --tag ${TAG} \
+    --epochs 2000 \
     --lr 1e-3 \
     --beta 1.0 \
     --lambda-tv 1.0 \
-    --base-filters 32
-
-# 4) Multi-config timing + coverage sweep (ID + OOD)
-python time_helmholtz_multi.py \
-    --pinn-tag ${PINN_TAG} \
-    --router-tag ${ROUTER_TAG} \
-    --configs ${CONFIGS} \
-    --tag-prefix ${PREFIX} \
-    --mesh-n 129 --nx 201 --ny 201
-
-# 5) Per-config plots + summary table
-python plot_hybrid_multi.py \
-    --pinn-tag ${PINN_TAG} \
-    --router-tag ${ROUTER_TAG} \
-    --configs ${CONFIGS} \
-    --tag-prefix ${PREFIX}
+    --base-filters 32 \
+    --mesh-n 129 --nx 201 --ny 201 \
+    --sigma 0.05 --amplitude 250.0 \
+    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15
 
 echo "=== Job completed ==="
