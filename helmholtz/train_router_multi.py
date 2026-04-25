@@ -256,13 +256,20 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
     plt.close(fig)
 
 
-def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path):
+def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
     cov = np.array([s['actual_coverage_pct'] for s in sweep])
     err = np.array([s['rmse_vs_fem'] for s in sweep])
     fig, ax = plt.subplots(figsize=(9, 6))
     ax.plot(cov, err, 'o-', label='Hybrid RMSE')
     ax.axhline(pinn_rmse, ls='--', color='C3',
                label=f'PINN-only ({pinn_rmse:.2e})')
+    if best is not None:
+        ax.plot([best['actual_coverage_pct']], [best['rmse_vs_fem']],
+                marker='*', markersize=20, markerfacecolor='gold',
+                markeredgecolor='black', markeredgewidth=1.5,
+                linestyle='none', zorder=5,
+                label=f"Best hybrid (cov={best['actual_coverage_pct']:.1f}%, "
+                      f"RMSE={best['rmse_vs_fem']:.2e})")
     ax.set_xlabel('FEM coverage (%)')
     ax.set_ylabel('RMSE vs full FEM')
     ax.set_yscale('log')
@@ -374,7 +381,8 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
                    f'PINN={pinn_rmse:.2e}  Hybrid={best["rmse_vs_fem"]:.2e}',
                    os.path.join(plots_dir, f'solution_{tag}.png'))
     _plot_rmse_vs_coverage(sweep, pinn_rmse, title,
-                           os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'))
+                           os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'),
+                           best=best)
 
     # Save sweep + reference arrays
     with open(os.path.join(timing_dir, f'sweep_{tag}.json'), 'w') as fp:
@@ -423,6 +431,13 @@ def main():
     p.add_argument('--hole-center-y', type=float, default=DEFAULT_HOLE[1])
     p.add_argument('--hole-radius', type=float, default=DEFAULT_HOLE[2])
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--skip-train', action='store_true',
+                   help='Skip router training; load existing weights at '
+                        '<output-dir>/router_helmholtz_<tag>.weights.h5 and '
+                        'go straight to analysis.')
+    p.add_argument('--skip-analysis', action='store_true',
+                   help='Train router and exit; skip per-config FEM + '
+                        'coverage sweep + plots.')
     args = p.parse_args()
 
     out_dir = args.output_dir
@@ -472,12 +487,28 @@ def main():
     step_fn = make_train_step(router, optimizer, layout_tf,
                               beta, ltv, grad_clip=args.grad_clip)
 
+    router_path = os.path.join(out_dir, f'router_helmholtz_{args.tag}.weights.h5')
+
+    if args.skip_train:
+        print(f"\n[3/5] --skip-train: loading existing router from {router_path}")
+        if not os.path.exists(router_path):
+            raise FileNotFoundError(
+                f"--skip-train set but no router weights at {router_path}")
+        router.load_weights(router_path)
+        train_time_s = 0.0
+        history = {'total': [], 'logistic': [], 'tv': [], 'reject': [], 'lr': []}
+        # Skip the training loop body entirely.
+        for_loop_count = 0
+    else:
+        for_loop_count = args.epochs
+
     # Training loop (cycle configs; cosine LR)
-    print(f"\n[3/5] Training router for {args.epochs} epochs "
+    print(f"\n[3/5] Training router for {for_loop_count} epochs "
           f"on {len(train_data)} configs")
     t0 = time.perf_counter()
-    history = {'total': [], 'logistic': [], 'tv': [], 'reject': [], 'lr': []}
-    for epoch in range(args.epochs):
+    if not args.skip_train:
+        history = {'total': [], 'logistic': [], 'tv': [], 'reject': [], 'lr': []}
+    for epoch in range(for_loop_count):
         progress = epoch / max(args.epochs - 1, 1)
         cur_lr = args.lr_min + 0.5 * (args.lr - args.lr_min) * (
             1 + np.cos(np.pi * progress))
@@ -501,44 +532,46 @@ def main():
                   f"mean_L={history['total'][-1]:.4f}  "
                   f"log={last_log:.4f}  tv={last_tv:.4f}  "
                   f"rej={last_rej*100:.1f}%  lr={cur_lr:.2e}")
-    train_time_s = time.perf_counter() - t0
-    print(f"Router trained in {train_time_s:.1f}s")
+    if not args.skip_train:
+        train_time_s = time.perf_counter() - t0
+        print(f"Router trained in {train_time_s:.1f}s")
+        router.save_weights(router_path)
+        np.savez(os.path.join(out_dir, f'router_history_{args.tag}.npz'),
+                 **{k: np.array(v) for k, v in history.items()})
+        meta_out = {
+            'tag': args.tag, 'configs': args.configs,
+            'n_train_configs': len(train_data),
+            'n_test_configs': len(test_data),
+            'epochs': args.epochs, 'lr': args.lr, 'lr_min': args.lr_min,
+            'beta': float(args.beta), 'lambda_tv': float(args.lambda_tv),
+            'base_filters': args.base_filters, 'grad_clip': args.grad_clip,
+            'mesh_n': args.mesh_n, 'nx': args.nx, 'ny': args.ny,
+            'sigma': args.sigma, 'amplitude': args.amplitude,
+            'hole_center_x': args.hole_center_x,
+            'hole_center_y': args.hole_center_y,
+            'hole_radius': args.hole_radius,
+            'train_time_s': train_time_s,
+            'timestamp': datetime.now().isoformat(),
+        }
+        with open(os.path.join(out_dir, f'router_meta_{args.tag}.json'), 'w') as f:
+            json.dump(meta_out, f, indent=2)
+        print(f"  saved router weights: {router_path}")
 
-    # Save router + history
-    router_path = os.path.join(out_dir, f'router_helmholtz_{args.tag}.weights.h5')
-    router.save_weights(router_path)
-    np.savez(os.path.join(out_dir, f'router_history_{args.tag}.npz'),
-             **{k: np.array(v) for k, v in history.items()})
-    meta_out = {
-        'tag': args.tag, 'configs': args.configs,
-        'n_train_configs': len(train_data),
-        'n_test_configs': len(test_data),
-        'epochs': args.epochs, 'lr': args.lr, 'lr_min': args.lr_min,
-        'beta': float(args.beta), 'lambda_tv': float(args.lambda_tv),
-        'base_filters': args.base_filters, 'grad_clip': args.grad_clip,
-        'mesh_n': args.mesh_n, 'nx': args.nx, 'ny': args.ny,
-        'sigma': args.sigma, 'amplitude': args.amplitude,
-        'hole_center_x': args.hole_center_x,
-        'hole_center_y': args.hole_center_y,
-        'hole_radius': args.hole_radius,
-        'train_time_s': train_time_s,
-        'timestamp': datetime.now().isoformat(),
-    }
-    with open(os.path.join(out_dir, f'router_meta_{args.tag}.json'), 'w') as f:
-        json.dump(meta_out, f, indent=2)
-    print(f"  saved router weights: {router_path}")
+        # Quick loss-history plot
+        fig, ax = plt.subplots(figsize=(9, 5))
+        ax.plot(history['total'], label='total')
+        ax.plot(history['logistic'], label='logistic', alpha=0.7)
+        ax.plot(history['tv'], label='tv', alpha=0.7)
+        ax.set_xlabel('epoch'); ax.set_ylabel('loss'); ax.legend()
+        ax.set_title(f'Router training — {args.tag}')
+        fig.tight_layout()
+        fig.savefig(os.path.join(plots_dir, f'training_history_{args.tag}.png'),
+                    dpi=150)
+        plt.close(fig)
 
-    # Quick loss-history plot
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.plot(history['total'], label='total')
-    ax.plot(history['logistic'], label='logistic', alpha=0.7)
-    ax.plot(history['tv'], label='tv', alpha=0.7)
-    ax.set_xlabel('epoch'); ax.set_ylabel('loss'); ax.legend()
-    ax.set_title(f'Router training — {args.tag}')
-    fig.tight_layout()
-    fig.savefig(os.path.join(plots_dir, f'training_history_{args.tag}.png'),
-                dpi=150)
-    plt.close(fig)
+    if args.skip_analysis:
+        print("\n[4/5] --skip-analysis: stopping after router training.")
+        return
 
     # Full analysis on train + test
     print(f"\n[4/5] Running analysis (FEM ref + coverage sweep + plots)")

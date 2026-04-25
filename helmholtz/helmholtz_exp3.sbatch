@@ -6,7 +6,6 @@
 #SBATCH --gres="gpu:h100-96:1"
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --export=NONE
 
 echo "=== Job Info ==="
 echo "Job ID: $SLURM_JOB_ID"
@@ -47,35 +46,60 @@ echo "=============================================================="
 echo "=== Exp 3 (multi-PINN + shared router)  tag=${TAG}"
 echo "=============================================================="
 
+# Stage selector — set this when submitting (sbatch --export=STAGE=analyze ...).
+#   all      — PINN training (1) + router training (2a) + analysis (2b)
+#   train    — PINN training (1) + router training (2a) only
+#   router   — router training (2a) only (PINNs assumed present)
+#   analyze  — analysis (2b) only (router + PINNs assumed present)
+STAGE=${STAGE:-all}
+echo "STAGE=${STAGE}"
+
 # 1) Train one scalar PINN per config (train split AND test split —
 #    test PINNs are needed so the router sees a novel PINN at eval).
-python train_pinns_multi.py \
-    --configs ${CONFIGS} \
-    --also-train-test \
-    --skip-existing \
-    --epochs 50000 \
-    --lr 3e-4 \
-    --n-domain 20000 \
-    --n-boundary 4000 \
-    --w-bc 100.0 \
-    --layers 256 256 256 256 256 \
-    --fourier-m 128 \
-    --sigma 0.05 --amplitude 250.0 \
-    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
-    --grad-clip 1.0
+if [[ "${STAGE}" == "all" || "${STAGE}" == "train" ]]; then
+    python train_pinns_multi.py \
+        --configs ${CONFIGS} \
+        --also-train-test \
+        --skip-existing \
+        --epochs 50000 \
+        --lr 3e-4 \
+        --n-domain 20000 \
+        --n-boundary 4000 \
+        --w-bc 100.0 \
+        --layers 256 256 256 256 256 \
+        --fourier-m 128 \
+        --sigma 0.05 --amplitude 250.0 \
+        --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
+        --grad-clip 1.0
+fi
 
-# 2) Train shared router + run full analysis (FEM refs, coverage
-#    sweep, per-config plots, summary CSV + MD).
-python train_router_multi.py \
-    --configs ${CONFIGS} \
-    --tag ${TAG} \
-    --epochs 2000 \
-    --lr 1e-3 \
-    --beta 1.0 \
-    --lambda-tv 1.0 \
-    --base-filters 32 \
-    --mesh-n 129 --nx 201 --ny 201 \
-    --sigma 0.05 --amplitude 250.0 \
-    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15
+# 2a) Train shared router (no analysis).
+if [[ "${STAGE}" == "all" || "${STAGE}" == "train" || "${STAGE}" == "router" ]]; then
+    python train_router_multi.py \
+        --configs ${CONFIGS} \
+        --tag ${TAG} \
+        --epochs 2000 \
+        --lr 1e-3 \
+        --beta 1.0 \
+        --lambda-tv 1.0 \
+        --base-filters 32 \
+        --mesh-n 129 --nx 201 --ny 201 \
+        --sigma 0.05 --amplitude 250.0 \
+        --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
+        --skip-analysis
+fi
+
+# 2b) Run full analysis using the saved router (FEM refs, coverage sweep,
+#     per-config plots, summary CSV + MD).
+if [[ "${STAGE}" == "all" || "${STAGE}" == "analyze" ]]; then
+    python train_router_multi.py \
+        --configs ${CONFIGS} \
+        --tag ${TAG} \
+        --base-filters 32 \
+        --mesh-n 129 --nx 201 --ny 201 \
+        --sigma 0.05 --amplitude 250.0 \
+        --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
+        --skip-train
+fi
 
 echo "=== Job completed ==="
