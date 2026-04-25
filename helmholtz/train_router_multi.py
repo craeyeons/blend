@@ -280,8 +280,46 @@ def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
     plt.close(fig)
 
 
+def _optimal_threshold_from_training_loss(logits, target_R, layout, beta):
+    """Pick the hard-decision threshold that minimizes the router's own
+    training objective:
+
+        L(thr) = beta * P(reject) + mean(R[accept])
+               = beta * mean(s >= thr) + mean(R * (s < thr)) / mean(s < thr)
+
+    Evaluated on solid cells only. R is the median-normalized |r|+ete the
+    router was trained against. No FEM ground truth involved."""
+    solid = layout > 0
+    s = logits[solid]
+    R = target_R[solid]
+    # Candidate thresholds: every unique logit value (and one above max).
+    cand = np.unique(s)
+    # Sort once for vectorized evaluation.
+    order = np.argsort(s)
+    s_sorted = s[order]; R_sorted = R[order]
+    n = len(s_sorted)
+    # For threshold thr: reject mask = (s >= thr).
+    # As thr sweeps from min->max, the accept set grows.
+    # Use sorted s; for each candidate thr, accept_count = searchsorted(thr).
+    cum_R = np.concatenate([[0.0], np.cumsum(R_sorted)])
+    best = (None, np.inf, None)  # (thr, loss, accept_count)
+    for thr in cand:
+        accept_count = int(np.searchsorted(s_sorted, thr, side='left'))
+        reject_count = n - accept_count
+        if accept_count == 0:
+            mean_R_accept = 0.0
+        else:
+            mean_R_accept = float(cum_R[accept_count] / accept_count)
+        loss = beta * (reject_count / n) + mean_R_accept
+        if loss < best[1]:
+            best = (float(thr), float(loss), accept_count)
+    thr, loss, accept_count = best
+    reject_pct = 100.0 * (n - accept_count) / max(n, 1)
+    return thr, reject_pct, loss
+
+
 def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
-                            mesh_n, X, Y, layout, router,
+                            mesh_n, X, Y, layout, router, beta,
                             tag_prefix, plots_dir, timing_dir):
     name = cfg_data['name']
     k = cfg_data['k']; xs = cfg_data['x_s']; ys = cfg_data['y_s']
@@ -356,17 +394,51 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
         print(f"    tgt={cov*100:5.1f}%  act={res['coverage_pct']:5.1f}%  "
               f"wall={wall*1000:6.1f}ms  RMSE={err:.3e}")
 
-    # Pick best hybrid (lowest RMSE, excluding coverage=1.0 which is full FEM).
-    interior = [s for s in sweep
-                if s['target_coverage'] not in (0.0, 1.0)]
-    best = min(interior, key=lambda s: s['rmse_vs_fem']) if interior else sweep[0]
-    # Re-solve at best threshold for the solution plot.
-    thr = best['threshold']
-    res_best = solve_hybrid_schwarz(
-        solver, cfg_data['pinn'], router, f_callable, g_callable,
-        X, Y, layout, cfg_data['f_grid'], cfg_data['pinn_u'],
-        cfg_data['residual'], ete_grid=cfg_data['ete'],
-        threshold=float(thr), reuse_logits=logits)
+    # Pick operating point by minimizing the router's own training loss
+    # at hard decisions — same rule the router was trained for. No FEM
+    # ground truth involved.
+    target_R = cfg_data['target'].numpy() if hasattr(cfg_data['target'], 'numpy') \
+        else np.asarray(cfg_data['target'])
+    opt_thr, opt_cov_pct, opt_loss = _optimal_threshold_from_training_loss(
+        logits, target_R, layout, float(beta))
+    print(f"  optimal threshold (training-loss picker): "
+          f"thr={opt_thr:.4f}  cov={opt_cov_pct:.1f}%  loss={opt_loss:.4f}")
+
+    # Solve the hybrid at that threshold and record its (cov, rmse, wall).
+    if opt_cov_pct >= 99.5:
+        # Degenerate: router rejects everything → fall back to full FEM.
+        res_best = {'u_grid': u_fem,
+                    'accept_mask': np.zeros_like(layout, dtype=np.int32),
+                    'coverage_pct': 100.0,
+                    'n_accepted_dofs': 0}
+        opt_wall = float(fem_mean)
+        opt_rmse = 0.0
+    elif opt_cov_pct <= 0.5:
+        # Degenerate: router accepts everything → pure PINN.
+        res_best = {'u_grid': pinn_u,
+                    'accept_mask': (layout > 0).astype(np.int32),
+                    'coverage_pct': 0.0,
+                    'n_accepted_dofs': 0}
+        opt_wall = 0.0
+        opt_rmse = float(pinn_rmse)
+    else:
+        t0 = time.perf_counter()
+        res_best = solve_hybrid_schwarz(
+            solver, cfg_data['pinn'], router, f_callable, g_callable,
+            X, Y, layout, cfg_data['f_grid'], cfg_data['pinn_u'],
+            cfg_data['residual'], ete_grid=cfg_data['ete'],
+            threshold=float(opt_thr), reuse_logits=logits)
+        opt_wall = time.perf_counter() - t0
+        opt_rmse = rmse(res_best['u_grid'], u_fem)
+
+    best = {'target_coverage': None,
+            'threshold': float(opt_thr),
+            'actual_coverage_pct': float(res_best['coverage_pct']),
+            'hybrid_total_s': float(opt_wall),
+            'rmse_vs_fem': float(opt_rmse),
+            'n_accepted_dofs': int(res_best['n_accepted_dofs']),
+            'training_loss_at_threshold': float(opt_loss),
+            'picker': 'training_loss'}
 
     # Plots
     _plot_router_output(logits, X, Y, layout, hole,
@@ -495,6 +567,17 @@ def main():
             raise FileNotFoundError(
                 f"--skip-train set but no router weights at {router_path}")
         router.load_weights(router_path)
+        # Pull beta from the saved meta so the operating-point picker
+        # uses the same beta the router was trained for.
+        meta_path = os.path.join(out_dir, f'router_meta_{args.tag}.json')
+        if os.path.exists(meta_path):
+            with open(meta_path) as fp:
+                saved_meta = json.load(fp)
+            saved_beta = float(saved_meta.get('beta', args.beta))
+            if saved_beta != args.beta:
+                print(f"  using beta={saved_beta} from saved meta "
+                      f"(CLI beta={args.beta} ignored)")
+            args.beta = saved_beta
         train_time_s = 0.0
         history = {'total': [], 'logistic': [], 'tv': [], 'reject': [], 'lr': []}
         # Skip the training loop body entirely.
@@ -579,11 +662,13 @@ def main():
     for d in train_data:
         summary_rows.append(run_analysis_for_config(
             d, 'train', hole, args.sigma, args.amplitude, args.mesh_n,
-            X, Y, layout, router, args.tag, plots_dir, timing_dir))
+            X, Y, layout, router, args.beta,
+            args.tag, plots_dir, timing_dir))
     for d in test_data:
         summary_rows.append(run_analysis_for_config(
             d, 'test', hole, args.sigma, args.amplitude, args.mesh_n,
-            X, Y, layout, router, args.tag, plots_dir, timing_dir))
+            X, Y, layout, router, args.beta,
+            args.tag, plots_dir, timing_dir))
 
     # Summary CSV + Markdown + JSON
     print(f"\n[5/5] Writing summary")
