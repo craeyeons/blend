@@ -16,6 +16,9 @@
     {"name": "ood_k_between", "k": 8.6394,  "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_between.weights.h5"},
     {"name": "ood_pt_out",    "k": 9.4248,  "x_s": 0.900, "y_s": 0.900, "pinn_path": "./models/pinn_helmholtz_ood_pt_out.weights.h5"},
     {"name": "ood_k_above",   "k": 12.5664, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_above.weights.h5"},
-    {"name": "ood_far",       "k": 9.4248,  "x_s": 0.300, "y_s": 0.300, "pinn_path": "./models/pinn_helmholtz_ood_far.weights.h5"}
+    {"name": "ood_far",       "k": 9.4248,  "x_s": 0.300, "y_s": 0.300, "pinn_path": "./models/pinn_helmholtz_ood_far.weights.h5"},
+
+    {"name": "wrongpinn_shifted_src", "k": 6.2832, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2pi_p2.weights.h5"},
+    {"name": "wrongpinn_shifted_k",   "k": 9.4248, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2pi_p1.weights.h5"}
   ]
 }
