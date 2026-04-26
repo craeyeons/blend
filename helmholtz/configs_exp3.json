@@ -1,24 +1,27 @@
 {
   "train": [
-    {"name": "k2pi_p1",   "k": 6.2832,  "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2pi_p1.weights.h5"},
-    {"name": "k2pi_p2",   "k": 6.2832,  "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k2pi_p2.weights.h5"},
-
-    {"name": "k2p5pi_p1", "k": 7.8540,  "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2p5pi_p1.weights.h5"},
-    {"name": "k2p5pi_p2", "k": 7.8540,  "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k2p5pi_p2.weights.h5"},
-
     {"name": "k3pi_p1",   "k": 9.4248,  "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3pi_p1.weights.h5"},
     {"name": "k3pi_p2",   "k": 9.4248,  "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k3pi_p2.weights.h5"},
+    {"name": "k3pi_p3",   "k": 9.4248,  "x_s": 0.850, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3pi_p3.weights.h5"},
 
     {"name": "k3p5pi_p1", "k": 10.9956, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3p5pi_p1.weights.h5"},
-    {"name": "k3p5pi_p2", "k": 10.9956, "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k3p5pi_p2.weights.h5"}
+    {"name": "k3p5pi_p2", "k": 10.9956, "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k3p5pi_p2.weights.h5"},
+    {"name": "k3p5pi_p3", "k": 10.9956, "x_s": 0.850, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3p5pi_p3.weights.h5"},
+
+    {"name": "k4pi_p1",   "k": 12.5664, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k4pi_p1.weights.h5"},
+    {"name": "k4pi_p2",   "k": 12.5664, "x_s": 0.850, "y_s": 0.850, "pinn_path": "./models/pinn_helmholtz_k4pi_p2.weights.h5"},
+    {"name": "k4pi_p3",   "k": 12.5664, "x_s": 0.850, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k4pi_p3.weights.h5"}
   ],
   "test": [
-    {"name": "ood_k_between", "k": 8.6394,  "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_between.weights.h5"},
-    {"name": "ood_pt_out",    "k": 9.4248,  "x_s": 0.900, "y_s": 0.900, "pinn_path": "./models/pinn_helmholtz_ood_pt_out.weights.h5"},
-    {"name": "ood_k_above",   "k": 12.5664, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_above.weights.h5"},
-    {"name": "ood_far",       "k": 9.4248,  "x_s": 0.300, "y_s": 0.300, "pinn_path": "./models/pinn_helmholtz_ood_far.weights.h5"},
+    {"name": "ood_k_between",   "k": 11.7810, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_between.weights.h5"},
+    {"name": "ood_k_far_above", "k": 14.7655, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_far_above.weights.h5"},
+    {"name": "ood_pt_out",      "k": 10.9956, "x_s": 0.900, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_ood_pt_out.weights.h5"},
+    {"name": "ood_far",         "k": 10.9956, "x_s": 0.300, "y_s": 0.300, "pinn_path": "./models/pinn_helmholtz_ood_far.weights.h5"},
 
-    {"name": "wrongpinn_shifted_src", "k": 6.2832, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2pi_p2.weights.h5"},
-    {"name": "wrongpinn_shifted_k",   "k": 9.4248, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k2pi_p1.weights.h5"}
+    {"name": "wrongpinn_shifted_src",  "k": 9.4248,  "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3pi_p2.weights.h5"},
+    {"name": "wrongpinn_shifted_k",    "k": 12.5664, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3pi_p1.weights.h5"},
+    {"name": "wrongpinn_shifted_hole", "k": 9.4248,  "x_s": 0.700, "y_s": 0.700,
+                                       "pinn_path": "./models/pinn_helmholtz_wrongpinn_shifted_hole.weights.h5",
+                                       "hole_center_x": 0.6, "hole_center_y": 0.6, "hole_radius": 0.15}
   ]
 }

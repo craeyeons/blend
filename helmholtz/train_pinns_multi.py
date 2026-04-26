@@ -91,13 +91,17 @@ def main():
             print(f"  skip: weights exist at {pinn_path}")
             continue
 
+        # Allow per-entry hole override (used for wrongpinn_shifted_hole).
+        hole_cx = float(entry.get('hole_center_x', args.hole_center_x))
+        hole_cy = float(entry.get('hole_center_y', args.hole_center_y))
+        hole_r = float(entry.get('hole_radius', args.hole_radius))
         cmd = [
             sys.executable, 'train_pinn.py',
             '--k', f'{k:.10f}',
             '--domain', 'square_hole',
-            '--hole-center-x', f'{args.hole_center_x}',
-            '--hole-center-y', f'{args.hole_center_y}',
-            '--hole-radius', f'{args.hole_radius}',
+            '--hole-center-x', f'{hole_cx}',
+            '--hole-center-y', f'{hole_cy}',
+            '--hole-radius', f'{hole_r}',
             '--source', 'gaussian',
             '--x-s', f'{xs:.10f}',
             '--y-s', f'{ys:.10f}',
