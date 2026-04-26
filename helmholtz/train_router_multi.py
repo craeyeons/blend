@@ -363,35 +363,34 @@ def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
 
 def _optimal_threshold_from_training_loss(logits, target_R, layout, beta):
     """Pick the hard-decision threshold that minimizes the router's own
-    training objective:
+    training objective at hard 0/1 decisions:
 
-        L(thr) = beta * P(reject) + mean(R[accept])
-               = beta * mean(s >= thr) + mean(R * (s < thr)) / mean(s < thr)
+        L(thr) = beta * P(reject) + sum_solid(R * I[accept]) / N_solid
+               = beta * (n_reject / N_solid) + cum_R[n_accept] / N_solid
+
+    This matches the softplus loss the router was trained against (sum over
+    solid cells, divided by N_solid — NOT mean over accepted only). It also
+    matches `_plot_loss_vs_coverage` so the picker's optimum and the
+    loss-curve plot's star coincide.
 
     Evaluated on solid cells only. R is the median-normalized |r|+ete the
     router was trained against. No FEM ground truth involved."""
     solid = layout > 0
     s = logits[solid]
     R = target_R[solid]
-    # Candidate thresholds: every unique logit value (and one above max).
-    cand = np.unique(s)
-    # Sort once for vectorized evaluation.
     order = np.argsort(s)
     s_sorted = s[order]; R_sorted = R[order]
     n = len(s_sorted)
-    # For threshold thr: reject mask = (s >= thr).
-    # As thr sweeps from min->max, the accept set grows.
-    # Use sorted s; for each candidate thr, accept_count = searchsorted(thr).
     cum_R = np.concatenate([[0.0], np.cumsum(R_sorted)])
+    cand = np.unique(s_sorted)
+    cand = np.concatenate([[s_sorted[0] - 1e-6], cand, [s_sorted[-1] + 1e-6]])
+    cand = np.unique(cand)
+
     best = (None, np.inf, None)  # (thr, loss, accept_count)
     for thr in cand:
         accept_count = int(np.searchsorted(s_sorted, thr, side='left'))
         reject_count = n - accept_count
-        if accept_count == 0:
-            mean_R_accept = 0.0
-        else:
-            mean_R_accept = float(cum_R[accept_count] / accept_count)
-        loss = beta * (reject_count / n) + mean_R_accept
+        loss = beta * (reject_count / n) + (cum_R[accept_count] / n)
         if loss < best[1]:
             best = (float(thr), float(loss), accept_count)
     thr, loss, accept_count = best
