@@ -256,6 +256,87 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
     plt.close(fig)
 
 
+def _plot_loss_vs_coverage(logits, target_R, layout, beta, title, out_path):
+    """Mirror of exp2's `loss_vs_coverage_<tag>.png`.
+
+    Sweeps the router's decision-loss
+        L(thr) = beta * P(reject) + mean(target_R | accept-on-solid)
+    over every unique logit, plots L vs FEM coverage with all-PINN /
+    all-FEM endpoints + optimal star, plus a bar breakdown of the loss
+    components at the optimum.
+    """
+    solid = layout > 0
+    s = logits[solid]
+    R = target_R[solid]
+    order = np.argsort(s)
+    s_sorted = s[order]; R_sorted = R[order]
+    n = len(s_sorted)
+    cum_R = np.concatenate([[0.0], np.cumsum(R_sorted)])
+
+    cand = np.unique(s_sorted)
+    cand = np.concatenate([[s_sorted[0] - 1e-6], cand, [s_sorted[-1] + 1e-6]])
+    cand = np.unique(cand)
+
+    cov = np.empty_like(cand)
+    rej_cost = np.empty_like(cand)
+    acc_cost = np.empty_like(cand)
+    for i, thr in enumerate(cand):
+        accept_count = int(np.searchsorted(s_sorted, thr, side='left'))
+        reject_count = n - accept_count
+        cov[i] = reject_count / n
+        rej_cost[i] = beta * (reject_count / n)
+        # exp2 uses sum/N for the residual term (mean over ALL solid cells,
+        # zeroed where rejected); match that to keep curves comparable.
+        acc_cost[i] = float(cum_R[accept_count] / n)
+    total = rej_cost + acc_cost
+    cov_pct = cov * 100.0
+
+    all_pinn = float(R.mean())   # cov=0 → loss = mean(R)
+    all_fem = float(beta)        # cov=100% → loss = beta
+    i_opt = int(np.argmin(total))
+    opt_cov = float(cov_pct[i_opt])
+    opt_loss = float(total[i_opt])
+    opt_rej = float(rej_cost[i_opt])
+    opt_acc = float(acc_cost[i_opt])
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(16, 6))
+
+    axL.plot(cov_pct, total, color='royalblue', lw=2, label='Loss curve')
+    axL.scatter([0.0], [all_pinn], color='purple', s=80, zorder=5)
+    axL.scatter([100.0], [all_fem], color='teal', s=80, zorder=5)
+    axL.axhline(all_pinn, ls='--', color='purple', alpha=0.6,
+                label=f'All PINN: {all_pinn:.3f}')
+    axL.axhline(all_fem, ls='--', color='teal', alpha=0.6,
+                label=f'All FEM: {all_fem:.3f}')
+    axL.scatter([opt_cov], [opt_loss], color='green', s=260, marker='*',
+                edgecolor='darkgreen', zorder=6,
+                label=f'Opt: {opt_cov:.1f}%  L={opt_loss:.3f}')
+    axL.annotate(f'All PINN\n{all_pinn:.3f}', (0, all_pinn),
+                 xytext=(5, 8), textcoords='offset points', color='purple')
+    axL.annotate(f'All FEM\n{all_fem:.3f}', (100, all_fem),
+                 xytext=(-80, 8), textcoords='offset points', color='teal')
+    axL.set_xlabel('Coverage (% solved by FEM)')
+    axL.set_ylabel('Training loss  (decision version)')
+    axL.set_title(f'Training loss vs coverage  (β = {beta})')
+    axL.grid(True, alpha=0.3); axL.legend()
+
+    bars = axR.bar(['FEM cost\n(β · cov)', 'Residual cost', 'TOTAL'],
+                   [opt_rej, opt_acc, opt_loss],
+                   color=['steelblue', 'darkorange', 'forestgreen'],
+                   edgecolor='black')
+    for b, v in zip(bars, [opt_rej, opt_acc, opt_loss]):
+        axR.text(b.get_x() + b.get_width() / 2, v + 0.01,
+                 f'{v:.4f}', ha='center', va='bottom', fontweight='bold')
+    axR.set_ylabel('Loss value')
+    axR.set_title(f'Loss breakdown at optimum ({opt_cov:.1f}% FEM)')
+    axR.grid(True, axis='y', alpha=0.3)
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
 def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
     cov = np.array([s['actual_coverage_pct'] for s in sweep])
     err = np.array([s['rmse_vs_fem'] for s in sweep])
@@ -455,6 +536,9 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     _plot_rmse_vs_coverage(sweep, pinn_rmse, title,
                            os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'),
                            best=best)
+    _plot_loss_vs_coverage(logits, target_R, layout, float(beta),
+                           f'Router decision loss vs coverage — {title}',
+                           os.path.join(plots_dir, f'loss_vs_coverage_{tag}.png'))
 
     # Save sweep + reference arrays
     with open(os.path.join(timing_dir, f'sweep_{tag}.json'), 'w') as fp:
