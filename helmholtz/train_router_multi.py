@@ -95,7 +95,14 @@ def _load_scalar_pinn(pinn_path, k, history_dir='./history'):
 def _pinn_on_grid(pinn, X, Y, layout):
     xy = np.stack([X.ravel(), Y.ravel()], axis=-1).astype(np.float32)
     u = pinn.predict(xy, batch_size=len(xy), verbose=0)
-    return u.reshape(X.shape).astype(np.float32) * layout
+    u_raw = u.reshape(X.shape).astype(np.float32)
+    return u_raw * layout, u_raw
+
+
+def _layout_from_hole(X, Y, hole):
+    cx, cy, r = hole
+    inside = (X - cx) ** 2 + (Y - cy) ** 2 <= r ** 2
+    return (~inside).astype(np.float32)
 
 
 def prepare_config(entry, X, Y, layout, sigma, amplitude, history_dir):
@@ -106,9 +113,31 @@ def prepare_config(entry, X, Y, layout, sigma, amplitude, history_dir):
 
     pinn = _load_scalar_pinn(entry['pinn_path'], k, history_dir=history_dir)
 
+    # Load PINN's training meta (used by solution plot to mark the PINN's
+    # trained source / hole when they differ from the test config — e.g.,
+    # wrongpinn_* entries).
+    mpath = _meta_path(history_dir, entry['pinn_path'])
+    pinn_meta = None
+    if os.path.exists(mpath):
+        with open(mpath) as fp:
+            pinn_meta = json.load(fp)
+
     f_grid = gaussian_source(X, Y, x_s=xs, y_s=ys,
                              sigma=sigma, amplitude=amplitude)
-    pinn_u = _pinn_on_grid(pinn, X, Y, layout)
+    pinn_u, pinn_u_raw = _pinn_on_grid(pinn, X, Y, layout)
+
+    # If the PINN was trained on a different hole than the actual eval
+    # geometry, build the PINN's training-time layout so the solution plot
+    # can mask the PINN panel at the *PINN's* hole (revealing predictions
+    # in the actual-hole region, where the PINN sees no hole).
+    pinn_layout = None
+    if (pinn_meta and 'hole_center_x' in pinn_meta):
+        pinn_hole = (float(pinn_meta['hole_center_x']),
+                     float(pinn_meta['hole_center_y']),
+                     float(pinn_meta['hole_radius']))
+        cand = _layout_from_hole(X, Y, pinn_hole)
+        if not np.array_equal(cand, layout):
+            pinn_layout = cand
 
     rcomp = HelmholtzResidualComputer(pinn, k)
     signed_r = rcomp.compute_signed_residual(X, Y, f_grid) * layout
@@ -121,7 +150,8 @@ def prepare_config(entry, X, Y, layout, sigma, amplitude, history_dir):
 
     return {
         'name': name, 'k': k, 'x_s': xs, 'y_s': ys,
-        'pinn': pinn,
+        'pinn': pinn, 'pinn_meta': pinn_meta,
+        'pinn_u_raw': pinn_u_raw, 'pinn_layout': pinn_layout,
         'f_grid': f_grid, 'pinn_u': pinn_u,
         'signed_r': signed_r, 'residual': residual, 'ete': ete,
         'inputs': tf.constant(inputs, dtype=tf.float32),
@@ -216,11 +246,37 @@ def _plot_coverage_grid(logits, X, Y, layout, hole, title, out_path):
 
 
 def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
-                   title, out_path):
+                   title, out_path,
+                   test_src=None, pinn_src=None,
+                   test_hole=None, pinn_hole=None,
+                   pinn_layout=None, pinn_u_raw=None):
+    """Solution + error grid.
+
+    test_src: (xs, ys) of the test config — true forcing peak (drawn on
+        every panel as a cyan ●).
+    pinn_src: (xs, ys) the PINN was trained at — drawn as a magenta ✕ on
+        the PINN/Hybrid panels iff different from test_src (wrongpinn_*).
+    test_hole: (cx, cy, r) of the actual hole at eval time. Drawn as a
+        cyan dashed circle (informational; the hole itself is already
+        masked NaN).
+    pinn_hole: (cx, cy, r) the PINN was trained against. Drawn as a
+        magenta dashed circle iff different from test_hole.
+    """
     mask = layout > 0
     def _m(a): return np.where(mask, a, np.nan)
+    # PINN panel uses its training-time layout if supplied; that reveals
+    # PINN predictions in the actual-hole region and masks them at the
+    # PINN's training hole instead.
+    if pinn_layout is not None and pinn_u_raw is not None:
+        pinn_mask = pinn_layout > 0
+        def _mp(a): return np.where(pinn_mask, a, np.nan)
+        pinn_disp = _mp(pinn_u_raw)
+        err_pinn_disp = _mp(pinn_u_raw - u_fem)
+    else:
+        pinn_disp = _m(pinn_u)
+        err_pinn_disp = _m(pinn_u - u_fem)
     u_vmax = float(np.nanmax(np.abs(_m(u_fem)))) + 1e-30
-    err_pinn = _m(pinn_u - u_fem); err_hyb = _m(u_hybrid - u_fem)
+    err_pinn = err_pinn_disp; err_hyb = _m(u_hybrid - u_fem)
     e_vmax = float(max(np.nanmax(np.abs(err_pinn)),
                        np.nanmax(np.abs(err_hyb)))) + 1e-30
     reject_field = ((~accept_mask.astype(bool)) & mask).astype(np.float32)
@@ -231,8 +287,40 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
         ax.contour(X, Y, reject_field, levels=[0.5],
                    colors='lime', linewidths=1.2)
 
+    src_diff = (pinn_src is not None and test_src is not None
+                and (abs(pinn_src[0] - test_src[0]) > 1e-6
+                     or abs(pinn_src[1] - test_src[1]) > 1e-6))
+    hole_diff = (pinn_hole is not None and test_hole is not None
+                 and (abs(pinn_hole[0] - test_hole[0]) > 1e-6
+                      or abs(pinn_hole[1] - test_hole[1]) > 1e-6
+                      or abs(pinn_hole[2] - test_hole[2]) > 1e-6))
+
+    def _annotate(ax, is_pinn_panel):
+        # Test source — cyan dot (truth's forcing peak).
+        if test_src is not None:
+            ax.plot(test_src[0], test_src[1], 'o',
+                    markerfacecolor='cyan', markeredgecolor='black',
+                    markersize=10, zorder=6,
+                    label='test src' if not _annotate.legend_added else None)
+        # PINN training source — magenta X (only if different and only on
+        # PINN-related panels).
+        if is_pinn_panel and src_diff:
+            ax.plot(pinn_src[0], pinn_src[1], 'X',
+                    markerfacecolor='magenta', markeredgecolor='black',
+                    markersize=12, zorder=6,
+                    label='PINN trained src' if not _annotate.legend_added else None)
+        # PINN training hole — magenta dashed circle on PINN panels.
+        if is_pinn_panel and hole_diff:
+            from matplotlib.patches import Circle
+            c = Circle((pinn_hole[0], pinn_hole[1]), pinn_hole[2],
+                       fill=False, edgecolor='magenta', linestyle='--',
+                       linewidth=1.5, zorder=5,
+                       label='PINN trained hole' if not _annotate.legend_added else None)
+            ax.add_patch(c)
+    _annotate.legend_added = False
+
     fig, axes = plt.subplots(2, 3, figsize=(18, 11))
-    row0 = [_m(pinn_u), _m(u_hybrid), _m(u_fem)]
+    row0 = [pinn_disp, _m(u_hybrid), _m(u_fem)]
     ttl0 = ['PINN  u', 'Hybrid  u (shaded=FEM)', 'FEM  u']
     for j in range(3):
         ax = axes[0, j]
@@ -240,7 +328,9 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
                            vmin=-u_vmax, vmax=u_vmax, shading='auto')
         if j == 1: _shade(ax)
         ax.set_aspect('equal'); ax.set_title(ttl0[j])
+        _annotate(ax, is_pinn_panel=(j in (0, 1)))
         plt.colorbar(im, ax=ax, fraction=0.046)
+    _annotate.legend_added = True   # only draw legend handles once
     row1 = [err_pinn, err_hyb, _m(np.zeros_like(u_fem))]
     ttl1 = ['PINN − FEM', 'Hybrid − FEM', 'FEM − FEM']
     for j in range(3):
@@ -249,7 +339,14 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
                            vmin=-e_vmax, vmax=e_vmax, shading='auto')
         if j == 1: _shade(ax)
         ax.set_aspect('equal'); ax.set_title(ttl1[j])
+        _annotate(ax, is_pinn_panel=(j in (0, 1)))
         plt.colorbar(im, ax=ax, fraction=0.046)
+    if src_diff or hole_diff or test_src is not None:
+        # Pull legend from the first PINN panel (it has the most handles).
+        h, l = axes[0, 0].get_legend_handles_labels()
+        if h:
+            fig.legend(h, l, loc='lower center', ncol=len(l),
+                       bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
@@ -527,11 +624,22 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     _plot_coverage_grid(logits, X, Y, layout, hole,
                         f'Coverage deciles — {title}',
                         os.path.join(plots_dir, f'coverage_grid_{tag}.png'))
+    pmeta = cfg_data.get('pinn_meta')
+    pinn_src = (float(pmeta['x_s']), float(pmeta['y_s'])) if pmeta else None
+    pinn_hole = (
+        (float(pmeta['hole_center_x']), float(pmeta['hole_center_y']),
+         float(pmeta['hole_radius']))
+        if pmeta and 'hole_center_x' in pmeta else None
+    )
     _plot_solution(X, Y, layout, pinn_u, res_best['u_grid'], u_fem,
                    res_best['accept_mask'],
                    f'{title}  |  cov={best["actual_coverage_pct"]:.1f}%  '
                    f'PINN={pinn_rmse:.2e}  Hybrid={best["rmse_vs_fem"]:.2e}',
-                   os.path.join(plots_dir, f'solution_{tag}.png'))
+                   os.path.join(plots_dir, f'solution_{tag}.png'),
+                   test_src=(xs, ys), pinn_src=pinn_src,
+                   test_hole=hole, pinn_hole=pinn_hole,
+                   pinn_layout=cfg_data.get('pinn_layout'),
+                   pinn_u_raw=cfg_data.get('pinn_u_raw'))
     _plot_rmse_vs_coverage(sweep, pinn_rmse, title,
                            os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'),
                            best=best)
