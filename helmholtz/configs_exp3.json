@@ -14,13 +14,13 @@
   ],
   "test": [
     {"name": "ood_k_below",   "k": 6.2832,  "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_below.weights.h5"},
-    {"name": "ood_k_between", "k": 10.6814, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_between.weights.h5"},
+    {"name": "ood_k_between", "k": 11.9381, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_between.weights.h5"},
     {"name": "ood_k_above",   "k": 14.7655, "x_s": 0.775, "y_s": 0.775, "pinn_path": "./models/pinn_helmholtz_ood_k_above.weights.h5"},
 
     {"name": "wrongpinn_shifted_src",  "k": 9.4248,  "x_s": 0.750, "y_s": 0.750, "pinn_path": "./models/pinn_helmholtz_k3pi_p1.weights.h5"},
     {"name": "wrongpinn_shifted_k",    "k": 10.0531, "x_s": 0.700, "y_s": 0.700, "pinn_path": "./models/pinn_helmholtz_k3pi_p1.weights.h5"},
     {"name": "wrongpinn_shifted_hole", "k": 9.4248,  "x_s": 0.700, "y_s": 0.700,
-                                       "pinn_path": "./models/pinn_helmholtz_wrongpinn_shifted_hole.weights.h5",
+                                       "pinn_path": "./models/pinn_helmholtz_k3pi_p1.weights.h5",
                                        "hole_center_x": 0.55, "hole_center_y": 0.55, "hole_radius": 0.15}
   ]
 }

@@ -105,53 +105,76 @@ def _layout_from_hole(X, Y, hole):
     return (~inside).astype(np.float32)
 
 
-def prepare_config(entry, X, Y, layout, sigma, amplitude, history_dir):
-    """Build per-config router inputs + training target + ancillary fields."""
+def prepare_config(entry, X, Y, layout, hole, sigma, amplitude, history_dir):
+    """Build per-config router inputs + training target + ancillary fields.
+
+    `hole` is the global default hole. If the entry has its own
+    `hole_center_x/y/radius`, those define the *test* problem's geometry
+    (FEM, hybrid, router input layout, plot mask all switch to it). The
+    PINN's training hole is read separately from its meta and used only
+    for the ghost-hole annotation on the PINN panel.
+    """
     name = entry['name']
     k = float(entry['k']); xs = float(entry['x_s']); ys = float(entry['y_s'])
     print(f"  preparing {name}  k={k:.4f}  x_s={xs:.3f}  y_s={ys:.3f}")
 
     pinn = _load_scalar_pinn(entry['pinn_path'], k, history_dir=history_dir)
 
-    # Load PINN's training meta (used by solution plot to mark the PINN's
-    # trained source / hole when they differ from the test config — e.g.,
-    # wrongpinn_* entries).
+    # Load PINN's training meta — used to know which hole the PINN
+    # "expected", for the ghost-hole annotation on the PINN panel.
     mpath = _meta_path(history_dir, entry['pinn_path'])
     pinn_meta = None
     if os.path.exists(mpath):
         with open(mpath) as fp:
             pinn_meta = json.load(fp)
 
+    # Per-entry test hole override → drives FEM, hybrid, router input,
+    # mask. If the entry has no override, fall back to the global hole.
+    test_hole = hole
+    test_layout = layout
+    if 'hole_center_x' in entry:
+        test_hole = (float(entry['hole_center_x']),
+                     float(entry['hole_center_y']),
+                     float(entry['hole_radius']))
+        cand = _layout_from_hole(X, Y, test_hole)
+        if not np.array_equal(cand, layout):
+            test_layout = cand
+            print(f"    test geometry override: hole at "
+                  f"({test_hole[0]:.3f}, {test_hole[1]:.3f}, "
+                  f"r={test_hole[2]:.3f})")
+
     f_grid = gaussian_source(X, Y, x_s=xs, y_s=ys,
                              sigma=sigma, amplitude=amplitude)
-    pinn_u, pinn_u_raw = _pinn_on_grid(pinn, X, Y, layout)
+    pinn_u, pinn_u_raw = _pinn_on_grid(pinn, X, Y, test_layout)
 
-    # If the PINN was trained on a different hole than the actual eval
-    # geometry, build the PINN's training-time layout so the solution plot
-    # can mask the PINN panel at the *PINN's* hole (revealing predictions
-    # in the actual-hole region, where the PINN sees no hole).
+    # If the PINN was trained on a different hole than the test geometry,
+    # build the PINN's training-time layout for the ghost-hole annotation.
     pinn_layout = None
+    pinn_hole = None
     if (pinn_meta and 'hole_center_x' in pinn_meta):
         pinn_hole = (float(pinn_meta['hole_center_x']),
                      float(pinn_meta['hole_center_y']),
                      float(pinn_meta['hole_radius']))
         cand = _layout_from_hole(X, Y, pinn_hole)
-        if not np.array_equal(cand, layout):
+        if not np.array_equal(cand, test_layout):
             pinn_layout = cand
 
     rcomp = HelmholtzResidualComputer(pinn, k)
-    signed_r = rcomp.compute_signed_residual(X, Y, f_grid) * layout
+    signed_r = rcomp.compute_signed_residual(X, Y, f_grid) * test_layout
     residual = np.abs(signed_r)
-    ete = compute_ete_fft(signed_r, k, layout=layout)
+    ete = compute_ete_fft(signed_r, k, layout=test_layout)
 
-    inputs = create_router_input(layout, f_grid, pinn_u, residual, ete=ete)
+    inputs = create_router_input(test_layout, f_grid, pinn_u, residual,
+                                 ete=ete)
     # R = normalize(|r| + e) — each already nonneg; median-normalize the sum.
-    target_R = median_normalize(residual + ete, layout).astype(np.float32)
+    target_R = median_normalize(residual + ete, test_layout).astype(np.float32)
 
     return {
         'name': name, 'k': k, 'x_s': xs, 'y_s': ys,
         'pinn': pinn, 'pinn_meta': pinn_meta,
         'pinn_u_raw': pinn_u_raw, 'pinn_layout': pinn_layout,
+        'pinn_hole': pinn_hole,
+        'test_hole': test_hole, 'test_layout': test_layout,
         'f_grid': f_grid, 'pinn_u': pinn_u,
         'signed_r': signed_r, 'residual': residual, 'ete': ete,
         'inputs': tf.constant(inputs, dtype=tf.float32),
@@ -504,7 +527,16 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     title = f'{name} ({split.upper()})  k={k:.3f}  x_s={xs:.3f}  y_s={ys:.3f}'
     print(f"\n--- analyze {split}:{name} ---")
 
-    cx, cy, rh = hole
+    # If the entry overrode the hole (e.g. wrongpinn_shifted_hole), the FEM
+    # solver, hybrid, router input, and plot mask all switch to the per-
+    # entry geometry — that's what the test problem is actually about.
+    test_hole = cfg_data.get('test_hole', hole)
+    test_layout = cfg_data.get('test_layout', layout)
+    if test_hole != hole:
+        print(f"  using per-entry test hole: ({test_hole[0]:.3f}, "
+              f"{test_hole[1]:.3f}, r={test_hole[2]:.3f})")
+
+    cx, cy, rh = test_hole
     def dirichlet_pred(x, y):
         return (x - cx) ** 2 + (y - cy) ** 2 <= rh ** 2
     def f_callable(x, y, xs_=xs, ys_=ys):
@@ -539,7 +571,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     # Coverage sweep
     sweep = []
     for cov in COVERAGE_DECILES:
-        thr = threshold_for_coverage(logits, layout, float(cov))
+        thr = threshold_for_coverage(logits, test_layout, float(cov))
         if cov <= 0.0:
             sweep.append({'target_coverage': 0.0, 'threshold': float(thr),
                           'actual_coverage_pct': 0.0,
@@ -557,7 +589,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
         t0 = time.perf_counter()
         res = solve_hybrid_schwarz(
             solver, cfg_data['pinn'], router, f_callable, g_callable,
-            X, Y, layout, cfg_data['f_grid'], cfg_data['pinn_u'],
+            X, Y, test_layout, cfg_data['f_grid'], cfg_data['pinn_u'],
             cfg_data['residual'], ete_grid=cfg_data['ete'],
             threshold=float(thr), reuse_logits=logits)
         wall = time.perf_counter() - t0
@@ -577,7 +609,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     target_R = cfg_data['target'].numpy() if hasattr(cfg_data['target'], 'numpy') \
         else np.asarray(cfg_data['target'])
     opt_thr, opt_cov_pct, opt_loss = _optimal_threshold_from_training_loss(
-        logits, target_R, layout, float(beta))
+        logits, target_R, test_layout, float(beta))
     print(f"  optimal threshold (training-loss picker): "
           f"thr={opt_thr:.4f}  cov={opt_cov_pct:.1f}%  loss={opt_loss:.4f}")
 
@@ -585,7 +617,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     if opt_cov_pct >= 99.5:
         # Degenerate: router rejects everything → fall back to full FEM.
         res_best = {'u_grid': u_fem,
-                    'accept_mask': np.zeros_like(layout, dtype=np.int32),
+                    'accept_mask': np.zeros_like(test_layout, dtype=np.int32),
                     'coverage_pct': 100.0,
                     'n_accepted_dofs': 0}
         opt_wall = float(fem_mean)
@@ -593,7 +625,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     elif opt_cov_pct <= 0.5:
         # Degenerate: router accepts everything → pure PINN.
         res_best = {'u_grid': pinn_u,
-                    'accept_mask': (layout > 0).astype(np.int32),
+                    'accept_mask': (test_layout > 0).astype(np.int32),
                     'coverage_pct': 0.0,
                     'n_accepted_dofs': 0}
         opt_wall = 0.0
@@ -602,7 +634,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
         t0 = time.perf_counter()
         res_best = solve_hybrid_schwarz(
             solver, cfg_data['pinn'], router, f_callable, g_callable,
-            X, Y, layout, cfg_data['f_grid'], cfg_data['pinn_u'],
+            X, Y, test_layout, cfg_data['f_grid'], cfg_data['pinn_u'],
             cfg_data['residual'], ete_grid=cfg_data['ete'],
             threshold=float(opt_thr), reuse_logits=logits)
         opt_wall = time.perf_counter() - t0
@@ -618,32 +650,28 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
             'picker': 'training_loss'}
 
     # Plots
-    _plot_router_output(logits, X, Y, layout, hole,
+    _plot_router_output(logits, X, Y, test_layout, test_hole,
                         f'Router logits — {title}',
                         os.path.join(plots_dir, f'router_{tag}.png'))
-    _plot_coverage_grid(logits, X, Y, layout, hole,
+    _plot_coverage_grid(logits, X, Y, test_layout, test_hole,
                         f'Coverage deciles — {title}',
                         os.path.join(plots_dir, f'coverage_grid_{tag}.png'))
     pmeta = cfg_data.get('pinn_meta')
     pinn_src = (float(pmeta['x_s']), float(pmeta['y_s'])) if pmeta else None
-    pinn_hole = (
-        (float(pmeta['hole_center_x']), float(pmeta['hole_center_y']),
-         float(pmeta['hole_radius']))
-        if pmeta and 'hole_center_x' in pmeta else None
-    )
-    _plot_solution(X, Y, layout, pinn_u, res_best['u_grid'], u_fem,
+    pinn_hole = cfg_data.get('pinn_hole')
+    _plot_solution(X, Y, test_layout, pinn_u, res_best['u_grid'], u_fem,
                    res_best['accept_mask'],
                    f'{title}  |  cov={best["actual_coverage_pct"]:.1f}%  '
                    f'PINN={pinn_rmse:.2e}  Hybrid={best["rmse_vs_fem"]:.2e}',
                    os.path.join(plots_dir, f'solution_{tag}.png'),
                    test_src=(xs, ys), pinn_src=pinn_src,
-                   test_hole=hole, pinn_hole=pinn_hole,
+                   test_hole=test_hole, pinn_hole=pinn_hole,
                    pinn_layout=cfg_data.get('pinn_layout'),
                    pinn_u_raw=cfg_data.get('pinn_u_raw'))
     _plot_rmse_vs_coverage(sweep, pinn_rmse, title,
                            os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'),
                            best=best)
-    _plot_loss_vs_coverage(logits, target_R, layout, float(beta),
+    _plot_loss_vs_coverage(logits, target_R, test_layout, float(beta),
                            f'Router decision loss vs coverage — {title}',
                            os.path.join(plots_dir, f'loss_vs_coverage_{tag}.png'))
 
@@ -656,7 +684,7 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
                    'best_hybrid': best,
                    'coverage_sweep': sweep}, fp, indent=2)
     np.savez(os.path.join(timing_dir, f'reference_{tag}.npz'),
-             X=X, Y=Y, layout=layout, u_fem=u_fem, pinn_u=pinn_u,
+             X=X, Y=Y, layout=test_layout, u_fem=u_fem, pinn_u=pinn_u,
              residual=cfg_data['residual'], ete=cfg_data['ete'],
              f_grid=cfg_data['f_grid'], logits=logits)
 
@@ -727,7 +755,7 @@ def main():
           f"{len(test_entries)} test configs")
     train_data = []
     for e in train_entries:
-        train_data.append(prepare_config(e, X, Y, layout,
+        train_data.append(prepare_config(e, X, Y, layout, hole,
                                          args.sigma, args.amplitude,
                                          args.history_dir))
     test_data = []
@@ -735,7 +763,7 @@ def main():
         if not os.path.exists(e['pinn_path']):
             print(f"  SKIP test {e['name']}: no weights at {e['pinn_path']}")
             continue
-        test_data.append(prepare_config(e, X, Y, layout,
+        test_data.append(prepare_config(e, X, Y, layout, hole,
                                         args.sigma, args.amplitude,
                                         args.history_dir))
 
