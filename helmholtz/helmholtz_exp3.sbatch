@@ -33,10 +33,11 @@ import skfem; print('scikit-fem:', skfem.__version__)
 "
 
 # ============================================================
-# Exp 3: N independent single-case Helmholtz PINNs (Exp 2 recipe,
-# one per train config) + ONE shared router trained across all of
-# them, evaluated on held-out OOD configs (each with its own
-# pre-trained PINN). Mirrors the CFD multi-cylinder setup.
+# Exp 3: 2D Poisson with circular hole. N independent single-case
+# PINNs (one per source position) + ONE shared router trained
+# across all of them, evaluated on held-out OOD configs (each
+# with its own pre-trained PINN). Same code path as Helmholtz
+# but with k=0; the directory name is historical.
 # ============================================================
 CONFIGS="configs_exp3.json"
 TAG="exp3"
@@ -61,13 +62,13 @@ if [[ "${STAGE}" == "all" || "${STAGE}" == "train" ]]; then
         --configs ${CONFIGS} \
         --also-train-test \
         --skip-existing \
-        --epochs 50000 \
+        --epochs 15000 \
         --lr 3e-4 \
         --n-domain 20000 \
         --n-boundary 4000 \
         --w-bc 100.0 \
         --layers 256 256 256 256 256 \
-        --fourier-m 128 \
+        --fourier-m 64 \
         --sigma 0.05 --amplitude 250.0 \
         --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
         --grad-clip 1.0

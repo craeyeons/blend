@@ -201,11 +201,18 @@ def compute_ete_fft(signed_residual, k, layout=None,
     ky = 2.0 * np.pi * np.fft.fftfreq(Ny, d=Ly / Ny)
     KX, KY = np.meshgrid(kx, ky, indexing='xy')
     sym = KX ** 2 + KY ** 2 - k ** 2
-    eps = eps_frac * (k ** 2 + 1e-10)
+    # Regularizer scales with k² for Helmholtz (avoids singularity on the
+    # resonance ring |ξ|=k). For Poisson (k=0), L = -Δ has only a DC zero,
+    # so use a small floor and zero the DC component below.
+    eps = eps_frac * max(k ** 2, 1.0)
     denom = sym + 1j * eps
 
     r_hat = np.fft.fft2(r)
     e_hat = r_hat / denom
+    # Zero the DC component (a constant offset is unphysical here; for
+    # Poisson with Dirichlet BC, u has zero mean on the boundary by
+    # construction, so killing the DC is the right gauge fix).
+    e_hat[0, 0] = 0.0
     e = np.fft.ifft2(e_hat).real
     out = np.abs(e).astype(np.float32)
     if layout is not None:

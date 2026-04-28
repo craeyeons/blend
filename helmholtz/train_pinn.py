@@ -171,8 +171,14 @@ def main():
     print(f"PINN TRAINING: Helmholtz  k={args.k:.4f}  tag={tag}")
     print("=" * 60)
 
-    fourier_scale = (args.fourier_scale if args.fourier_scale is not None
-                     else args.k / (2.0 * np.pi))
+    # k/(2π) is the right scale for Helmholtz at moderate-to-high k. For
+    # k → 0 (Poisson), the solution is non-oscillatory; a fixed scale ~ 2
+    # captures sharp features (e.g. cusps near the hole edge) without
+    # collapsing to scale=0.
+    if args.fourier_scale is not None:
+        fourier_scale = args.fourier_scale
+    else:
+        fourier_scale = max(args.k / (2.0 * np.pi), 2.0)
     model = build_pinn(num_inputs=2, layers=tuple(args.layers),
                        activation=args.activation,
                        input_range=((0.0, 1.0), (0.0, 1.0)),

@@ -71,17 +71,18 @@ def _load_scalar_pinn(pinn_path, k, history_dir='./history'):
     layers / fourier hyperparams). Falls back to Exp-2 defaults if meta
     is missing."""
     mpath = _meta_path(history_dir, pinn_path)
+    fallback_scale = max(k / (2.0 * np.pi), 2.0)  # safe for Poisson (k=0)
     if os.path.exists(mpath):
         with open(mpath) as f:
             meta = json.load(f)
         layers = tuple(meta.get('layers', DEFAULT_LAYERS))
         fourier_m = int(meta.get('fourier_m', DEFAULT_FOURIER_M))
-        fourier_scale = float(meta.get('fourier_scale', k / (2.0 * np.pi)))
+        fourier_scale = float(meta.get('fourier_scale', fallback_scale))
     else:
-        print(f"  (no meta at {mpath}; using defaults + fourier_scale=k/2pi)")
+        print(f"  (no meta at {mpath}; using defaults + fourier_scale={fallback_scale})")
         layers = tuple(DEFAULT_LAYERS)
         fourier_m = DEFAULT_FOURIER_M
-        fourier_scale = k / (2.0 * np.pi)
+        fourier_scale = fallback_scale
 
     model = build_pinn(num_inputs=2, layers=layers, activation='tanh',
                        input_range=((0.0, 1.0), (0.0, 1.0)),
@@ -524,7 +525,11 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     name = cfg_data['name']
     k = cfg_data['k']; xs = cfg_data['x_s']; ys = cfg_data['y_s']
     tag = f"{tag_prefix}_{split}_{name}"
-    title = f'{name} ({split.upper()})  k={k:.3f}  x_s={xs:.3f}  y_s={ys:.3f}'
+    # Drop k from the title for Poisson (k=0); keep it for Helmholtz.
+    if k > 1e-6:
+        title = f'{name} ({split.upper()})  k={k:.3f}  x_s={xs:.3f}  y_s={ys:.3f}'
+    else:
+        title = f'{name} ({split.upper()})  Poisson  x_s={xs:.3f}  y_s={ys:.3f}'
     print(f"\n--- analyze {split}:{name} ---")
 
     # If the entry overrode the hole (e.g. wrongpinn_shifted_hole), the FEM
