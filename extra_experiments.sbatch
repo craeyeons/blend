@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres="gpu:h100-96:1"
 #SBATCH --mem=32G
-#SBATCH --time=2:00:00
+#SBATCH --time=4:00:00
 #SBATCH --export=NONE
 
 echo "=== Job Info ==="
@@ -77,11 +77,24 @@ cd /home/s/simpsone/blend2 || exit 1
 #   Test geometry: Re=100, (x=0.55, y=0.5, r=0.1)  -- a 0.05 shift
 #       from train config 3 -- router has NOT seen this case.
 #   PINN used: train config 3 checkpoint (trained at x=0.5).
-#   Router: the multi-cylinder router from ./router_output_multi/
+#   Router: freshly retrained on configs_multi_cylinder.json.
 # ============================================================
 echo ""
 echo "=============================================================="
-echo "=== Exp 3: CFD wrong-PINN, trained router, shifted-x test"
+echo "=== Exp 3a: Retrain multi-config router (for wrongpinn eval)"
+echo "=============================================================="
+rm -rf router_output_multi
+python train_router_multi.py \
+    --config configs_multi_cylinder.json \
+    --output-dir ./router_output_multi \
+    --epochs 2000 \
+    --beta 1.1 \
+    --lambda-tv 1.0 \
+    --lr 1e-3
+
+echo ""
+echo "=============================================================="
+echo "=== Exp 3b: CFD wrong-PINN, trained router, shifted-x test"
 echo "=============================================================="
 rm -rf ./metrics_output_wrongpinn_cfd
 python plot_coverage_metrics.py \

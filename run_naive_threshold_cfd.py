@@ -29,6 +29,7 @@ from lib.cylinder_flow import CylinderFlowHybridSimulation
 from lib.router import (
     PINNResidualComputer,
     compute_bc_error_field,
+    create_cylinder_setup,
     solve_error_transport,
 )
 
@@ -68,21 +69,20 @@ def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # 1) Grid + layout (cylinder hole removed from active region).
-    x = np.linspace(args.x_min, args.x_max, args.nx)
-    y = np.linspace(args.y_min, args.y_max, args.ny)
-    X, Y = np.meshgrid(x, y)
-    layout = np.ones_like(X, dtype=np.float32)
-    layout[(X - args.cylinder_x) ** 2 + (Y - args.cylinder_y) ** 2
-           < args.cylinder_radius ** 2] = 0.0
+    # 1) Grid + layout + BC fields (matches plot_coverage_metrics.py).
+    X, Y, layout, bc_mask, bc_u, bc_v, bc_p = create_cylinder_setup(
+        Nx=args.nx, Ny=args.ny,
+        x_domain=(args.x_min, args.x_max),
+        y_domain=(args.y_min, args.y_max),
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        inlet_velocity=args.inlet_velocity,
+    )
 
-    # 2) Load PINN.
+    # 2) Load PINN and evaluate it on the grid.
     print(f'[1/5] Loading PINN from {args.pinn_path} ...')
     pinn_model = tf.keras.models.load_model(args.pinn_path, compile=False)
-
-    u_pinn, v_pinn, p_pinn, bc_mask, bc_u, bc_v, bc_p = load_pinn_solution(
-        pinn_model, X, Y, layout
-    )
+    u_pinn, v_pinn, p_pinn = load_pinn_solution(pinn_model, X, Y, layout)
 
     # 3) Reference CFD (cached or recomputed).
     print('[2/5] Loading / computing reference CFD ...')
