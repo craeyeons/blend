@@ -52,7 +52,8 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
                          f_grid, pinn_u_grid, residual_grid,
                          ete_grid=None,
                          threshold=0.0,
-                         reuse_logits=None):
+                         reuse_logits=None,
+                         apply_morph_opening=True):
     """Run one hybrid solve.
 
     Parameters
@@ -96,8 +97,11 @@ def solve_hybrid_schwarz(solver, pinn_model, router_model,
     # cross absorbs these back into the PINN-accepted region.
     solid = layout > 0
     reject_raw = (logits >= threshold) & solid
-    reject_opened = binary_opening(reject_raw, structure=np.ones((3, 3)),
-                                   iterations=1)
+    if apply_morph_opening:
+        reject_opened = binary_opening(reject_raw, structure=np.ones((3, 3)),
+                                       iterations=1)
+    else:
+        reject_opened = reject_raw
     accept_mask = solid & ~reject_opened
 
     # Map accepted grid cells -> nearest FEM vertex ids.
