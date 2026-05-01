@@ -90,7 +90,7 @@ def main():
         data = np.load(args.cfd_path)
         u_cfd, v_cfd, p_cfd = data['u'], data['v'], data['p']
     else:
-        u_cfd, v_cfd, p_cfd, _ = compute_cfd_solution(args)
+        u_cfd, v_cfd, p_cfd, _, _, _ = compute_cfd_solution(args)
         np.savez(args.save_cfd, u=u_cfd, v=v_cfd, p=p_cfd)
 
     # 4) Residual + ETE -> R(x), median-normalised.

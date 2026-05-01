@@ -20,7 +20,7 @@ import tensorflow as tf
 
 # Repo path so the same imports as train_router_multi.py work.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.fem_solvers import HelmholtzSolver
+from lib.fem_solver import HelmholtzSolver
 from lib.hybrid import rmse, solve_hybrid_schwarz
 from train_router_multi import prepare_config  # reuses meta loading + ETE
 
