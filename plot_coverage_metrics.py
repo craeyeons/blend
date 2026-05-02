@@ -669,6 +669,83 @@ def compute_coverage_curve(pinn_pred, cfd_truth, router_output, layout, n_points
     
     return coverage, mse_scores, r2_scores
 
+
+def plot_coverage_progression(u_pinn, v_pinn, u_cfd, v_cfd,
+                              router_output, layout, X, Y,
+                              cylinder_center, cylinder_radius,
+                              coverages=(0.1, 0.2, 0.3, 0.4, 0.5,
+                                         0.6, 0.7, 0.8, 0.9, 1.0),
+                              save_path=None):
+    """
+    Plot idealized hybrid velocity magnitude at increasing CFD coverage levels.
+
+    At each target coverage c, the top-c fraction of fluid points (ranked by
+    router_output) is taken from the CFD field, the rest from the PINN field.
+    Uses per-pixel blending (no extra hybrid solve) so this is cheap.
+    """
+    fluid_mask = layout > 0
+    confidences = router_output[fluid_mask]
+    n_fluid = confidences.size
+
+    cfd_vel = np.sqrt(u_cfd**2 + v_cfd**2)
+    pinn_vel = np.sqrt(u_pinn**2 + v_pinn**2)
+    vmin = float(min(np.nanmin(cfd_vel[fluid_mask]), np.nanmin(pinn_vel[fluid_mask])))
+    vmax = float(max(np.nanmax(cfd_vel[fluid_mask]), np.nanmax(pinn_vel[fluid_mask])))
+
+    n = len(coverages)
+    ncols = 5
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3.2 * nrows),
+                             squeeze=False)
+
+    for idx, cov in enumerate(coverages):
+        ax = axes[idx // ncols][idx % ncols]
+        if cov <= 0:
+            thresh = np.inf
+            cfd_mask = np.zeros_like(layout, dtype=bool)
+        elif cov >= 1:
+            thresh = -np.inf
+            cfd_mask = fluid_mask.copy()
+        else:
+            # threshold at the (1-cov) quantile -> top cov fraction routed to CFD
+            thresh = float(np.quantile(confidences, 1.0 - cov))
+            cfd_mask = (router_output >= thresh) & fluid_mask
+
+        u_blend = np.where(cfd_mask, u_cfd, u_pinn) * layout
+        v_blend = np.where(cfd_mask, v_cfd, v_pinn) * layout
+        vel = np.sqrt(u_blend**2 + v_blend**2)
+        vel_plot = np.ma.masked_where(~fluid_mask, vel)
+
+        levels = np.linspace(vmin, vmax, 50)
+        im = ax.contourf(X, Y, vel_plot, levels=levels, cmap='RdBu_r',
+                         vmin=vmin, vmax=vmax, extend='both')
+        ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+                   colors='black', linewidths=0.6)
+        cx, cy = cylinder_center
+        circ = plt.Circle((cx, cy), cylinder_radius, color='gray', fill=True)
+        ax.add_patch(circ)
+
+        actual_cov = float(np.mean(cfd_mask[fluid_mask]))
+        ax.set_title(f'coverage={actual_cov*100:.0f}%  τ={thresh:.3g}',
+                     fontsize=10)
+        ax.set_aspect('equal')
+        ax.set_xticks([]); ax.set_yticks([])
+
+    # Hide unused axes
+    for j in range(n, nrows * ncols):
+        axes[j // ncols][j % ncols].axis('off')
+
+    fig.suptitle('Router Coverage Progression (idealized blend: top-c% to CFD)',
+                 fontsize=12)
+    cbar = fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, shrink=0.9)
+    cbar.set_label('|U|')
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved coverage progression to {save_path}")
+    plt.close(fig)
+
+
 def compute_expected_losses(residual_field, router_output, layout, beta):
     """
     Compute expected losses for PINN-only, CFD-only, and hybrid systems.
@@ -1462,6 +1539,15 @@ def main():
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
         save_path=os.path.join(args.output_dir, 'solution_comparison.png')
+    )
+
+    # Coverage progression: idealized blend at 10%..100% CFD coverage
+    plot_coverage_progression(
+        u_pinn, v_pinn, u_cfd, v_cfd,
+        router_output, layout, X, Y,
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        save_path=os.path.join(args.output_dir, 'coverage_progression.png')
     )
 
     # =========================================================================
