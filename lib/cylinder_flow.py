@@ -406,6 +406,11 @@ class CylinderFlowHybridSimulation(CylinderFlowSimulation):
         # Ensure cylinder region has zero velocity in PINN output
         self.u_pinn = np.where(self.cylinder_mask == 1, 0.0, self.u_pinn)
         self.v_pinn = np.where(self.cylinder_mask == 1, 0.0, self.v_pinn)
+        # Same for pressure: the wrong PINN may emit a spurious pressure
+        # inside the *test* cylinder (it was trained for a different hole).
+        # Pin it to zero so the pressure-Poisson Dirichlet at line 589 does
+        # not smear that spurious value back into the field.
+        self.p_pinn = np.where(self.cylinder_mask == 1, 0.0, self.p_pinn)
         
         # Find interface: boundary between PINN and CFD regions
         # Interface points are CFD cells that have at least one PINN neighbor

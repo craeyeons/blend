@@ -82,6 +82,8 @@ python plot_coverage_metrics.py \
     --cylinder-y 0.4 \
     --cylinder-x 0.6 \
     --cylinder-radius 0.13 \
+    --inlet-velocity 6.0 \
+    --Re 600 \
     --output-dir ./metrics_output_multi/test_cy0.65
 
 echo "=== Job completed ==="

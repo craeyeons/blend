@@ -79,18 +79,18 @@ cd /home/s/simpsone/blend2 || exit 1
 #   PINN used: train config 3 checkpoint (trained at x=0.5).
 #   Router: freshly retrained on configs_multi_cylinder.json.
 # ============================================================
-echo ""
-echo "=============================================================="
-echo "=== Exp 3a: Retrain multi-config router (for wrongpinn eval)"
-echo "=============================================================="
-rm -rf router_output_multi
-python train_router_multi.py \
-    --config configs_multi_cylinder.json \
-    --output-dir ./router_output_multi \
-    --epochs 2000 \
-    --beta 1.1 \
-    --lambda-tv 1.0 \
-    --lr 1e-3
+# echo ""
+# echo "=============================================================="
+# echo "=== Exp 3a: Retrain multi-config router (for wrongpinn eval)"
+# echo "=============================================================="
+# rm -rf router_output_multi
+# python train_router_multi.py \
+#     --config configs_multi_cylinder.json \
+#     --output-dir ./router_output_multi \
+#     --epochs 2000 \
+#     --beta 1.1 \
+#     --lambda-tv 1.0 \
+#     --lr 1e-3
 
 echo ""
 echo "=============================================================="
@@ -106,5 +106,19 @@ python plot_coverage_metrics.py \
     --cylinder-x 0.55 --cylinder-y 0.5 --cylinder-radius 0.1 \
     --inlet-velocity 1.0 --Re 100 \
     --output-dir ./metrics_output_wrongpinn_cfd
+
+echo "=== Metrics: Multi-Cylinder TEST (unseen config) ==="
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
+    --router-weights ./router_output_multi/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_test_cy0.65.npz \
+    --beta 1.1 \
+    --cylinder-y 0.4 \
+    --cylinder-x 0.6 \
+    --cylinder-radius 0.13 \
+    --inlet-velocity 6.0 \
+    --Re 600 \
+    --output-dir ./metrics_output_test_cy0.65
 
 echo "=== Job completed ==="
