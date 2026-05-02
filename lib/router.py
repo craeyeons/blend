@@ -833,17 +833,22 @@ def solve_error_transport(pinn_u, pinn_v, bc_error, layout, nu,
 
 
 def compute_pinn_residual_field(pinn_model, X, Y, layout, bc_mask, bc_u, bc_v,
-                                Re=None, nu=None, rho=1.0, weights=None):
+                                Re=None, nu=None, rho=1.0,
+                                inlet_velocity=1.0, L_ref=1.0,
+                                weights=None):
     """Convenience wrapper: build a PINNResidualComputer and return the
     nonneg per-cell residual field on the active layout.
 
-    Pass either `Re` (Reynolds number) or `nu` (kinematic viscosity).
+    Pass either `nu` (kinematic viscosity) directly, or `Re` (the
+    dimensional Reynolds number) along with `inlet_velocity` and `L_ref`
+    to derive nu via Re = u_inlet * L_ref / nu => nu = u_inlet*L_ref/Re.
+
     Used by `create_router_input` callers that need the residual channel.
     """
     if nu is None:
         if Re is None:
             raise ValueError("compute_pinn_residual_field needs Re or nu")
-        nu = 1.0 / float(Re)
+        nu = float(inlet_velocity) * float(L_ref) / float(Re)
     if weights is None:
         weights = {'continuity': 1.0, 'momentum': 1.0}
     rc = PINNResidualComputer(pinn_model, nu=float(nu), rho=float(rho))

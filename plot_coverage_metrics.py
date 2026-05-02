@@ -1275,8 +1275,12 @@ def main():
     bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, u_pinn, v_pinn, layout
     )
+    # Dimensional Reynolds number: Re = u_inlet * L_ref / nu, with
+    # L_ref = channel height. Solve for nu accordingly.
+    L_ref = args.y_max - args.y_min
+    nu_eval = args.inlet_velocity * L_ref / args.Re
     error_transport = solve_error_transport(
-        u_pinn, v_pinn, bc_error_local, layout, nu=1.0/args.Re,
+        u_pinn, v_pinn, bc_error_local, layout, nu=nu_eval,
         x_domain=(args.x_min, args.x_max),
         y_domain=(args.y_min, args.y_max),
     )
@@ -1284,7 +1288,7 @@ def main():
     # Pre-compute the PINN PDE residual once; it feeds both the router
     # input (channel 9) and the median-normalised residual_field used as
     # the training target / threshold sweep below.
-    residual_computer = PINNResidualComputer(pinn_model, nu=1.0/args.Re, rho=1.0)
+    residual_computer = PINNResidualComputer(pinn_model, nu=nu_eval, rho=1.0)
     X_tf = tf.constant(X, dtype=tf.float32)
     Y_tf = tf.constant(Y, dtype=tf.float32)
     bc_mask_tf = tf.constant(bc_mask, dtype=tf.float32)

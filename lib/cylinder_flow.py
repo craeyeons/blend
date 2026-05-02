@@ -65,11 +65,16 @@ class CylinderFlowSimulation(BaseSimulation):
         self.N = N  # Base resolution
         self.max_iter = max_iter
         self.tol = tol
-        self.nu = 1.0 / Re
-        
+
         # Grid setup with aspect ratio - ensure uniform spacing
         self.Lx = self.x_f - self.x_ini
         self.Ly = self.y_f - self.y_ini
+
+        # Kinematic viscosity from the dimensional Reynolds number
+        # Re = u_inlet * L_ref / nu, with L_ref = channel height (Ly).
+        # When inlet_velocity = 1 and Ly = 1 this reduces to nu = 1/Re,
+        # matching the legacy convention exactly.
+        self.nu = inlet_velocity * self.Ly / Re
         aspect_ratio = self.Lx / self.Ly
         
         # Ny = N, Nx = N * aspect_ratio (rounded to int)

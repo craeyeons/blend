@@ -162,19 +162,23 @@ def main():
     pinn_v = pinn_uvp[:, 1].reshape(X.shape).astype(np.float32) * layout
     pinn_p = pinn_uvp[:, 2].reshape(X.shape).astype(np.float32) * layout
     
-    # Compute BC error field and solve error transport
+    # Compute BC error field and solve error transport.
+    # Dimensional Reynolds number: Re = u_inlet * L_ref / nu, with
+    # L_ref = channel height (y_max - y_min). Solve for nu accordingly.
     bc_error_local = compute_bc_error_field(
         bc_mask, bc_u, bc_v, pinn_u, pinn_v, layout
     )
+    L_ref = args.y_max - args.y_min
+    nu_eval = args.inlet_velocity * L_ref / args.Re
     error_transport = solve_error_transport(
-        pinn_u, pinn_v, bc_error_local, layout, nu=1.0/args.Re,
+        pinn_u, pinn_v, bc_error_local, layout, nu=nu_eval,
         x_domain=(args.x_min, args.x_max),
         y_domain=(args.y_min, args.y_max),
     )
 
     # Compute PINN PDE residual field (channel 9 of router input)
     pde_residual_np = compute_pinn_residual_field(
-        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, Re=args.Re
+        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, nu=nu_eval
     )
 
     # Create router input (10 channels, all dynamic channels normalised)

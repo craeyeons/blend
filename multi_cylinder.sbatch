@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres="gpu:h100-96:1"
 #SBATCH --mem=32G
-#SBATCH --time=1:00:00
+#SBATCH --time=3:00:00
 #SBATCH --export=NONE
 
 echo "=== Job Info ==="
@@ -60,30 +60,64 @@ python train_router_multi.py \
 
 echo "=== Multi-config router training completed ==="
 
-# Plot thresholds for each test config using the trained router
+# Plot thresholds at the in-distribution test geometry (matches test #1).
+# Note: plot_router_thresholds.py takes --nu (not --Re); nu=0.01 == Re=100.
 echo "=== Plotting thresholds ==="
 python plot_router_thresholds.py \
     --router-path ./router_output_multi/router.weights.h5 \
+    --pinn-path ./models/pinn_cylinder_Re100_0.6_0.55_0.11.h5 \
     --threshold-start 0.45 \
     --threshold-end 0.75 \
     --num-thresholds 11 \
-    --cylinder-y 0.5 \
+    --cylinder-x 0.6 \
+    --cylinder-y 0.55 \
+    --cylinder-radius 0.11 \
+    --inlet-velocity 1.0 \
+    --nu 0.01 \
     --output-dir ./threshold_plots_multi
 
 rm -rf metrics_output_multi
 
-echo "=== Metrics: Multi-Cylinder TEST (unseen config) ==="
+# ----------------------------------------------------------------------
+# TEST #1: in-distribution geometry, matched PINN.
+#   Test (x=0.6, y=0.55, r=0.11) is a true OOD-geometry interpolation:
+#   each axis is bracketed by train configs, but this exact triple is
+#   unseen by the router. PINN was trained at this geometry/inlet.
+# ----------------------------------------------------------------------
+echo "=== Metrics: TEST 1 — OOD geometry, matched PINN ==="
 python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
+    --pinn-path ./models/pinn_cylinder_Re100_0.6_0.55_0.11.h5 \
     --router-weights ./router_output_multi/router.weights.h5 \
     --compute-cfd \
     --save-cfd ./cfd_multi_test1.npz \
     --beta 1.1 \
-    --cylinder-y 0.4 \
     --cylinder-x 0.6 \
-    --cylinder-radius 0.13 \
-    --inlet-velocity 6.0 \
-    --Re 600 \
-    --output-dir ./metrics_output_multi/test_cy0.65
+    --cylinder-y 0.55 \
+    --cylinder-radius 0.11 \
+    --inlet-velocity 1.0 \
+    --Re 100 \
+    --output-dir ./metrics_output_multi/test_ood
+
+# ----------------------------------------------------------------------
+# TEST #2: wrong-PINN reuse — same OOD geometry, faster inlet.
+#   PINN was trained at inlet=1.0; eval runs at inlet=1.5 (dimensional
+#   Re = u*L/nu = 1.5 with nu=0.01, so --Re 150 --inlet 1.5 means same
+#   fluid as training, just faster flow). The PINN's velocities are
+#   off by ~1.5x and pressures by ~2.25x, so the router has to reject
+#   it. Mirrors Poisson's wrongpinn_shifted_src.
+# ----------------------------------------------------------------------
+echo "=== Metrics: TEST 2 — wrong-PINN reuse (inlet 1.0-trained, 1.5 eval) ==="
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re100_0.6_0.55_0.11.h5 \
+    --router-weights ./router_output_multi/router.weights.h5 \
+    --compute-cfd \
+    --save-cfd ./cfd_multi_test2.npz \
+    --beta 1.1 \
+    --cylinder-x 0.6 \
+    --cylinder-y 0.55 \
+    --cylinder-radius 0.11 \
+    --inlet-velocity 1.5 \
+    --Re 150 \
+    --output-dir ./metrics_output_multi/test_wrongpinn
 
 echo "=== Job completed ==="

@@ -32,7 +32,8 @@ def example_cavity_flow_dynamic_segregation():
     N = 100
     u0 = 1.0
     L = 1.0
-    nu = 1.0 / Re
+    # Re = u0 * L / nu  =>  nu = u0 * L / Re.
+    nu = u0 * L / Re
     
     print(f"\nPhysical Configuration:")
     print(f"  Reynolds number: {Re}")
@@ -180,7 +181,10 @@ def example_analysis_complexity_scores():
     # Load model and create initial field (same as above)
     Re = 100
     N = 100
-    nu = 1.0 / Re
+    u0 = 1.0
+    L = 1.0
+    # Re = u0 * L / nu  =>  nu = u0 * L / Re.
+    nu = u0 * L / Re
     
     network = Network().build()
     try:

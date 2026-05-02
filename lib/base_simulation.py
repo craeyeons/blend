@@ -23,29 +23,36 @@ class BaseSimulation(ABC):
         dx, dy, dt: Grid spacing and time step
     """
     
-    def __init__(self, Re=100, N=100, max_iter=200000, tol=1e-6):
+    def __init__(self, Re=100, N=100, max_iter=200000, tol=1e-6,
+                 u_ref=1.0):
         """
         Initialize simulation parameters.
-        
+
         Parameters:
         -----------
         Re : float
-            Reynolds number
+            Dimensional Reynolds number, Re = u_ref * L / nu.
         N : int
             Number of grid points per side
         max_iter : int
             Maximum iterations
         tol : float
             Convergence tolerance
+        u_ref : float
+            Reference velocity (lid speed for cavity, inlet for channel).
+            Used to derive nu from Re. Defaults to 1.0, which matches the
+            legacy `nu = 1/Re` convention.
         """
         self.Re = Re
         self.N = N
         self.max_iter = max_iter
         self.tol = tol
-        self.nu = 1.0 / Re
-        
+
         # Grid setup
         self.L = 1.0
+        # Dimensional viscosity: Re = u_ref * L / nu  =>  nu = u_ref*L/Re.
+        # With u_ref = 1 and L = 1 this collapses to nu = 1/Re.
+        self.nu = float(u_ref) * self.L / Re
         self.dx = self.L / (N - 1)
         self.dy = self.dx
         self.dt = 0.001 * min(self.dx, self.dy)
