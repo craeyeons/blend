@@ -17,12 +17,66 @@ import time
 
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
 # Repo path so the same imports as train_router_multi.py work.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.fem_solver import HelmholtzSolver
 from lib.hybrid import rmse, solve_hybrid_schwarz
 from train_router_multi import prepare_config  # reuses meta loading + ETE
+
+
+def plot_panels(u_pinn, u_hybrid, u_fem, X, Y, layout, hole, save_path):
+    """1-row x 3-col PINN/Hybrid/FEM panel using RdBu_r everywhere."""
+    cx, cy, rh = hole
+    mask = layout > 0
+
+    def _m(a):
+        return np.where(mask, a, np.nan)
+
+    fields = [_m(u_pinn), _m(u_hybrid), _m(u_fem)]
+    titles = ['PINN  u', 'Hybrid  u', 'FEM  u']
+    stacked = np.concatenate([f[mask] for f in [u_pinn, u_hybrid, u_fem]])
+    absmax = float(np.max(np.abs(stacked))) + 1e-30
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    for ax, f, t in zip(axes, fields, titles):
+        im = ax.pcolormesh(X, Y, f, cmap='RdBu_r',
+                           vmin=-absmax, vmax=absmax, shading='auto')
+        plt.colorbar(im, ax=ax, fraction=0.046, label='u')
+        circle = plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5)
+        ax.add_patch(circle)
+        ax.set_aspect('equal')
+        ax.set_title(t)
+        ax.set_xlabel('x')
+    axes[0].set_ylabel('y')
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_mask(accept_mask, X, Y, layout, hole, save_path):
+    """Standalone partition plot: 1 = FEM-solved (rejected), 0 = PINN-pinned.
+
+    `accept_mask` (from solve_hybrid_schwarz) is 1 where PINN is pinned,
+    so we visualise 1 - accept_mask intersected with the active region.
+    """
+    cx, cy, rh = hole
+    mask = layout > 0
+    fem_mask = (mask & (accept_mask == 0)).astype(float)
+    fig, ax = plt.subplots(figsize=(7, 7))
+    data = np.where(mask, fem_mask, np.nan)
+    im = ax.pcolormesh(X, Y, data, cmap='RdBu_r', vmin=0.0, vmax=1.0,
+                       shading='auto')
+    plt.colorbar(im, ax=ax, fraction=0.046, label='1 = FEM, 0 = PINN')
+    ax.contour(X, Y, fem_mask, levels=[0.5], colors='black', linewidths=1.5)
+    circle = plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5)
+    ax.add_patch(circle)
+    ax.set_aspect('equal')
+    ax.set_xlabel('x'); ax.set_ylabel('y')
+    ax.set_title('Naive-threshold partition  (R(x) >= beta)')
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
 
 
 def parse_args():
@@ -137,6 +191,16 @@ def main():
     np.savez(os.path.join(args.output_dir, 'fields.npz'),
              u_pinn=cfg_data['pinn_u'], u_hybrid=res['u_grid'], u_fem=u_fem,
              accept_mask=res['accept_mask'], R=R, layout=test_layout)
+
+    plot_panels(
+        cfg_data['pinn_u'], res['u_grid'], u_fem,
+        X, Y, test_layout, test_hole,
+        save_path=os.path.join(args.output_dir, 'solution_comparison.png'),
+    )
+    plot_mask(
+        res['accept_mask'], X, Y, test_layout, test_hole,
+        save_path=os.path.join(args.output_dir, 'partition_mask.png'),
+    )
 
     print(f'-> {stats_path}')
     print(f'   PINN RMSE   = {pinn_rmse:.6e}')

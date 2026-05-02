@@ -111,11 +111,7 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
         y_domain=y_domain,
     )
 
-    # Create router input (9 channels)
-    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, error_transport)
-
-    # Pre-compute PINN residuals (frozen, constant across training)
+    # Pre-compute PINN PDE residual (frozen, constant across training).
     residual_computer = PINNResidualComputer(
         pinn_model, nu, rho,
         x_domain=x_domain, y_domain=y_domain,
@@ -133,6 +129,12 @@ def prepare_config(cfg, nx, ny, x_domain, y_domain, nu, rho, residual_weights):
     pde_residual = residual_computer.compute_total_residual_with_bc(
         X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
     )
+    pde_residual_np = (pde_residual.numpy().astype(np.float32) * layout)
+
+    # Create router input (10 channels, all dynamic channels normalised).
+    inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
+                                  pinn_u, pinn_v, pinn_p, error_transport,
+                                  pde_residual_np)
 
     # Sum raw PDE residual + ETE, then median-normalize on fluid region.
     ete_tf = tf.constant(error_transport, dtype=tf.float32)

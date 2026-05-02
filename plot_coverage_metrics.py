@@ -1281,12 +1281,27 @@ def main():
         y_domain=(args.y_min, args.y_max),
     )
 
+    # Pre-compute the PINN PDE residual once; it feeds both the router
+    # input (channel 9) and the median-normalised residual_field used as
+    # the training target / threshold sweep below.
+    residual_computer = PINNResidualComputer(pinn_model, nu=1.0/args.Re, rho=1.0)
+    X_tf = tf.constant(X, dtype=tf.float32)
+    Y_tf = tf.constant(Y, dtype=tf.float32)
+    bc_mask_tf = tf.constant(bc_mask, dtype=tf.float32)
+    bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
+    bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
+    residual_weights = {'continuity': 1.0, 'momentum': 1.0}
+    pde_residual_np = residual_computer.compute_total_residual_with_bc(
+        X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
+    ).numpy().astype(np.float32) * layout
+
     if args.router_weights and os.path.exists(args.router_weights):
         print(f"  Loading router weights from {args.router_weights}")
 
-        # Create router input tensor
+        # Create router input tensor (10 channels, all dynamic channels normalised)
         inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                      u_pinn, v_pinn, p_pinn, error_transport)
+                                      u_pinn, v_pinn, p_pinn, error_transport,
+                                      pde_residual_np)
         print(f"  Router input shape: {inputs.shape}")
         
         # Initialize router CNN
@@ -1321,37 +1336,14 @@ def main():
     print(f"  Router mean: {np.mean(router_output[layout > 0]):.4f}")
     
     # =========================================================================
-    # Step 5: Compute physics residual field (used in router training loss)
+    # Step 5: Build the median-normalised residual_field used for the
+    # threshold sweep / loss diagnostics. Residual itself was already
+    # computed above; here we just add ETE and median-normalise.
     # =========================================================================
-    print("\n[Step 5] Computing physics residual field...")
-    
-    # Create residual computer
-    residual_computer = PINNResidualComputer(pinn_model, nu=1.0/args.Re, rho=1.0)
-    
-    # Compute continuity and momentum residuals
-    X_tf = tf.constant(X, dtype=tf.float32)
-    Y_tf = tf.constant(Y, dtype=tf.float32)
-    bc_mask_tf = tf.constant(bc_mask, dtype=tf.float32)
-    bc_u_tf = tf.constant(bc_u, dtype=tf.float32)
-    bc_v_tf = tf.constant(bc_v, dtype=tf.float32)
-    
-    # Use the same residual computation as router training
-    residual_weights = {
-        'continuity': 1.0,
-        'momentum': 1.0,
-    }
-    residual_field_tf = residual_computer.compute_total_residual_with_bc(
-        X_tf, Y_tf, bc_mask_tf, bc_u_tf, bc_v_tf, residual_weights
-    )
-    residual_field = residual_field_tf.numpy()
-
-    # Mask out obstacle regions
-    residual_field = residual_field * layout
-
-    # Sum PDE residual + BC error, then median-normalize (matches training)
-    residual_field = residual_field + error_transport
+    print("\n[Step 5] Building median-normalised residual_field for sweeps...")
+    residual_field = pde_residual_np + error_transport
     fluid_residuals = residual_field[layout > 0]
-    median_residual = np.median(fluid_residuals)
+    median_residual = float(np.median(fluid_residuals))
     if median_residual > 1e-10:
         residual_field = residual_field / median_residual
 

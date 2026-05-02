@@ -30,6 +30,7 @@ if gpus:
 from lib.router import (
     RouterCNN,
     RouterTrainer,
+    compute_pinn_residual_field,
     create_router_input,
     create_cylinder_setup,
     compute_bc_error_field,
@@ -210,10 +211,16 @@ def main():
     print(f"  Error transport range: [{error_transport.min():.4f}, {error_transport.max():.4f}]")
     print(f"  Nonzero fraction: {np.mean(error_transport > 0.01)*100:.1f}%")
 
-    # Create router input tensor (9 channels with PINN predictions + error transport)
+    # Compute PINN PDE residual field (channel 9 of router input)
+    pde_residual_np = compute_pinn_residual_field(
+        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, nu=args.nu
+    )
+
+    # Create router input tensor (10 channels, all dynamic channels normalised)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, error_transport)
-    print(f"  Router input shape: {inputs.shape} (9 channels incl. PINN predictions + error transport)")
+                                  pinn_u, pinn_v, pinn_p, error_transport,
+                                  pde_residual_np)
+    print(f"  Router input shape: {inputs.shape}")
     
     # =========================================================================
     # Step 3: Initialize router

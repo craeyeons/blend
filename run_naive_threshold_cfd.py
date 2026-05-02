@@ -18,12 +18,14 @@ import tensorflow as tf
 
 # Reuse the analysis pipeline's helpers verbatim (residual, ETE, hybrid).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+
 from plot_coverage_metrics import (
     compute_cfd_solution,
     compute_hybrid_solution,
     compute_uv_direct,
     load_pinn_solution,
-    plot_solution_comparison,
 )
 from lib.cylinder_flow import CylinderFlowHybridSimulation
 from lib.router import (
@@ -32,6 +34,73 @@ from lib.router import (
     create_cylinder_setup,
     solve_error_transport,
 )
+
+
+def plot_panels(u_pinn, v_pinn, p_pinn,
+                u_cfd, v_cfd, p_cfd,
+                u_hyb, v_hyb, p_hyb,
+                X, Y, layout, cylinder_center, cylinder_radius, save_path):
+    """5-row x 3-col PINN/Hybrid/CFD panel using RdBu_r everywhere.
+    No mask overlay on the Hybrid column."""
+    cx, cy = cylinder_center
+    fluid = layout > 0
+
+    p_pinn_c = p_pinn - np.median(p_pinn[fluid])
+    p_hyb_c = p_hyb - np.median(p_hyb[fluid])
+    p_cfd_c = p_cfd - np.median(p_cfd[fluid])
+    vel_pinn = np.sqrt(u_pinn ** 2 + v_pinn ** 2)
+    vel_hyb = np.sqrt(u_hyb ** 2 + v_hyb ** 2)
+    vel_cfd = np.sqrt(u_cfd ** 2 + v_cfd ** 2)
+
+    rows = [
+        ('p',   [p_pinn_c, p_hyb_c, p_cfd_c]),
+        ('u',   [u_pinn,   u_hyb,   u_cfd]),
+        ('v',   [v_pinn,   v_hyb,   v_cfd]),
+        ('|u|', [vel_pinn, vel_hyb, vel_cfd]),
+    ]
+    col_titles = ['PINN', 'Hybrid', 'CFD']
+    fig, axes = plt.subplots(len(rows), 3, figsize=(16, 4 * len(rows)))
+    for i, (label, fields) in enumerate(rows):
+        stacked = np.concatenate([f[fluid] for f in fields])
+        absmax = float(np.max(np.abs(stacked))) + 1e-30
+        for j, f in enumerate(fields):
+            ax = axes[i, j]
+            data = np.ma.masked_where(layout == 0, f)
+            cf = ax.contourf(X, Y, data, levels=50, cmap='RdBu_r',
+                             norm=Normalize(vmin=-absmax, vmax=absmax))
+            plt.colorbar(cf, ax=ax, label=label)
+            circle = plt.Circle((cx, cy), cylinder_radius,
+                                color='gray', fill=True, zorder=5)
+            ax.add_patch(circle)
+            ax.set_aspect('equal')
+            if i == 0:
+                ax.set_title(col_titles[j])
+            if j == 0:
+                ax.set_ylabel(label)
+            if i == len(rows) - 1:
+                ax.set_xlabel('x')
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
+def plot_mask(cfd_mask, X, Y, layout, cylinder_center, cylinder_radius, save_path):
+    """Standalone partition plot: 1 = CFD, 0 = PINN."""
+    cx, cy = cylinder_center
+    fig, ax = plt.subplots(figsize=(10, 5))
+    data = np.ma.masked_where(layout == 0, cfd_mask.astype(float))
+    cf = ax.contourf(X, Y, data, levels=[-0.5, 0.5, 1.5], cmap='RdBu_r')
+    ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
+               colors='black', linewidths=1.5)
+    plt.colorbar(cf, ax=ax, label='1 = CFD, 0 = PINN')
+    circle = plt.Circle((cx, cy), cylinder_radius,
+                        color='gray', fill=True, zorder=5)
+    ax.add_patch(circle)
+    ax.set_aspect('equal')
+    ax.set_xlabel('x'); ax.set_ylabel('y')
+    ax.set_title('Naive-threshold partition  (R(x) >= beta)')
+    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
 
 
 def parse_args():
@@ -158,16 +227,22 @@ def main():
     rmse_pinn = float(np.sqrt(np.mean((pinn_mag[fluid] - cfd_mag[fluid]) ** 2)))
     rmse_hybrid = float(np.sqrt(np.mean((hyb_mag[fluid] - cfd_mag[fluid]) ** 2)))
 
-    # 6) Solution comparison plot (PINN | Hybrid | CFD).
+    # 6) Plots: solution panels (RdBu_r, no mask overlay) + standalone mask.
     print('[5/5] Writing plots and stats ...')
-    plot_solution_comparison(
+    plot_panels(
         u_pinn, v_pinn, p_pinn,
         u_cfd, v_cfd, p_cfd,
         u_h, v_h, p_h,
-        X, Y, layout, cfd_mask,
+        X, Y, layout,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
         save_path=os.path.join(args.output_dir, 'solution_comparison.png'),
+    )
+    plot_mask(
+        cfd_mask, X, Y, layout,
+        cylinder_center=(args.cylinder_x, args.cylinder_y),
+        cylinder_radius=args.cylinder_radius,
+        save_path=os.path.join(args.output_dir, 'partition_mask.png'),
     )
 
     stats_path = os.path.join(args.output_dir, 'stats.txt')

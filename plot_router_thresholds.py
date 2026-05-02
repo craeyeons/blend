@@ -30,6 +30,7 @@ from matplotlib.colors import Normalize
 
 from lib.router import (
     RouterCNN,
+    compute_pinn_residual_field,
     create_router_input,
     compute_bc_error_field,
     solve_error_transport,
@@ -219,9 +220,15 @@ def main():
         y_domain=y_domain,
     )
 
-    # Create router input (9 channels including PINN predictions)
+    # Compute PINN PDE residual field (channel 9 of router input)
+    pde_residual_np = compute_pinn_residual_field(
+        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, nu=args.nu
+    )
+
+    # Create router input (10 channels, all dynamic channels normalised)
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                  pinn_u, pinn_v, pinn_p, error_transport)
+                                  pinn_u, pinn_v, pinn_p, error_transport,
+                                  pde_residual_np)
     
     # Load router
     print(f"Loading router from {args.router_path}...")

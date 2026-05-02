@@ -832,60 +832,89 @@ def solve_error_transport(pinn_u, pinn_v, bc_error, layout, nu,
     return e.astype(np.float32)
 
 
-def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
-                        pinn_u=None, pinn_v=None, pinn_p=None,
-                        ete_error=None):
-    """
-    Create the 9-channel input tensor for the router.
+def compute_pinn_residual_field(pinn_model, X, Y, layout, bc_mask, bc_u, bc_v,
+                                Re=None, nu=None, rho=1.0, weights=None):
+    """Convenience wrapper: build a PINNResidualComputer and return the
+    nonneg per-cell residual field on the active layout.
 
-    By including PINN predictions and the ETE (error-transport estimate), the
-    CNN can learn spatial error patterns and understand downstream error
-    propagation.
+    Pass either `Re` (Reynolds number) or `nu` (kinematic viscosity).
+    Used by `create_router_input` callers that need the residual channel.
+    """
+    if nu is None:
+        if Re is None:
+            raise ValueError("compute_pinn_residual_field needs Re or nu")
+        nu = 1.0 / float(Re)
+    if weights is None:
+        weights = {'continuity': 1.0, 'momentum': 1.0}
+    rc = PINNResidualComputer(pinn_model, nu=float(nu), rho=float(rho))
+    r = rc.compute_total_residual_with_bc(
+        tf.constant(X, dtype=tf.float32),
+        tf.constant(Y, dtype=tf.float32),
+        tf.constant(bc_mask, dtype=tf.float32),
+        tf.constant(bc_u, dtype=tf.float32),
+        tf.constant(bc_v, dtype=tf.float32),
+        weights,
+    ).numpy().astype(np.float32) * layout.astype(np.float32)
+    return r
+
+
+def create_router_input(layout, bc_mask, bc_values_u, bc_values_v, bc_values_p,
+                        pinn_u, pinn_v, pinn_p, ete_error, residual):
+    """
+    Build the 10-channel router input tensor (matches the Poisson layout).
+
+    Every dynamic channel is rescaled on the solid (fluid) region so the
+    network sees scale-invariant inputs across configurations and inlet
+    velocities. Layout and bc_mask are binary and left raw.
+
+    Channels (1, H, W, 10):
+        [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p, ete, residual]
+        - bc_*, pinn_*   : divided by their max|·| over solid cells.
+        - ete, residual  : divided by their median|·| over solid cells.
 
     Parameters:
     -----------
-    layout : np.ndarray
-        Layout mask of shape (H, W), 0=obstacle, 1=fluid
-    bc_mask : np.ndarray
-        Boundary condition mask of shape (H, W)
-    bc_values_u, bc_values_v, bc_values_p : np.ndarray
-        Boundary condition values of shape (H, W)
-    pinn_u, pinn_v, pinn_p : np.ndarray, optional
-        PINN predictions of shape (H, W). If None, zeros are used.
-    ete_error : np.ndarray, optional
-        ETE (error-transport estimate) field of shape (H, W). If None, zeros are used.
-
-    Returns:
-    --------
-    inputs : np.ndarray
-        Stacked input of shape (1, H, W, 9)
-        Channels: [layout, bc_mask, bc_u, bc_v, bc_p, pinn_u, pinn_v, pinn_p, ete_error]
+    layout : np.ndarray (H, W)
+        Layout mask, 0 = obstacle, 1 = fluid.
+    bc_mask : np.ndarray (H, W)
+        Boundary-condition mask.
+    bc_values_u, bc_values_v, bc_values_p : np.ndarray (H, W)
+        Boundary-condition values.
+    pinn_u, pinn_v, pinn_p : np.ndarray (H, W)
+        PINN predictions on the grid.
+    ete_error : np.ndarray (H, W)
+        ETE (error-transport estimate, nonneg).
+    residual : np.ndarray (H, W)
+        Per-cell PINN PDE residual (nonneg).
     """
-    H, W = layout.shape
+    solid = layout > 0
+    if not np.any(solid):
+        return np.stack([layout, bc_mask, bc_values_u, bc_values_v,
+                         bc_values_p, pinn_u, pinn_v, pinn_p,
+                         ete_error, residual], axis=-1)[np.newaxis, ...]
 
-    # Default to zeros if PINN predictions not provided
-    if pinn_u is None:
-        pinn_u = np.zeros((H, W), dtype=np.float32)
-    if pinn_v is None:
-        pinn_v = np.zeros((H, W), dtype=np.float32)
-    if pinn_p is None:
-        pinn_p = np.zeros((H, W), dtype=np.float32)
-    if ete_error is None:
-        ete_error = np.zeros((H, W), dtype=np.float32)
+    def _max_norm(arr):
+        m = float(np.max(np.abs(arr[solid]))) + 1e-10
+        return (arr / m).astype(np.float32)
+
+    def _median_norm(arr):
+        med = float(np.median(np.abs(arr[solid]))) + 1e-10
+        return (np.abs(arr) / med).astype(np.float32)
 
     inputs = np.stack([
-        layout,           # Ch 0: Layout mask
-        bc_mask,          # Ch 1: BC mask
-        bc_values_u,      # Ch 2: BC u
-        bc_values_v,      # Ch 3: BC v
-        bc_values_p,      # Ch 4: BC p
-        pinn_u,           # Ch 5: PINN u prediction
-        pinn_v,           # Ch 6: PINN v prediction
-        pinn_p,           # Ch 7: PINN p prediction
-        ete_error,        # Ch 8: ETE (error-transport estimate)
+        layout.astype(np.float32),       # Ch 0: layout (binary)
+        bc_mask.astype(np.float32),      # Ch 1: BC mask (binary)
+        _max_norm(bc_values_u),          # Ch 2: BC u  / max|bc_u|
+        _max_norm(bc_values_v),          # Ch 3: BC v  / max|bc_v|
+        _max_norm(bc_values_p),          # Ch 4: BC p  / max|bc_p|
+        _max_norm(pinn_u),               # Ch 5: pinn_u / max|u|
+        _max_norm(pinn_v),               # Ch 6: pinn_v / max|v|
+        _max_norm(pinn_p),               # Ch 7: pinn_p / max|p|
+        _median_norm(ete_error),         # Ch 8: |ete| / median|ete|
+        _median_norm(residual),          # Ch 9: |r|  / median|r|
     ], axis=-1)
 
-    return inputs[np.newaxis, ...]  # Add batch dimension
+    return inputs[np.newaxis, ...]
 
 
 def create_cylinder_setup(Nx=200, Ny=100, x_domain=(0, 2), y_domain=(0, 1),

@@ -58,6 +58,7 @@ plt.style.use(['science', 'no-latex'])
 from lib.router import (
     RouterCNN,
     PINNResidualComputer,
+    compute_pinn_residual_field,
     create_router_input,
     compute_bc_error_field,
     solve_error_transport,
@@ -163,8 +164,12 @@ def compute_router_output_and_ete(router, layout, bc_mask, bc_u, bc_v, bc_p,
         x_domain=(x_min, x_max),
         y_domain=(y_min, y_max),
     )
+    pde_residual_np = compute_pinn_residual_field(
+        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, nu=nu
+    )
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                 pinn_u, pinn_v, pinn_p, error_transport)
+                                 pinn_u, pinn_v, pinn_p, error_transport,
+                                 pde_residual_np)
     router_output = router(inputs, training=False)[0, :, :, 0].numpy()
     return router_output, error_transport
 
@@ -248,8 +253,12 @@ def main():
         x_domain=(args.x_min, args.x_max),
         y_domain=(args.y_min, args.y_max),
     )
+    pde_residual_np = compute_pinn_residual_field(
+        pinn_model, X, Y, layout, bc_mask, bc_u, bc_v, nu=nu
+    )
     inputs = create_router_input(layout, bc_mask, bc_u, bc_v, bc_p,
-                                 pinn_u, pinn_v, pinn_p, error_transport)
+                                 pinn_u, pinn_v, pinn_p, error_transport,
+                                 pde_residual_np)
     router = RouterCNN(base_filters=args.base_filters, temperature=args.temperature)
     _ = router(inputs)
     router.load_weights(args.router_weights)
