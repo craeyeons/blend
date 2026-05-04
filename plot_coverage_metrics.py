@@ -510,12 +510,13 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                              u_hybrid, v_hybrid, p_hybrid,
                              X, Y, layout, cfd_mask,
                              cylinder_center, cylinder_radius,
-                             save_path=None):
+                             save_path=None, title=None):
     """5x3 panel: rows = p, u, v, |velocity|, error; cols = PINN, Hybrid, CFD.
 
     Each row shares a colour scale across the three columns. Pressure is
-    gauge-aligned via fluid-median subtraction. The hybrid column is shaded
-    to mark the CFD-solved subdomain.
+    gauge-aligned via fluid-median subtraction. The hybrid column is annotated
+    with a closed contour outlining the PINN sub-domain (no shading), padded
+    so the contour closes against the domain boundary.
     """
     from matplotlib.colors import Normalize
 
@@ -569,10 +570,23 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                                 color='gray', fill=True, zorder=5)
             ax.add_patch(circle)
             if j == 1:
-                ax.contourf(X, Y, cfd_mask.astype(float),
-                            levels=[0.5, 1.5], colors=['black'], alpha=0.25)
-                ax.contour(X, Y, cfd_mask.astype(float), levels=[0.5],
-                           colors='lime', linewidths=1.5)
+                # Closed contour around the PINN sub-domain, padded so the
+                # contour closes against the domain boundary where PINN
+                # extends to the edge.
+                pinn_mask = ((cfd_mask == 0) & fluid).astype(float)
+                pad_mask = np.pad(pinn_mask, 1, mode='constant',
+                                  constant_values=0.0)
+                dx_pad = X[0, 1] - X[0, 0] if X.shape[1] > 1 else 1.0
+                dy_pad = Y[1, 0] - Y[0, 0] if Y.shape[0] > 1 else 1.0
+                xs_pad = np.concatenate([
+                    [X[0, 0] - dx_pad], X[0, :], [X[0, -1] + dx_pad]
+                ])
+                ys_pad = np.concatenate([
+                    [Y[0, 0] - dy_pad], Y[:, 0], [Y[-1, 0] + dy_pad]
+                ])
+                Xp, Yp = np.meshgrid(xs_pad, ys_pad)
+                ax.contour(Xp, Yp, pad_mask, levels=[0.5],
+                           colors='black', linewidths=1.2)
             ax.set_aspect('equal')
             if i == 0:
                 ax.set_title(col_titles[j])
@@ -581,7 +595,9 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
             if i == len(rows) - 1:
                 ax.set_xlabel('x')
 
-    plt.tight_layout()
+    if title is not None:
+        fig.suptitle(title, fontsize=14, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.985] if title else None)
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"  Saved solution comparison to {save_path}")
@@ -1072,6 +1088,59 @@ def compute_loss_vs_coverage(residual_field, router_output, layout, beta, n_poin
     }
 
 
+def plot_loss_vs_coverage(residual_field, router_output, layout, beta,
+                          lambda_tv=0.01, save_path=None):
+    """Standalone plot of training-loss vs coverage (left panel of
+    plot_combined_metrics, saved to its own file).
+    """
+    fig, ax1 = plt.subplots(figsize=(7, 6))
+    cov_for_loss, loss_curve, _, _ = compute_loss_vs_coverage(
+        residual_field, router_output, layout, beta, lambda_tv=lambda_tv,
+    )
+    min_idx = int(np.argmin(loss_curve))
+    opt_cov = cov_for_loss[min_idx]
+    opt_loss = loss_curve[min_idx]
+
+    ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5,
+             label='Training loss')
+    ax1.plot(0, loss_curve[0], 'o', color='purple', markersize=10, zorder=5)
+    ax1.plot(100, loss_curve[-1], 'o', color='teal', markersize=10, zorder=5)
+    ax1.plot(opt_cov * 100, opt_loss, '*', color='green', markersize=18,
+             zorder=6, markeredgecolor='black', markeredgewidth=1)
+    ax1.axhline(y=loss_curve[0], color='purple', linestyle='--',
+                linewidth=1.2, alpha=0.5,
+                label=f'All PINN: {loss_curve[0]:.4f}')
+    ax1.axhline(y=loss_curve[-1], color='teal', linestyle='--',
+                linewidth=1.2, alpha=0.5,
+                label=f'All CFD: {loss_curve[-1]:.4f}')
+    ax1.annotate(f'Opt: {opt_cov*100:.0f}%\n{opt_loss:.4f}',
+                 xy=(opt_cov * 100, opt_loss),
+                 xytext=(opt_cov * 100 + 8, opt_loss - 0.08),
+                 fontsize=9, color='green', ha='left', va='top',
+                 fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
+
+    ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=13)
+    ax1.set_ylabel('Training Loss', fontsize=13)
+    ax1.set_title(f'Training Loss vs Coverage  (β = {beta})',
+                  fontsize=14, fontweight='bold')
+    ax1.set_xlim(-5, 105)
+    y_min = np.min(loss_curve) - 0.1
+    y_max = max(loss_curve[0], loss_curve[-1]) + 0.15
+    ax1.set_ylim(y_min, y_max)
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper right', fontsize=9)
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"  Saved loss-vs-coverage plot to {save_path}")
+    plt.close(fig)
+    return opt_cov, opt_loss
+
+
 def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, router_output, layout,
                           lambda_tv=0.01, lambda_entropy=0.1, save_path=None):
     """
@@ -1531,6 +1600,10 @@ def main():
     )
 
     # Side-by-side comparison: PINN vs Hybrid vs CFD
+    sol_title = (f'PINN vs Hybrid vs CFD  '
+                 f'(cyl=({args.cylinder_x:g}, {args.cylinder_y:g}, '
+                 f'r={args.cylinder_radius:g}), '
+                 f'inlet $u_0$={args.inlet_velocity:g}, Re={args.Re:g})')
     plot_solution_comparison(
         u_pinn, v_pinn, p_pinn,
         u_cfd, v_cfd, p_cfd,
@@ -1538,7 +1611,8 @@ def main():
         X, Y, layout, cfd_mask,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'solution_comparison.png')
+        save_path=os.path.join(args.output_dir, 'solution_comparison.png'),
+        title=sol_title,
     )
 
     # Coverage progression: idealized blend at 10%..100% CFD coverage
@@ -1599,6 +1673,13 @@ def main():
         coverage, rmse_scores, results, args.beta,
         save_path=os.path.join(args.output_dir, 'coverage_curve.png')
     )
+
+    # Standalone training-loss vs coverage (left panel of coverage_metrics.png).
+    plot_loss_vs_coverage(
+        residual_field, router_output, layout, args.beta,
+        lambda_tv=args.lambda_tv,
+        save_path=os.path.join(args.output_dir, 'loss_vs_coverage.png'),
+    )
     
     # Save numerical results
     results_path = os.path.join(args.output_dir, 'metrics_results.npz')
@@ -1609,10 +1690,21 @@ def main():
              error_field=error_field,
              residual_field=residual_field,
              cfd_time=cfd_time if cfd_time is not None else -1,
+             pinn_inference_time=pinn_inference_time,
+             hybrid_solve_time=hybrid_solve_time,
+             hybrid_rmse=rmse_hybrid,
+             pinn_rmse=rmse_scores[0],
              u_hybrid=u_hybrid,
              v_hybrid=v_hybrid,
              p_hybrid=p_hybrid,
              cfd_mask=cfd_mask,
+             # Run config (for aggregation across configs)
+             cfg_cylinder_x=args.cylinder_x,
+             cfg_cylinder_y=args.cylinder_y,
+             cfg_cylinder_radius=args.cylinder_radius,
+             cfg_inlet_velocity=args.inlet_velocity,
+             cfg_Re=args.Re,
+             cfg_beta=args.beta,
              # Full loss curve optimal (used for hybrid solution)
              full_loss_optimal_threshold=full_loss_optimal['optimal_threshold'],
              full_loss_optimal_coverage=full_loss_optimal['optimal_coverage'],
