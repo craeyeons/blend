@@ -557,20 +557,18 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
         if nonneg:
             vmin, vmax = 0.0, float(np.max(stacked))
         else:
-            absmax = float(np.max(np.abs(stacked)))
+            absmax = float(np.max(np.abs(stacked))) + 1e-30
             vmin, vmax = -absmax, absmax
 
-        # Identical contour levels across all three columns so the colour
-        # mapping is shared exactly (not just the colorbar range).
-        levels = np.linspace(vmin, vmax, 50)
-        norm = Normalize(vmin=vmin, vmax=vmax)
-        cf_last = None
-
+        # Each column has its own axes + colorbar, but the colour scale
+        # (vmin, vmax) is shared across the row so PINN | Hybrid | CFD use
+        # identical mapping.  Matches the Poisson `solution_exp3_*` style.
         for j, f in enumerate(fields):
             ax = axes[i, j]
-            data = np.ma.masked_where(layout == 0, f)
-            cf_last = ax.contourf(X, Y, data, levels=levels, cmap=cmap,
-                                  norm=norm, extend='both')
+            data = np.where(fluid, f, np.nan)
+            im = ax.pcolormesh(X, Y, data, cmap=cmap,
+                               vmin=vmin, vmax=vmax, shading='auto')
+            plt.colorbar(im, ax=ax, fraction=0.046, label=label)
             circle = plt.Circle((cx, cy), cylinder_radius,
                                 color='gray', fill=True, zorder=5)
             ax.add_patch(circle)
@@ -599,10 +597,6 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                 ax.set_ylabel(label)
             if i == len(rows) - 1:
                 ax.set_xlabel('x')
-
-        # One shared colorbar per row, attached to the right of column 3.
-        fig.colorbar(cf_last, ax=axes[i, :].tolist(), label=label,
-                     fraction=0.025, pad=0.02)
 
     if title is not None:
         fig.suptitle(title, fontsize=14, y=0.995)

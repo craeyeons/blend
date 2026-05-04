@@ -38,88 +38,88 @@ print('TF:', tf.__version__, 'GPU:', tf.config.list_physical_devices('GPU'))
 #   Mid-position cylinder; no router. Threshold R(x) = norm(|r|+|e|) > 1.1
 #   to form Omega_C, run hybrid, report single hybrid RMSE vs full CFD.
 # ============================================================
-echo ""
-echo "=============================================================="
-echo "=== Exp 1: CFD naive-threshold sanity (mid cylinder)"
-echo "=============================================================="
-rm -rf ./naive_threshold_output_cfd
-python run_naive_threshold_cfd.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
-    --cylinder-x 0.5 --cylinder-y 0.5 --cylinder-radius 0.1 \
-    --inlet-velocity 1.0 --Re 100 \
-    --beta 1.1 \
-    --no-morph \
-    --output-dir ./naive_threshold_output_cfd
-
-# ============================================================
-# Experiment 2: Poisson naive-threshold sanity check
-#   src_p1 (in-distribution); same threshold rule; single number.
-# ============================================================
-echo ""
-echo "=============================================================="
-echo "=== Exp 2: Poisson naive-threshold sanity (src_p1)"
-echo "=============================================================="
-cd /home/s/simpsone/blend2/helmholtz || exit 1
-python -c "import skfem" 2>/dev/null || pip install --no-input scikit-fem
-rm -rf ./naive_threshold_output_poisson
-python run_naive_threshold_poisson.py \
-    --config-name src_p1 \
-    --configs configs_exp3.json \
-    --beta 1.1 \
-    --mesh-n 129 --nx 201 --ny 201 \
-    --sigma 0.05 --amplitude 250.0 \
-    --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
-    --output-dir ./naive_threshold_output_poisson
-cd /home/s/simpsone/blend2 || exit 1
-
-# ============================================================
-# Experiment 3: CFD wrong-PINN with trained router
-#   Test geometry: Re=100, (x=0.55, y=0.5, r=0.1)  -- a 0.05 shift
-#       from train config 3 -- router has NOT seen this case.
-#   PINN used: train config 3 checkpoint (trained at x=0.5).
-#   Router: freshly retrained on configs_multi_cylinder.json.
-# ============================================================
 # echo ""
 # echo "=============================================================="
-# echo "=== Exp 3a: Retrain multi-config router (for wrongpinn eval)"
+# echo "=== Exp 1: CFD naive-threshold sanity (mid cylinder)"
 # echo "=============================================================="
-# rm -rf router_output_multi
-# python train_router_multi.py \
-#     --config configs_multi_cylinder.json \
-#     --output-dir ./router_output_multi \
-#     --epochs 2000 \
+# rm -rf ./naive_threshold_output_cfd
+# python run_naive_threshold_cfd.py \
+#     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
+#     --cylinder-x 0.5 --cylinder-y 0.5 --cylinder-radius 0.1 \
+#     --inlet-velocity 1.0 --Re 100 \
 #     --beta 1.1 \
-#     --lambda-tv 1.0 \
-#     --lr 1e-3
+#     --no-morph \
+#     --output-dir ./naive_threshold_output_cfd
 
-echo ""
-echo "=============================================================="
-echo "=== Exp 3b: CFD wrong-PINN, trained router, shifted-x test"
-echo "=============================================================="
-rm -rf ./metrics_output_wrongpinn_cfd
-python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
-    --router-weights ./router_output_multi/router.weights.h5 \
-    --compute-cfd \
-    --save-cfd ./cfd_wrongpinn_cfd.npz \
-    --beta 1.1 \
-    --cylinder-x 0.55 --cylinder-y 0.5 --cylinder-radius 0.1 \
-    --inlet-velocity 1.0 --Re 100 \
-    --output-dir ./metrics_output_wrongpinn_cfd
+# # ============================================================
+# # Experiment 2: Poisson naive-threshold sanity check
+# #   src_p1 (in-distribution); same threshold rule; single number.
+# # ============================================================
+# echo ""
+# echo "=============================================================="
+# echo "=== Exp 2: Poisson naive-threshold sanity (src_p1)"
+# echo "=============================================================="
+# cd /home/s/simpsone/blend2/helmholtz || exit 1
+# python -c "import skfem" 2>/dev/null || pip install --no-input scikit-fem
+# rm -rf ./naive_threshold_output_poisson
+# python run_naive_threshold_poisson.py \
+#     --config-name src_p1 \
+#     --configs configs_exp3.json \
+#     --beta 1.1 \
+#     --mesh-n 129 --nx 201 --ny 201 \
+#     --sigma 0.05 --amplitude 250.0 \
+#     --hole-center-x 0.5 --hole-center-y 0.5 --hole-radius 0.15 \
+#     --output-dir ./naive_threshold_output_poisson
+# cd /home/s/simpsone/blend2 || exit 1
 
-echo "=== Metrics: Multi-Cylinder TEST (unseen config) ==="
-python plot_coverage_metrics.py \
-    --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
-    --router-weights ./router_output_multi/router.weights.h5 \
-    --compute-cfd \
-    --save-cfd ./cfd_test_cy0.65.npz \
-    --beta 1.1 \
-    --cylinder-y 0.4 \
-    --cylinder-x 0.6 \
-    --cylinder-radius 0.13 \
-    --inlet-velocity 6.0 \
-    --Re 600 \
-    --output-dir ./metrics_output_test_cy0.65
+# # ============================================================
+# # Experiment 3: CFD wrong-PINN with trained router
+# #   Test geometry: Re=100, (x=0.55, y=0.5, r=0.1)  -- a 0.05 shift
+# #       from train config 3 -- router has NOT seen this case.
+# #   PINN used: train config 3 checkpoint (trained at x=0.5).
+# #   Router: freshly retrained on configs_multi_cylinder.json.
+# # ============================================================
+# # echo ""
+# # echo "=============================================================="
+# # echo "=== Exp 3a: Retrain multi-config router (for wrongpinn eval)"
+# # echo "=============================================================="
+# # rm -rf router_output_multi
+# # python train_router_multi.py \
+# #     --config configs_multi_cylinder.json \
+# #     --output-dir ./router_output_multi \
+# #     --epochs 2000 \
+# #     --beta 1.1 \
+# #     --lambda-tv 1.0 \
+# #     --lr 1e-3
+
+# echo ""
+# echo "=============================================================="
+# echo "=== Exp 3b: CFD wrong-PINN, trained router, shifted-x test"
+# echo "=============================================================="
+# rm -rf ./metrics_output_wrongpinn_cfd
+# python plot_coverage_metrics.py \
+#     --pinn-path ./models/pinn_cylinder_Re100_0.5_0.5_0.1.h5 \
+#     --router-weights ./router_output_multi/router.weights.h5 \
+#     --compute-cfd \
+#     --save-cfd ./cfd_wrongpinn_cfd.npz \
+#     --beta 1.1 \
+#     --cylinder-x 0.55 --cylinder-y 0.5 --cylinder-radius 0.1 \
+#     --inlet-velocity 1.0 --Re 100 \
+#     --output-dir ./metrics_output_wrongpinn_cfd
+
+# echo "=== Metrics: Multi-Cylinder TEST (unseen config) ==="
+# python plot_coverage_metrics.py \
+#     --pinn-path ./models/pinn_cylinder_Re600_0.6_0.4_0.13.h5 \
+#     --router-weights ./router_output_multi/router.weights.h5 \
+#     --compute-cfd \
+#     --save-cfd ./cfd_test_cy0.65.npz \
+#     --beta 1.1 \
+#     --cylinder-y 0.4 \
+#     --cylinder-x 0.6 \
+#     --cylinder-radius 0.13 \
+#     --inlet-velocity 6.0 \
+#     --Re 600 \
+#     --output-dir ./metrics_output_test_cy0.65
 
 # ============================================================
 # Regenerate solution_comparison.png for the held-out test config with the
