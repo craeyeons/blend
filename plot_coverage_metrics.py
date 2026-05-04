@@ -560,12 +560,17 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
             absmax = float(np.max(np.abs(stacked)))
             vmin, vmax = -absmax, absmax
 
+        # Identical contour levels across all three columns so the colour
+        # mapping is shared exactly (not just the colorbar range).
+        levels = np.linspace(vmin, vmax, 50)
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        cf_last = None
+
         for j, f in enumerate(fields):
             ax = axes[i, j]
             data = np.ma.masked_where(layout == 0, f)
-            cf = ax.contourf(X, Y, data, levels=50, cmap=cmap,
-                             norm=Normalize(vmin=vmin, vmax=vmax))
-            plt.colorbar(cf, ax=ax, label=label)
+            cf_last = ax.contourf(X, Y, data, levels=levels, cmap=cmap,
+                                  norm=norm, extend='both')
             circle = plt.Circle((cx, cy), cylinder_radius,
                                 color='gray', fill=True, zorder=5)
             ax.add_patch(circle)
@@ -594,6 +599,10 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                 ax.set_ylabel(label)
             if i == len(rows) - 1:
                 ax.set_xlabel('x')
+
+        # One shared colorbar per row, attached to the right of column 3.
+        fig.colorbar(cf_last, ax=axes[i, :].tolist(), label=label,
+                     fraction=0.025, pad=0.02)
 
     if title is not None:
         fig.suptitle(title, fontsize=14, y=0.995)

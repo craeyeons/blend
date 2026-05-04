@@ -121,4 +121,31 @@ python plot_coverage_metrics.py \
     --Re 600 \
     --output-dir ./metrics_output_test_cy0.65
 
+# ============================================================
+# Regenerate solution_comparison.png for the held-out test config with the
+# updated plotting code (identical contour levels + one shared colorbar per
+# row, so PINN | Hybrid | CFD truly use the same scale).  Reuses the CFD
+# solution already saved by the previous time_multi run to avoid re-solving.
+# ============================================================
+echo ""
+echo "=============================================================="
+echo "=== Regen: solution_comparison.png for held-out test config"
+echo "=============================================================="
+TEST_CFD=./time_multi_runs/test_00_x0.6_y0.55_r0.11_u1.0/cfd.npz
+TEST_OUT=./solution_test_rerun
+rm -rf "$TEST_OUT"
+if [ -f "$TEST_CFD" ]; then
+    CFD_ARGS="--cfd-path $TEST_CFD"
+else
+    CFD_ARGS="--compute-cfd --save-cfd ./cfd_test_held_out.npz"
+fi
+python plot_coverage_metrics.py \
+    --pinn-path ./models/pinn_cylinder_Re100_0.6_0.55_0.11.h5 \
+    --router-weights ./router_output_multi/router.weights.h5 \
+    $CFD_ARGS \
+    --beta 1.1 \
+    --cylinder-x 0.6 --cylinder-y 0.55 --cylinder-radius 0.11 \
+    --inlet-velocity 1.0 --Re 100 \
+    --output-dir "$TEST_OUT"
+
 echo "=== Job completed ==="
