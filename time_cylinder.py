@@ -152,7 +152,8 @@ def make_hybrid_sim(args, pinn_model, cfd_mask):
     )
 
 
-def compute_router_output_and_ete(router, layout, bc_mask, bc_u, bc_v, bc_p,
+def compute_router_output_and_ete(router, pinn_model, X, Y,
+                                  layout, bc_mask, bc_u, bc_v, bc_p,
                                   pinn_u, pinn_v, pinn_p,
                                   x_min, x_max, y_min, y_max, nu):
     """Compute router output together with channel-8 error transport field."""
@@ -263,7 +264,8 @@ def main():
     _ = router(inputs)
     router.load_weights(args.router_weights)
     router_output, error_transport = compute_router_output_and_ete(
-        router, layout, bc_mask, bc_u, bc_v, bc_p,
+        router, pinn_model, X, Y,
+        layout, bc_mask, bc_u, bc_v, bc_p,
         pinn_u, pinn_v, pinn_p,
         args.x_min, args.x_max, args.y_min, args.y_max, nu,
     )
@@ -336,7 +338,8 @@ def main():
         with contextlib.redirect_stdout(io.StringIO()):
             t0 = time.perf_counter()
             router_output_timed, _ = compute_router_output_and_ete(
-                router, layout, bc_mask, bc_u, bc_v, bc_p,
+                router, pinn_model, X, Y,
+                layout, bc_mask, bc_u, bc_v, bc_p,
                 pinn_u, pinn_v, pinn_p,
                 args.x_min, args.x_max, args.y_min, args.y_max, nu,
             )
