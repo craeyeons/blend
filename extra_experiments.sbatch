@@ -148,4 +148,58 @@ python plot_coverage_metrics.py \
     --inlet-velocity 1.0 --Re 100 \
     --output-dir "$TEST_OUT"
 
+# ---- Actual-hybrid RMSE-vs-coverage sweep (10% increments) + optimal ----
+echo ""
+echo "=== Sweep: actual hybrid solves at 10% coverage increments (test) ==="
+python time_cylinder.py \
+    --pinn-path ./models/pinn_cylinder_Re100_0.6_0.55_0.11.h5 \
+    --router-weights ./router_output_multi/router.weights.h5 \
+    --output-dir "$TEST_OUT" \
+    --beta 1.1 \
+    --cylinder-x 0.6 --cylinder-y 0.55 --cylinder-radius 0.11 \
+    --inlet-velocity 1.0 --Re 100 \
+    --n-runs 1
+
+echo "=== Composing rmse_vs_coverage.png (sweep + optimal star) ==="
+python <<PYEOF
+import os, numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+out = "$TEST_OUT"
+sweep = np.load(os.path.join(out, 'timing_sweep.npz'))
+metrics = np.load(os.path.join(out, 'metrics_results.npz'))
+
+cov_sweep = sweep['coverage']
+rmse_sweep = sweep['rmse']
+cov_opt = float(metrics['full_loss_optimal_coverage'])
+rmse_opt = float(metrics['hybrid_rmse'])
+beta = float(metrics['cfg_beta']) if 'cfg_beta' in metrics.files else 1.1
+
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.plot(cov_sweep * 100, rmse_sweep, 'o-', linewidth=2, markersize=6,
+        color='tab:blue', label='Hybrid sweep (10% increments)')
+ax.scatter([cov_opt * 100], [rmse_opt], marker='*', s=260, color='green',
+           zorder=6, edgecolor='black', linewidths=1,
+           label=f'Optimal (cov={cov_opt*100:.0f}%)')
+ax.axhline(rmse_sweep[0], color='purple', linestyle='--', linewidth=1.2,
+           alpha=0.5, label=f'PINN only: {rmse_sweep[0]:.4f}')
+ax.axhline(rmse_sweep[-1], color='teal', linestyle='--', linewidth=1.2,
+           alpha=0.5, label=f'CFD only: {rmse_sweep[-1]:.4f}')
+ax.set_xlabel('Coverage (% solved by CFD)', fontsize=13)
+ax.set_ylabel('Hybrid RMSE (vs CFD)', fontsize=13)
+ax.set_title(f'RMSE vs Coverage  (held-out test, β = {beta})',
+             fontsize=14, fontweight='bold')
+ax.set_xlim(-5, 105)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.grid(True, alpha=0.3)
+ax.legend(loc='best', fontsize=9)
+fig.tight_layout()
+out_path = os.path.join(out, 'rmse_vs_coverage.png')
+fig.savefig(out_path, dpi=150, bbox_inches='tight')
+print(f'  Saved {out_path}')
+PYEOF
+
 echo "=== Job completed ==="
