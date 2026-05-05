@@ -1,0 +1,283 @@
+\section{Construction of the Rejector Loss}
+\label{sec:method}
+
+The Bayes rejector of Lemma~\ref{lem:bayes-rej} compares the conditional
+risk $\eta_h(x)=\E[\psi(h(x),Y)\mid X=x]$ with the abstention cost $c(x)$.
+For a PINN deployed on a deterministic boundary-value problem two further
+steps are needed before this rule can be implemented. First, the abstract
+discrepancy $\psi$ has to be instantiated in a way that aligns the
+abstention layer with the pointwise notion of error practitioners report
+(Section~\ref{sec:method-psi}). Second, $\eta_h$ is unobservable -- it
+depends on the unknown solution $u^\star$, and obtaining labels would
+require running the very fallback solver the PINN is meant to amortise --
+so the rejector must be trained against a self-supervised proxy built
+from quantities the PINN itself exposes
+(Sections~\ref{sec:method-proxy}--\ref{sec:method-consistency}).
+
+\subsection{The pointwise discrepancy in the PDE setting}
+\label{sec:method-psi}
+
+For a deterministic PDE the conditional law of $Y$ given $X=x$ is the
+point mass at $u^\star(x)$, so $\eta_h(x)=\psi(h(x),u^\star(x))$ collapses
+to a deterministic pointwise quantity. The choice of $\psi$ then directly
+fixes which notion of error the rejector enforces. We take
+\begin{equation}
+  \psi(a,b)\;:=\;\|a-b\|_2,
+  \label{eq:psi-norm}
+\end{equation}
+the unsquared Euclidean discrepancy. Two reasons recommend
+\eqref{eq:psi-norm} over alternatives such as squared, relative, or
+operator-weighted norms. First, $\eta_h(x)=\|h(x)-u^\star(x)\|_2$ is
+exactly the pointwise solution error: a region where it is large is a
+region whose PINN values would visibly contaminate downstream physical
+diagnostics (forces, fluxes, integrated quantities), while a region where
+it is small is one where the PINN can be deployed as drop-in for the
+solver. The threshold rule of Lemma~\ref{lem:bayes-rej} therefore reads as
+``replace the PINN exactly where its pointwise error exceeds the per-point
+cost of running the solver instead'', which is the operational statement
+the abstention layer is meant to provide. Second, with this choice $\eta_h$
+and the proxy constructed below share the same dimensions and the same
+units as $u^\star$, so the cost $c(x)$ is expressed in the same unit
+system, and the threshold rule is dimensionally homogeneous across PDE
+families and grids.
+
+The substantive obstacle is that $u^\star$, and hence $\eta_h$, is
+unavailable. The rejector therefore cannot be trained against
+\eqref{eq:psi-norm} directly; it must be trained against a computable
+proxy $\rho^\theta(x)$ that approximates $\eta_h(x)$ from quantities
+derivable from $h$ alone. Constructing such a proxy is the subject of
+Section~\ref{sec:method-proxy}; the rest of the method then proceeds with
+$\rho^\theta$ playing the role $\eta_h$ would have played if it had been
+observable.
+
+\subsection{A self-supervised proxy from residual and error transport}
+\label{sec:method-proxy}
+
+The strong-form interior residual of the trained PINN $h=\widehat{u}_\theta$,
+\begin{equation*}
+  \mathfrak{r}^\theta(x)\;:=\;\Ncal[h](x)-f(x),\qquad x\in\Omega,
+\end{equation*}
+is the most natural pointwise imbalance signal and is computed by
+automatic differentiation through $h$ at negligible cost. Used in
+isolation, however, it is a poor proxy for $\eta_h$: the PDE operator
+generally smooths or attenuates errors, allowing $|h(x)-u^\star(x)|$ to be
+large where $\|\mathfrak{r}^\theta(x)\|$ is small and vice versa
+\citep{verfurth2013posteriori,phillips2011residual}. This is the
+well-known \emph{residual--error gap}, and it is precisely the gap that an
+a-posteriori bound such as \eqref{eq:apost} closes only in a global norm.
+
+The error-transport equation closes the gap pointwise by transporting the
+residual through a linearisation of $\Ncal$ at $h$. Let $\Lcal_h$ denote
+the formal Fr\'echet derivative of $\Ncal$ at $h$ (e.g.\ for steady
+advection--diffusion $\Ncal[u]=u\!\cdot\!\nabla u-\nu\Delta u$,
+$\Lcal_h[v]=h\!\cdot\!\nabla v+v\!\cdot\!\nabla h-\nu\Delta v$;
+for the Poisson operator $\Lcal_h=-\Delta$ regardless of $h$). Define
+the \emph{error-transport estimate} $e^\theta:\Omega\to\R^{d_u}$ as the
+solution of the linearised boundary-value problem
+\begin{equation}
+  \Lcal_h[e^\theta](x)\;=\;\mathfrak{r}^\theta(x),
+  \quad x\in\Omega,
+  \qquad
+  e^\theta\big|_{\partial\Omega}\;=\;0,
+  \label{eq:ete}
+\end{equation}
+discretised on the same grid the fallback solver will use and computed by
+a single Jacobi sweep, FFT inverse of $-\Delta$, or whatever direct
+linear solve is most natural for $\Lcal_h$ -- in every case a cost
+strictly dominated by one full nonlinear fallback solve. The Taylor
+expansion $\Ncal[h]-\Ncal[u^\star]
+=\Lcal_h[h-u^\star]+\Rcal_2(h-u^\star)$ together with $\Ncal[u^\star]=f$
+gives $\Lcal_h[h-u^\star]=\mathfrak{r}^\theta+\Rcal_2(h-u^\star)$; combining
+with~\eqref{eq:ete} yields
+$e^\theta-(h-u^\star)=\Lcal_h^{-1}[-\Rcal_2(h-u^\star)]$, so $e^\theta$
+recovers the pointwise error to first order in $\|h-u^\star\|$
+\citep{phillips2011residual}.
+
+\paragraph{Per-summand normalisation.}
+The two natural pointwise signals $\|\mathfrak{r}^\theta(x)\|$ and
+$\|e^\theta(x)\|$ are not directly commensurable. By construction
+$e^\theta$ shares the units of $u^\star$, whereas $\mathfrak{r}^\theta=
+\Ncal[h]-f$ inherits the units of $\Ncal[u^\star]$ and so differs from
+$e^\theta$ by the units of the differential operator (e.g.\
+$\mathrm{length}^{-2}$ for $-\Delta$). Adding them raw would couple the
+threshold $c(x)$ to the choice of physical units and to the grid
+spacing, which we want to avoid: a router calibrated on one PDE family or
+discretisation should not have to be retuned every time units or grid
+resolution change. We therefore rescale each summand by its own domain
+median before combining. Let
+\begin{equation}
+  m_{\mathrm{r}}\;:=\;\mathrm{median}_{x\in\Omega}\,\bigl\|\mathfrak{r}^\theta(x)\bigr\|,
+  \qquad
+  m_{\mathrm{e}}\;:=\;\mathrm{median}_{x\in\Omega}\,\bigl\|e^\theta(x)\bigr\|,
+  \label{eq:medians}
+\end{equation}
+both of which are strictly positive whenever $h\neq u^\star$ on a set of
+positive measure (else the routing problem is empty). The proxy is then
+\begin{equation}
+  \rho^\theta(x)\;:=\;
+  \frac{\bigl\|\mathfrak{r}^\theta(x)\bigr\|}{m_{\mathrm{r}}}
+  \;+\;
+  \frac{\bigl\|e^\theta(x)\bigr\|}{m_{\mathrm{e}}},
+  \label{eq:rho-def}
+\end{equation}
+which is a dimensionless non-negative scalar field with
+$\mathrm{median}_{x\in\Omega}\,\rho^\theta(x)\in[1,2]$ by construction
+(each summand has unit median; their sum has median in this range by
+sub-additivity of the median functional). Median rather than mean
+normalisation is deliberate: PINN residual fields are heavy-tailed and
+right-skewed \citep{wang2021understanding,wang2022whenpinns}, so the mean
+is dominated by the same hot spots the rejector is meant to detect,
+collapsing $\rho^\theta\approx 1$ everywhere; the median tracks the bulk
+and pushes hot spots into the long tail $\rho^\theta\gg 1$ where the
+threshold rule must operate. Throughout the rest of the paper, $c(x)$ is
+expressed in the same dimensionless units as \eqref{eq:rho-def}, so the
+threshold rule $\rho^\theta(x)>c(x)$ is invariant to unit and grid
+changes that affect $\|\mathfrak{r}^\theta\|$ and $\|e^\theta\|$
+multiplicatively.
+
+\begin{assumption}[Linearisation faithfulness of the proxy]
+\label{ass:linearisation}
+There exist constants $\kappa_1,\kappa_2>0$ depending on the PDE and on
+$\theta$, and a non-negative linearisation residual
+$\delta_{\mathrm{lin}}^\theta:\Omega\to\R_{\geq 0}$ with
+$\delta_{\mathrm{lin}}^\theta(x)=o(\|h(x)-u^\star(x)\|)$ as
+$\|h-u^\star\|_{L^\infty}\to 0$, such that for $\Pr_X$-a.e.\ $x\in\Omega$,
+\[
+  \kappa_1\,\frac{\bigl\|h(x)-u^\star(x)\bigr\|}{m_{u}}
+  \;\leq\;\rho^\theta(x)\;\leq\;
+  \kappa_2\,\frac{\bigl\|h(x)-u^\star(x)\bigr\|}{m_{u}}
+  \;+\;\delta_{\mathrm{lin}}^\theta(x),
+\]
+where $m_{u}:=\mathrm{median}_{x\in\Omega}\|h(x)-u^\star(x)\|$ is the
+median pointwise PINN error.
+\end{assumption}
+
+The two summands of \eqref{eq:rho-def} carry complementary information.
+$\|\mathfrak{r}^\theta\|/m_{\mathrm{r}}$ flags equation imbalance and is
+local; it contributes the upper bound through the bounded-operator
+estimate
+$\|\mathfrak{r}^\theta\|\leq\|\Lcal_h\|\,\|h-u^\star\|+\|\Rcal_2\|$.
+$\|e^\theta\|/m_{\mathrm{e}}$ contributes the lower bound: by~\eqref{eq:ete}
+a non-zero residual at one location reaches far-field points
+proportionally to the Green's function of $\Lcal_h$, so $\|e^\theta\|$
+tracks the \emph{spread} of the imbalance through the operator and
+prevents the proxy from collapsing to zero at points where the residual
+happens to be small but the propagated error is not. The normalised sum
+therefore flags both local imbalance and operator-mediated propagation,
+in shared dimensionless units.
+
+Substituting \eqref{eq:rho-def} for $\eta_h$ in the abstention loss
+\eqref{eq:abs-loss} gives the \emph{computable} pointwise abstention loss
+\begin{equation}
+  L(s)
+  \;:=\;
+  \E_X\!\Bigl[\rho^\theta(X)\,\ind\{s(X)\leq 0\}+c(X)\,\ind\{s(X)>0\}\Bigr],
+  \label{eq:proxy-target}
+\end{equation}
+parameterised by a measurable score $s\in\Hcal_r$ with the convention
+$r_s(x)=\ind\{s(x)>0\}$ inherited from Section~\ref{sec:bg-reject}. By
+construction, both $\rho^\theta$ and $c$ are evaluated from the trained
+PINN and the solver-cost model alone, with no appeal to $u^\star$, and
+Assumption~\ref{ass:linearisation} guarantees that the proxy Bayes rule
+$\ind\{\rho^\theta>c\}$ agrees with the true Bayes rule
+$\ind\{\eta_h>c\}$ outside a band of width $\mathcal{O}(\delta_{\mathrm{lin}})$
+around the level set $\eta_h=c$.
+
+\subsection{The surrogate loss and its pointwise minimiser}
+\label{sec:method-surrogate}
+
+The indicator in \eqref{eq:proxy-target} prevents direct gradient-based
+minimisation. We replace it with the standard logistic relaxation
+\begin{equation}
+  \Phi_{\mathrm{abs}}(s;x)
+  \;:=\;
+  \rho^\theta(x)\,\softplus\!\bigl(-s\bigr)
+  \;+\;c(x)\,\softplus\!\bigl(s\bigr),
+  \qquad s\in\R,
+  \label{eq:surrogate}
+\end{equation}
+with associated population surrogate risk
+$\Ecal_\Phi(s):=\E_X[\Phi_{\mathrm{abs}}(s(X);X)]$. The two terms encode
+the two costs the rejector trades: keeping the PINN at $x$ incurs
+$\rho^\theta(x)$, and abstaining incurs $c(x)$, each weighted by a smooth
+indicator of the corresponding decision. Smoothness of $\softplus$ in
+$s$ is what makes \eqref{eq:surrogate} amenable to gradient descent over
+$\Hcal_r$.
+
+The first sanity check on \eqref{eq:surrogate} is that its pointwise
+minimiser recovers the proxy Bayes rule. This is a direct calibration
+fact, analogous to the one familiar from binary logistic regression, but
+with a continuous input-dependent ``label'' $\rho^\theta(x)$ and an
+input-dependent threshold $c(x)$.
+
+\begin{proposition}[Pointwise minimiser of the surrogate]
+\label{prop:pointwise-min}
+For $\Pr_X$-a.e.\ $x\in\Omega$ with $\rho^\theta(x),c(x)>0$, the unique
+pointwise minimiser of $\Phi_{\mathrm{abs}}(\,\cdot\,;x)$ is
+\[
+  s^\star(x)\;=\;\log\frac{\rho^\theta(x)}{c(x)},
+\]
+and the induced rejector $r_{s^\star}(x)=\ind\{s^\star(x)>0\}$ agrees
+with $\ind\{\rho^\theta(x)>c(x)\}$, the proxy form of the Bayes rejector
+of Lemma~\ref{lem:bayes-rej}. The proof is given in
+Appendix~\ref{app:pointwise-min}.
+\end{proposition>
+
+Two boundary cases are worth naming. If $\rho^\theta(x)=0$ at some point
+the PINN exactly satisfies the local linearised problem and the pointwise
+minimiser is $s^\star=-\infty$ (always-PINN); if $c(x)=0$ the solver is
+free at that point and $s^\star=+\infty$ (always-solver). Both degenerate
+cases are excluded throughout by $\rho^\theta,c>0$ on the active grid;
+neither arises in the experiments of Section~\ref{sec:experiments}. In
+the regime where Proposition~\ref{prop:pointwise-min} applies, the
+surrogate is the unique smooth relaxation of \eqref{eq:proxy-target} whose
+pointwise minimiser recovers the proxy threshold rule, and it is the
+construction we minimise during training.
+
+\subsection{$\Hcal$-consistency}
+\label{sec:method-consistency}
+
+Pointwise calibration is necessary but not sufficient for learning. In
+practice $\Ecal_\Phi$ is minimised over a hypothesis class $\Hcal_r$ from
+finite samples and finite optimisation budget, and we never reach
+$s^\star$ exactly. The relevant guarantee is that small \emph{surrogate}
+excess risk $\Ecal_\Phi(s)-\Ecal_\Phi(s^\star)$ implies small
+\emph{abstention} excess risk $L(r_s)-L(r_{s^\star})$ within $\Hcal_r$,
+in the sense of the $\Hcal$-consistency framework of
+\citet{Awasthi_Mao_Mohri_Zhong_2022_multi,
+mao2023crossentropylossfunctionstheoretical,Mao_Mohri_Zhong_2023}.
+Theorem~\ref{thm:h-consistency} answers in the affirmative with the
+square-root rate that is characteristic of strictly convex
+surrogates~\citep{bartlett2006convexity}.
+
+\begin{theorem}[$\Hcal$-consistency bound for $\Phi_{\mathrm{abs}}$]
+\label{thm:h-consistency}
+Assume $\rho_{\max}:=\esssup_{X}\rho^\theta(X)<\infty$ and
+$c_{\max}:=\esssup_{X}c(X)<\infty$, and let $\Hcal_r$ contain the
+constant scores $\{s\equiv 0\}$. Then for every measurable
+$s:\Omega\to\R$,
+\begin{equation}
+  L(r_s)-L(r_{s^\star})
+  \;\leq\;
+  \sqrt{\,2\,(\rho_{\max}+c_{\max})\,\bigl(\Ecal_\Phi(s)-\Ecal_\Phi(s^\star)\bigr)\,}.
+  \label{eq:h-consistency-main}
+\end{equation}
+\end{theorem}
+
+The proof, via a Pinsker-type pointwise gap bound on the disagreement set
+followed by a Cauchy--Schwarz aggregation, is given in
+Appendix~\ref{app:hconsistency}.
+
+The bound \eqref{eq:h-consistency-main} states the operationally relevant
+fact: as the rejector class $\Hcal_r$ and the optimisation drive
+$\Ecal_\Phi(s)$ toward $\Ecal_\Phi(s^\star)$, the proxy abstention excess
+$L(r_s)-L(r_{s^\star})$ vanishes at rate $\sqrt{\,\cdot\,}$. The constant
+$2(\rho_{\max}+c_{\max})$ is the natural one: it inherits the heavy-tailed
+character of $\rho^\theta$ but is partially compensated because the same
+extreme points incur large pointwise surrogate excess. Combined with
+Assumption~\ref{ass:linearisation}, the bound controls the \emph{true}
+abstention excess up to the linearisation residual
+$\delta_{\mathrm{lin}}^\theta$, which is $o(1)$ in the regime where the
+PINN is at all useful as a starting point. The hybrid construction of
+Section~\ref{sec:hybrid} then turns the rejector's accept/abstain
+decisions into a complete PDE field on $\Omega$.

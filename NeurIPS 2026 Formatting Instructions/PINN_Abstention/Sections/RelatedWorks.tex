@@ -1,0 +1,59 @@
+%\section{Related Work}
+%\label{sec:related}
+%
+%\paragraph{Learning with abstention.} The rejection option originates with
+%\citet{chow1970}, who characterised the optimal error--reject trade-off in
+%classification. Subsequent work developed convex and calibrated losses for
+%binary classification with rejection \citep{bartlett2008classification,
+%cortes,cortes2024theory}, selective deep classification
+%\citep{Geifman_El-Yaniv_2017}, and multi-class rejection
+%\citep{ni2019calibration,cao2022generalizing}. The predictor--rejector
+%formulation most closely related to ours is that of
+%\citet{Mao_Mohri_Zhong_2023}, together with score-based abstention losses
+%analysed by \citet{theoretically}. Regression with cost-based rejection was
+%formalised by \citet{cheng2023regression}. Our setting differs in two
+%respects: the fixed predictor is a PDE solution field evaluated over a
+%spatial or space-time domain, and the abstention cost is tied to the local
+%value of invoking a numerical fallback rather than to a constant reject
+%penalty.
+%
+%\paragraph{Learning to defer.} A neighbouring literature routes examples to
+%external experts instead of returning a pure abstention decision
+%\citep{madras2018predict,mozannar2021consistent,Verma2022LearningTD,
+%Cao_Mozannar_Feng_Wei_An_2023,mao2023twostage,
+%mao2024principledapproacheslearningdefer,liu2026more}. Recent variants
+%consider regression \citep{mao2024regressionmultiexpertdeferral},
+%multi-task settings \citep{montreuil2024twostagelearningtodefermultitasklearning},
+%top-$k$ expert routing \citep{montreuil2026why}, online or budgeted experts
+%\citep{desalvo2025budgetedmultipleexpertdeferral}, and non-stationary
+%streams \citep{montreuil2026learning}. Our fallback solver can be viewed as
+%a single expert with known numerical role and cost model. We use abstention
+%terminology because the learned decision is binary for a fixed PINN: use the
+%PINN prediction or reject it in favour of the solver.
+%
+%\paragraph{$\Hcal$-consistency.} Classical consistency asks whether
+%minimising a surrogate risk also minimises the target risk in the large-data
+%limit \citep{bartlett2006convexity,tewari2007consistency,Steinwart2007HowTC,
+%Zhang}. $\Hcal$-consistency gives sharper, hypothesis-class-specific excess
+%risk bounds and has been developed for multi-class learning, adversarial
+%robustness, abstention, and deferral
+%\citep{Awasthi_Mao_Mohri_Zhong_2022_multi,mao2024h,
+%mao2023crossentropylossfunctionstheoretical,mao2024universalgrowth,
+%mao2024realizablehconsistentbayesconsistentloss}. We use this viewpoint to
+%ask whether a smooth surrogate for the rejector controls the excess
+%abstention risk within the chosen rejector class.
+%
+%\paragraph{Physics-informed neural networks.} PINNs were introduced by
+%\citet{raissi2019physics} and are surveyed in
+%\citet{karniadakis2021physics,cuomo2022scientific}. Their optimisation and
+%generalisation failure modes have been studied through gradient-flow,
+%neural-tangent-kernel, stiffness, and propagation analyses
+%\citep{wang2021understanding,wang2022whenpinns,krishnapriyan2021,
+%wang2022respecting}. Practical remedies include adaptive loss weighting
+%\citep{mcclenny2023self}, adaptive or residual-based collocation sampling
+%\citep{wu2023comprehensive,daw2023mitigating}, and domain decomposition
+%\citep{jagtap2020extended,jagtap2020conservative,moseley2023finite}.
+%\citet{mishra2022estimates} provide a-posteriori estimates connecting
+%residual norms with global solution error under stability assumptions. These
+%methods improve training or global error control; our contribution is
+%post-hoc and local, learning when an already-trained PINN should be trusted.

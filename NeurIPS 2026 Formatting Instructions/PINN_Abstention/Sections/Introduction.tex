@@ -1,0 +1,100 @@
+\section{Introduction}
+\label{sec:intro}
+
+Physics-informed neural networks (PINNs) are a widely used deep-learning
+surrogate for partial differential equations
+\citep{raissi2019physics,karniadakis2021physics,cuomo2022scientific,
+lu2021deepxde}. Their appeal is clearest after training: a neural network
+represents a mesh-free, differentiable field that can be evaluated at
+arbitrary spatial or space-time locations without running a new global
+linear or nonlinear solve \citep{leveque2007finite,brenner2008mathematical}.
+This amortised evaluation cost is attractive, but it does not by itself
+provide the local accuracy guarantees expected of a resolved numerical
+discretisation. On several standard PDE benchmarks, PINNs can exhibit large
+errors in regimes with multiscale structure, stiffness, sharp gradients, or
+unbalanced residual terms \citep{krishnapriyan2021,wang2022whenpinns,
+wang2021understanding}. Existing a-posteriori analyses relate residual
+norms to global solution errors under stability and approximation
+assumptions \citep{mishra2022estimates}; such bounds are valuable, but they
+do not directly identify the particular points or subregions where a trained
+PINN should be trusted.
+
+The missing object is therefore a \emph{local trust rule}. Empirically, PINN
+errors are often highly non-uniform over the domain: a model may approximate
+large smooth regions well while failing near fronts, boundary layers,
+singular features, or other regions whose solution components are difficult
+for the training dynamics to capture \citep{krishnapriyan2021,
+wang2022whenpinns,wang2022respecting}. This observation suggests a different
+deployment goal from uniform replacement of a classical solver. Instead of
+asking a single trained PINN to be accurate everywhere, we ask it to predict
+where it is accurate enough to use and where it should abstain. The natural
+statistical language for this goal is learning with abstention
+\citep{chow1970,bartlett2008classification,Geifman_El-Yaniv_2017,cortes,
+cortes2024theory,cao2022generalizing,ni2019calibration,Mao_Mohri_Zhong_2023,
+theoretically}: a predictor is paired with a rejector that decides, for each
+input, whether to return the prediction or abstain.
+
+Classical abstention would return only a rejection symbol $\bot$ on rejected
+inputs. For PDE surrogates this is usually not enough, because downstream
+simulation, visualisation, or physical diagnostics often require a complete
+solution field. We therefore study abstention with a fallback solver: a
+frozen PINN $\widehat{u}_\theta$ supplies the field on accepted points, while
+a classical numerical solver is used on rejected regions or queried
+locations. If the rejector abstains on a small fraction of the domain, the
+hybrid can preserve much of the amortised efficiency of the PINN while using
+the solver where the PINN is estimated to be unreliable. The precise cost
+depends on the implementation of the fallback solve and the geometry of the
+rejected set, so we model it abstractly through an input-dependent
+abstention cost $c(x)$ rather than assuming a universal per-point solver
+cost.
+
+This perspective is complementary to the large body of work that improves
+PINN training. Loss reweighting based on gradient-flow or neural-tangent
+kernel diagnostics \citep{wang2021understanding,wang2022whenpinns},
+self-adaptive collocation weights \citep{mcclenny2023self}, causal
+residual training \citep{wang2022respecting}, residual-based adaptive
+sampling \citep{wu2023comprehensive,daw2023mitigating}, and domain
+decomposition methods \citep{jagtap2020extended,jagtap2020conservative,
+moseley2023finite} can substantially improve particular classes of PDE
+problems. However, they still return a single global predictor. They do not,
+by themselves, convert a trained PINN into a pointwise certificate of
+reliability, nor do they give a post-hoc rule for routing an already-trained
+model to a fallback solver. Our goal is to add precisely that missing layer:
+a learned rejector whose decision is calibrated to the local error of a
+fixed PINN relative to the cost of abstention.
+
+In the setting studied here, the trained PINN is fixed and the learned object
+is only the rejector. We write the fixed predictor as
+$h=\widehat{u}_\theta$ and measure its pointwise error through a
+non-negative discrepancy $\psi(h(x),u^\star(x))$. The ideal rejection rule
+compares the conditional risk
+$\eta_h(x)=\E[\psi(h(x),Y)\mid X=x]$ with an abstention cost $c(x)$:
+accept the PINN when $\eta_h(x)\le c(x)$ and abstain otherwise. This is the
+same structural comparison as classical rejection, but in a continuous
+regression setting with a spatially varying cost. In practice, $\eta_h$ is
+unobserved, so the rejector must be trained from computable local signals
+such as the PDE residual and linearised error-transport estimates. The
+theoretical task is therefore to design a smooth surrogate whose minimisation
+learns the same accept--reject decision as the Bayes rule.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item We introduce a post-hoc abstention layer for PINNs: a trained field
+  $\widehat{u}_\theta$ is kept frozen, and a separate rejector learns the
+  subregions on which the PINN should be replaced by a numerical fallback.
+\item We formulate this layer as regression with rejection for continuous
+  solution fields, with a general discrepancy $\psi$ and an
+  input-dependent abstention cost $c(x)$, rather than the constant-cost
+  classification setting usually considered in abstention.
+\item We identify the Bayes rejector for a fixed PINN as the local threshold
+  rule $\eta_h(x)>c(x)$, where
+  $\eta_h(x)=\E[\psi(h(x),Y)\mid X=x]$, making explicit the quantity that a
+  PINN reliability model must approximate.
+\item We design the rejector around computable physics-based signals,
+  combining strong-form residual information with linearised
+  error-transport estimates to target the local residual--error gap.
+\item We provide the surrogate-consistency and hybrid-solution analysis
+  needed for deployment: minimising the smooth rejector loss controls the
+  hard abstention decision, and the solver-filled regions yield a complete
+  PDE field rather than a rejection symbol.
+\end{itemize}

@@ -1,0 +1,815 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathtools}
+\usepackage{bbm}
+\usepackage{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{assumption}[theorem]{Assumption}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\softplus}{softplus}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Lcal}{\mathcal{L}}
+\newcommand{\Rcal}{\mathcal{R}}
+\newcommand{\Hcal}{\mathcal{H}}
+\newcommand{\Ncal}{\mathcal{N}}
+\newcommand{\TV}{\mathrm{TV}}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\ind}{\mathbbm{1}}
+
+\title{Theoretical Analysis of the PINN--Classical Router Loss Function: \\
+Calibration, Bayes-Optimal Policy, and Domain Continuity}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We analyse the logistic loss function used to train a learned router that partitions
+a PDE domain into regions solved by a physics-informed neural network (PINN) and a
+classical numerical solver (e.g.\ finite-volume CFD, finite-element FEM, or
+finite-difference FDM).  Since the PINN is frozen, the problem reduces to optimising
+the router alone---a second-stage $\Rcal$-consistency question in the
+predictor-rejector framework of Mao, Mohri, and Zhong~\cite{mao2024predictor}.  We
+show that the logistic surrogate is \emph{classification-calibrated}: its pointwise
+minimiser induces the Bayes-optimal binary assignment, a threshold rule on a
+median-normalised residual--error cost.  We derive an $\Rcal$-consistency bound
+relating target excess to surrogate excess, and analyse the domain continuity and
+approximation properties of the resulting hybrid PINN--classical solution with
+one-way Dirichlet coupling.  Our results are stated for a generic governing
+operator $\Ncal$ on a discretised domain $\Omega \subset \R^d$ and apply
+without modification to both the steady incompressible Navier--Stokes and Poisson
+settings used in our experiments.
+\end{abstract}
+
+%% ========================================================================
+\section{Problem Setup}
+\label{sec:setup}
+%% ========================================================================
+
+\subsection{Domain and Solvers}
+
+Let $\Omega \subset \R^d$ denote a bounded spatial domain discretised on a uniform
+grid, with active region $\Omega_f = \{x \in \Omega : \mathrm{layout}(x) = 1\}$
+(``active'' meaning the cells on which the PDE is to be solved---fluid cells for
+Navier--Stokes, plate-minus-hole cells for Poisson, etc.) and $N \coloneqq |\Omega_f|
+< \infty$.  Let $\Ncal$ denote the governing PDE operator (e.g.\ steady
+incompressible Navier--Stokes, Poisson, Helmholtz, linear elasticity).  Two
+solvers are available:
+
+\begin{itemize}
+\item A \textbf{PINN solver}~$h$, pre-trained and \emph{frozen}, producing an
+  approximate solution field $\mathbf{u}_h \colon \Omega_f \to \R^m$ for each
+  $x \in \Omega_f$, where $m$ is the number of solution components ($m = 3$ for
+  steady NSE in 2D, with $\mathbf{u}_h = (u, v, p)$; $m = 1$ for scalar Poisson;
+  $m = 2$ for plane-strain elasticity, etc.).  Its pointwise rejection cost
+  combines the local PDE residual with an error-transport estimate (ETE) and is
+  then median-normalised:
+  \begin{equation}\label{eq:residual-def}
+    R(x) \;\coloneqq\;
+      \frac{\bigl\|\Ncal[\mathbf{u}_h](x)\bigr\| + \bigl|e(x)\bigr|}
+           {\mathrm{median}_{x' \in \Omega_f}
+            \bigl(\bigl\|\Ncal[\mathbf{u}_h](x')\bigr\| + \bigl|e(x')\bigr|\bigr)}
+      \;\ge\; 0,
+  \end{equation}
+  where $e(x)$ is an estimate of the pointwise PINN error obtained by transporting
+  the residual through a linearisation of the PDE (the error-transport equation
+  $\Lcal_h\,e = \Ncal[\mathbf{u}_h]$, with $\Lcal_h$ the linearisation of $\Ncal$
+  about $\mathbf{u}_h$).  Concrete ETE solvers depend on $\Ncal$: e.g.\ Jacobi
+  sweeps of $\mathbf{u}_h \!\cdot\! \nabla e = \nu\,\Delta e$ for the
+  advection--diffusion linearisation of NSE, an FFT pseudo-inverse of
+  $-\Delta - k^2$ for Helmholtz, or a sparse direct solve of $-\Delta e$ for
+  Poisson.  Median normalisation is robust to the heavy-tailed, right-skewed
+  distribution typical of PDE error proxies: most of the domain has
+  $R(x) \approx 1$, with a long tail where the PINN is inaccurate.  Combining the
+  residual with the ETE $e$ corrects the well-known \emph{residual-to-error gap}:
+  PDE residuals can be small at points where the PINN error is nonetheless large
+  (and vice versa) because the differential operator can attenuate or amplify the
+  underlying error~\cite{verfurth2013posteriori}.
+
+\item A \textbf{classical solver}---a finite-volume / finite-element / finite-
+  difference discretisation of $\Ncal$ (e.g.\ fractional-step CFD with
+  Gauss--Seidel pressure Poisson for NSE, linear FEM for Poisson, direct
+  factorisation for elasticity)---which solves the PDE to discretisation accuracy
+  but at per-point computational cost~$\beta > 0$.  Since $R(x)$ has median~$1$,
+  $\beta$ is directly interpretable independent of the PDE family: $\beta = 1.2$
+  means ``invoke the classical solver wherever the residual--error cost exceeds
+  $1.2\times$ the domain median.''
+\end{itemize}
+
+\subsection{Router}
+
+A \textbf{router} is a function $s \colon \Omega_f \to \R$, parameterised by a
+CNN~$s_\theta$, producing \emph{unbounded logits}:
+\[
+  s(x) \gg 0 \;\Longleftrightarrow\; \text{use the classical solver at } x,
+  \qquad
+  s(x) \ll 0 \;\Longleftrightarrow\; \text{use PINN at } x.
+\]
+The hypothesis class $\Rcal$ is the set of functions realisable by the architecture.
+The hard assignment is obtained by thresholding: $\hat{d}(x) = \ind_{s(x) > 0}$.
+
+\subsection{Target and Surrogate Losses}
+
+The \emph{target (hard-assignment) loss} for a binary router
+$d \colon \Omega_f \to \{0,1\}$:
+\begin{equation}\label{eq:target}
+  L(d) \;\coloneqq\; \frac{1}{N}\sum_{x \in \Omega_f}
+    \bigl[\beta\,d(x) + (1 - d(x))\,R(x)\bigr].
+\end{equation}
+The \emph{surrogate (logistic) loss} for a continuous router
+$s \colon \Omega_f \to \R$:
+\begin{equation}\label{eq:surrogate}
+  \boxed{\;
+  \Lcal(s) \;\coloneqq\;
+    \underbrace{\frac{1}{N}\sum_{x}
+      \Bigl[\beta\,\varphi(s(x), 0)
+        \;+\; R(x)\,\varphi(s(x), 1)\Bigr]}_{\text{logistic routing cost}}
+    \;+\; \underbrace{\lambda_{\mathrm{tv}}\,\TV(s)}_{\text{spatial smoothness}},
+  \;}
+\end{equation}
+where the logistic cost functions are
+\begin{equation}\label{eq:phi}
+  \varphi(s, 0) \;\coloneqq\; \ln(1 + e^{s}) = \softplus(s),
+  \qquad
+  \varphi(s, 1) \;\coloneqq\; \ln(1 + e^{-s}) = \softplus(-s),
+\end{equation}
+and $\TV(s) \coloneqq \frac{1}{N}\sum_{\text{adj.}~(x,x')} |s(x) - s(x')|$ is the
+anisotropic total variation.  We write
+$\bar{\Lcal}(s) \coloneqq
+  \Lcal(s)\big|_{\lambda_{\mathrm{tv}}=0}$ for the
+unregularised surrogate.
+
+\begin{remark}[Logistic cost as a smooth relaxation]\label{rem:logistic}
+The functions $\varphi(s,0)$ and $\varphi(s,1)$ are smooth, strictly positive, and
+satisfy the asymptotic limits
+\[
+  \varphi(s,0) \to
+    \begin{cases} s & s \to +\infty, \\ 0 & s \to -\infty, \end{cases}
+  \qquad
+  \varphi(s,1) \to
+    \begin{cases} 0 & s \to +\infty, \\ -s & s \to -\infty. \end{cases}
+\]
+Thus $\varphi(s,j)$ behaves like the indicator cost $\ind_{s > 0}$ (for $j=0$) or
+$\ind_{s \le 0}$ (for $j=1$) in the large-$|s|$ limit, but provides smooth gradients
+for all finite~$s$.
+\end{remark}
+
+\begin{remark}[Connection to the predictor-rejector framework]\label{rem:framework}
+In~\cite{mao2024predictor}, the abstention loss has the form
+$\ell_{\mathrm{abs}}(h, r, x, y) = \ind_{h(x) \ne y}\,\ind_{r(x) > 0}
++ c\,\ind_{r(x) \le 0}$, where $h$ is a predictor and $r$ is a rejector.  In our
+setting the PINN plays the role of~$h$ (first stage) and the router plays the role
+of~$r$ (second stage), with the discrete classification error $\ind_{h(x) \ne y}$
+replaced by the continuous residual--error cost~$R(x)$ and the abstention cost~$c$
+by~$\beta$.  Crucially, since $h$ is \emph{frozen}, we do not optimise over any
+predictor class~$\Hcal$.  The problem reduces to a pure \emph{$\Rcal$-consistency}
+question for the router, with no joint $(\Hcal, \Rcal)$-optimisation required.
+Nothing in the analysis below depends on the specific form of~$\Ncal$; the only
+PDE-specific input to the proofs is the (nonnegative) field~$R(x)$.
+\end{remark}
+
+%% ========================================================================
+\section{Calibration and Bayes-Optimal Policy}
+\label{sec:calibration}
+%% ========================================================================
+
+Since the PINN is frozen, we only need to establish that minimising the logistic
+surrogate over the router class~$\Rcal$ yields a good hard router.  We first analyse
+the unregularised loss~$\bar{\Lcal}$ (i.e.\ $\lambda_{\mathrm{tv}} = 0$), which
+decomposes into independent pointwise problems.
+
+\subsection{Pointwise Minimiser and Calibration}
+
+\begin{proposition}[Logistic surrogate is calibrated]\label{prop:calibrated}
+For each $x \in \Omega_f$, the pointwise logistic cost
+\begin{equation}\label{eq:ell-logistic}
+  \ell(s; x) \;\coloneqq\;
+    \beta\,\softplus(s) + R(x)\,\softplus(-s)
+\end{equation}
+is strictly convex in $s \in \R$ with unique minimiser
+\begin{equation}\label{eq:s-star}
+  s^*(x) \;=\; \ln\!\frac{R(x)}{\beta}.
+\end{equation}
+The induced binary decision $\ind_{s^*(x) > 0} = \ind_{R(x) > \beta}$ is the
+Bayes-optimal hard assignment.
+\end{proposition}
+
+\begin{proof}
+Differentiating~\eqref{eq:ell-logistic}:
+\begin{equation}\label{eq:ell-deriv}
+  \frac{\partial \ell}{\partial s}
+  = \beta\,\sigma(s) - R(x)\,\sigma(-s)
+  = \beta\,\sigma(s) - R(x)\,(1 - \sigma(s))
+  = (\beta + R(x))\,\sigma(s) - R(x),
+\end{equation}
+where $\sigma(s) = 1/(1 + e^{-s})$ is the logistic sigmoid.  Setting to zero:
+\begin{equation}
+  \sigma(s^*) = \frac{R(x)}{\beta + R(x)},
+  \qquad\text{hence}\qquad
+  s^* = \ln\frac{R(x)}{\beta}.
+\end{equation}
+The second derivative is
+\begin{equation}
+  \frac{\partial^2 \ell}{\partial s^2}
+  = (\beta + R(x))\,\sigma(s)\,(1 - \sigma(s)) > 0
+  \qquad\text{for all } s \in \R,
+\end{equation}
+confirming strict convexity.  Finally,
+$s^*(x) > 0 \iff R(x) > \beta$, so the binary decision
+$\ind_{s^* > 0}$ coincides with the Bayes-optimal assignment.
+\end{proof}
+
+\begin{remark}[Value at the optimum]\label{rem:opt-value}
+The minimum logistic cost at each $x$ is
+\begin{equation}\label{eq:ell-star}
+  \ell(s^*; x) = \beta\,\ln\!\frac{\beta + R}{\beta}
+    + R\,\ln\!\frac{\beta + R}{R}
+  = (\beta + R)\,H_2\!\!\left(\frac{\beta}{\beta + R}\right),
+\end{equation}
+where $H_2(p) = -p\ln p - (1-p)\ln(1-p)$ is the binary entropy in nats.  This is
+strictly greater than the target minimum $\min\{\beta,\,R(x)\}$ for $\beta \ne R(x)$,
+reflecting the smoothness cost of the logistic relaxation.  The gap vanishes as
+$R(x)/\beta \to 0$ or $R(x)/\beta \to \infty$ (confident assignments).
+\end{remark}
+
+\subsection{Bayes-Optimal Router}
+
+\begin{theorem}[Bayes-optimal router]\label{thm:bayes}
+The unique minimiser of $\bar{\Lcal}$ over all $s \colon \Omega_f \to \R$ is
+$s^*(x) = \ln(R(x)/\beta)$ pointwise.  The induced hard router
+\begin{equation}\label{eq:bayes-router}
+  d^*(x) =
+  \begin{cases}
+    0 & \text{if } R(x) < \beta \quad (\text{use PINN}), \\[3pt]
+    1 & \text{if } R(x) > \beta \quad (\text{use CFD}),
+  \end{cases}
+\end{equation}
+achieves optimal target value
+$L(d^*) = \frac{1}{N}\sum_x \min\{\beta,\, R(x)\}$.
+\end{theorem}
+
+\begin{proof}
+Since $\bar{\Lcal}(s) = \frac{1}{N}\sum_x \ell(s(x); x)$ decomposes as a sum of
+independent pointwise terms, the global minimiser is the product of pointwise
+minimisers from Proposition~\ref{prop:calibrated}.  The target value follows from
+$\min\{\beta,\,R\} = \beta\,\ind_{R > \beta} + R\,\ind_{R \le \beta}$.
+\end{proof}
+
+\begin{remark}[Shape of the optimal router]\label{rem:shape}
+The Bayes-optimal router is a \emph{level-set detector} on the residual--error
+field.  The optimal classical-solver region is the superlevel set
+\begin{equation}\label{eq:optimal-cfd}
+  \Omega_C^* \;=\; \bigl\{x \in \Omega_f : R(x) > \beta\bigr\},
+\end{equation}
+and the optimal PINN region is
+$\Omega_P^* = \{x \in \Omega_f : R(x) \le \beta\}$.
+
+\textbf{Interpretation as a Bayes classifier.}
+At each spatial point~$x$, the router performs a binary decision between two
+``actions'': use PINN (cost $R(x)$) or use the classical solver (cost $\beta$).
+The Bayes-optimal decision rule selects the action with lower cost---use the
+classical solver if and only if the PINN residual--error cost exceeds the
+classical-solver cost threshold.  This is the continuous-cost analogue of
+Chow's optimal reject rule~\cite{chow1970optimum}, which abstains when posterior
+uncertainty exceeds a cost~$c$.
+
+\textbf{Physical interpretation.}
+Since $R(x)$ is median-normalised, most of the domain has $R(x) \approx 1$.  The
+long right tail---in regions where the PINN struggles, e.g.\ boundary layers and
+recirculation zones for Navier--Stokes, sharp sources or geometric features for
+Poisson and Helmholtz, or stress concentrations for elasticity---has $R(x) \gg 1$.
+Both the residual term and the ETE term contribute to this tail: the residual
+flags local equation imbalance, while the ETE captures regions where small
+residuals nonetheless produce large transported error.  The router assigns these
+challenging regions to the classical solver whenever $R(x) > \beta$.  The
+parameter~$\beta$ controls the cost--accuracy trade-off: smaller~$\beta$ enlarges
+$\Omega_C^*$ (more classical solving, more accurate, more expensive); larger
+$\beta$ shrinks $\Omega_C^*$ (more PINN, cheaper, but potentially less accurate).
+\end{remark}
+
+\subsection{\texorpdfstring{$\Rcal$}{R}-Consistency Bound}
+
+The non-trivial step is showing that a router with small \emph{surrogate} excess
+(logistic loss close to optimal) also has small \emph{target} excess (binary cost
+close to optimal).  Unlike the affine surrogate, the logistic surrogate is strictly
+convex, so the consistency bound is of square-root type---standard for smooth
+surrogates~\cite{bartlett2006convexity}.
+
+\begin{lemma}[Pointwise surrogate gap]\label{lem:gap}
+For each $x \in \Omega_f$, if the binary decision at~$s$ disagrees with the
+Bayes-optimal decision (i.e.\ $\ind_{s > 0} \ne d^*(x)$), then
+\begin{equation}\label{eq:gap}
+  \ell(s; x) - \ell(s^*; x)
+  \;\ge\;
+  \frac{(\beta - R(x))^2}{2(\beta + R(x))}.
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+If $\ind_{s > 0} \ne d^*(x)$, then $s$ and $s^* = \ln(R/\beta)$ have opposite signs.
+Since $\ell(\cdot; x)$ is strictly convex with minimum at~$s^*$, and $s$ lies on the
+opposite side of~$0$ from~$s^*$, we have $\ell(s; x) \ge \ell(0; x)$.  Therefore:
+\begin{equation}
+  \ell(s; x) - \ell(s^*; x)
+  \;\ge\; \ell(0; x) - \ell(s^*; x)
+  \;=\; (\beta + R)\,\ln 2 - (\beta + R)\,H_2\!\!\left(\frac{\beta}{\beta + R}\right).
+\end{equation}
+Writing $p = \beta/(\beta + R)$, the RHS equals
+$(\beta + R)\,D_{\KL}(p \,\|\, \tfrac{1}{2})$,
+where $D_{\KL}$ is the Kullback--Leibler divergence.  By Pinsker's
+inequality~\cite{csiszar1967information}:
+\begin{equation}
+  D_{\KL}\!\left(p \,\Big\|\, \tfrac{1}{2}\right)
+  \;\ge\; 2\left(p - \tfrac{1}{2}\right)^2
+  = \frac{(\beta - R)^2}{2(\beta + R)^2}.
+\end{equation}
+Multiplying by $(\beta + R)$ yields~\eqref{eq:gap}.
+\end{proof}
+
+\begin{theorem}[$\Rcal$-consistency bound]\label{thm:r-consistency}
+For any $s \colon \Omega_f \to \R$, define $d(x) = \ind_{s(x) > 0}$.  Then:
+\begin{equation}\label{eq:r-consistency}
+  L(d) - L(d^*)
+  \;\le\;
+  \sqrt{2(\beta + R_{\max})\,
+    \bigl(\bar{\Lcal}(s) - \bar{\Lcal}(s^*)\bigr)},
+\end{equation}
+where $R_{\max} = \max_{x \in \Omega_f} R(x)$.
+\end{theorem}
+
+\begin{proof}
+Let $S = \{x \in \Omega_f : d(x) \ne d^*(x)\}$ denote the set of
+misclassified points, and $\delta(x) \coloneqq \ell(s(x); x) - \ell(s^*(x); x)$
+the pointwise surrogate excess.
+
+\textbf{Step 1.}  By Lemma~\ref{lem:gap}, for each $x \in S$:
+\begin{equation}
+  |\beta - R(x)|^2
+  \;\le\; 2(\beta + R(x))\,\delta(x)
+  \;\le\; 2(\beta + R_{\max})\,\delta(x).
+\end{equation}
+
+\textbf{Step 2.}  The target excess decomposes as:
+\begin{equation}
+  N\bigl(L(d) - L(d^*)\bigr) = \sum_{x \in S} |\beta - R(x)|.
+\end{equation}
+By the Cauchy--Schwarz inequality:
+\begin{equation}
+  \Bigl(\sum_{x \in S} |\beta - R(x)|\Bigr)^2
+  \;\le\; |S| \cdot \sum_{x \in S} (\beta - R(x))^2
+  \;\le\; |S| \cdot 2(\beta + R_{\max}) \sum_{x \in S} \delta(x).
+\end{equation}
+
+\textbf{Step 3.}  Since $|S| \le N$ and
+$\sum_{x \in S} \delta(x) \le \sum_{x \in \Omega_f} \delta(x)
+= N\,\bigl(\bar{\Lcal}(s) - \bar{\Lcal}(s^*)\bigr)$:
+\begin{equation}
+  N^2\bigl(L(d) - L(d^*)\bigr)^2
+  \;\le\; N \cdot 2(\beta + R_{\max}) \cdot N\,
+    \bigl(\bar{\Lcal}(s) - \bar{\Lcal}(s^*)\bigr).
+\end{equation}
+Dividing both sides by~$N^2$ and taking the square root
+yields~\eqref{eq:r-consistency}.
+\end{proof}
+
+\begin{remark}[Interpretation of the bound]\label{rem:bound-interpretation}
+The square-root form $\Delta L \le \sqrt{C \cdot \Delta\bar{\Lcal}}$ is
+characteristic of smooth (strictly convex) surrogates---compare with the linear
+bound $\Delta L \le C \cdot \Delta\bar{\Lcal}$ achievable for piecewise-linear
+surrogates~\cite{bartlett2006convexity}.  The constant $\beta + R_{\max}$ reflects the
+heavy-tailed residual distribution: extreme outliers (large $R_{\max}$) loosen the
+bound but also produce large surrogate excess~$\delta(x)$ at those points,
+partially compensating.
+
+In practice, the bound is most relevant near the decision boundary $R(x) \approx
+\beta$, where the cost of misclassification is small ($|\beta - R| \ll 1$) and the
+square-root rate is not a limitation.  Far from the boundary, both the surrogate and
+target costs strongly favour the correct decision.
+\end{remark}
+
+%% ========================================================================
+\section{Domain Continuity and the Hybrid Solution}
+\label{sec:continuity}
+%% ========================================================================
+
+We now analyse what happens \emph{after} the router produces a hard partition: the
+domain is split into a classical-solver subdomain and a PINN subdomain, and a
+hybrid solution is constructed by running the classical solver on its subdomain
+with the PINN solution supplied as Dirichlet boundary data at the interface.
+
+\subsection{Domain Decomposition}
+
+\begin{definition}[Router-induced partition]\label{def:partition}
+Given a binary router $d \colon \Omega_f \to \{0,1\}$, define:
+\begin{align}
+  \Omega_C &\;\coloneqq\; \{x \in \Omega_f : d(x) = 1\}
+    && \text{(classical-solver region)}, \label{eq:omega-c}\\
+  \Omega_P &\;\coloneqq\; \{x \in \Omega_f : d(x) = 0\}
+    && \text{(PINN region)}, \label{eq:omega-p}\\
+  \Gamma &\;\coloneqq\; \{x \in \Omega_C :
+    \exists\, x' \in \Omega_P \text{ adjacent to } x\}
+    && \text{(interface)}. \label{eq:gamma}
+\end{align}
+The interface $\Gamma \subset \Omega_C$ is the one-cell-wide layer of classical-
+solver cells adjacent to the PINN region, identified via binary dilation
+of~$\Omega_P$.
+\end{definition}
+
+\subsection{Hybrid Solution via One-Way Dirichlet Coupling}
+
+\begin{definition}[Hybrid solution]\label{def:hybrid}
+The hybrid PINN--classical solution
+$\mathbf{u}_{\mathrm{hyb}} \colon \Omega_f \to \R^m$ is defined by:
+\begin{equation}\label{eq:hybrid}
+  \mathbf{u}_{\mathrm{hyb}}(x) \;=\;
+  \begin{cases}
+    \mathbf{u}_h(x) & \text{if } x \in \Omega_P
+      \quad\text{(PINN solution)}, \\[3pt]
+    \mathbf{u}_h(x) & \text{if } x \in \Gamma
+      \quad\text{(Dirichlet coupling)}, \\[3pt]
+    \mathbf{u}_C(x) & \text{if } x \in \Omega_C \setminus \Gamma
+      \quad\text{(classical solution)},
+  \end{cases}
+\end{equation}
+where $\mathbf{u}_C$ solves the discretised PDE $\Ncal[\mathbf{u}_C] = 0$ on
+$\Omega_C$ with Dirichlet boundary conditions:
+\begin{equation}\label{eq:cfd-bc}
+  \mathbf{u}_C\big|_\Gamma = \mathbf{u}_h\big|_\Gamma
+  \qquad\text{(PINN provides boundary data at the interface)}.
+\end{equation}
+All $m$ solution components use this coupling.  For Navier--Stokes ($m = 3$), this
+means interface cells are reset to $p_h(x)$ during each pressure Poisson iteration
+and to $(u_h, v_h)(x)$ during each momentum solve; for scalar Poisson ($m = 1$),
+interface cells of the FEM solve are simply pinned to $u_h(x)$; analogous resets
+apply to other PDE families.
+\end{definition}
+
+\begin{remark}[One-way vs.\ iterative coupling]\label{rem:coupling}
+The coupling is \emph{one-directional}: the PINN supplies Dirichlet data to the
+classical solver, but receives no feedback.  This differs from classical
+overlapping or non-overlapping Schwarz domain
+decomposition~\cite{toselli2005domain}, which iterates:
+\begin{equation}\label{eq:schwarz-comparison}
+  \underbrace{\text{PINN} \;\longrightarrow\; \text{classical}}_{\text{our approach: single sweep}}
+  \qquad\text{vs.}\qquad
+  \underbrace{\text{subdomain}_1 \;\rightleftharpoons\; \text{subdomain}_2}_{\text{Schwarz: iterate to convergence}}.
+\end{equation}
+Our single-sweep approach is justified when the PINN is sufficiently accurate at
+the interface---a condition that the router loss directly controls (see
+Theorem~\ref{thm:error-bound} and Remark~\ref{rem:loss-justification}).
+\end{remark}
+
+\subsection{Interface Continuity}
+
+\begin{proposition}[Discrete continuity]\label{prop:continuity}
+The hybrid solution $\mathbf{u}_{\mathrm{hyb}}$ has no jump discontinuity across
+$\Gamma$: for every pair of adjacent cells $x \in \Gamma$ and $x' \in \Omega_P$,
+\begin{equation}\label{eq:no-jump}
+  \mathbf{u}_{\mathrm{hyb}}(x) = \mathbf{u}_h(x), \qquad
+  \mathbf{u}_{\mathrm{hyb}}(x') = \mathbf{u}_h(x').
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+By Definition~\ref{def:hybrid}: at $x \in \Gamma$,
+$\mathbf{u}_{\mathrm{hyb}}(x) = \mathbf{u}_h(x)$; at $x' \in \Omega_P$,
+$\mathbf{u}_{\mathrm{hyb}}(x') = \mathbf{u}_h(x')$.  Both values are evaluations of
+the same (smooth) neural network $\mathbf{u}_h$ on adjacent grid cells, so no jump
+occurs.
+\end{proof}
+
+\begin{remark}[Normal derivative discontinuity]\label{rem:normal-deriv}
+While the solution values are continuous across~$\Gamma$, the \emph{normal derivatives}
+are generally discontinuous: the gradient in $\Omega_P$ is determined by the PINN, while
+the gradient in $\Omega_C$ is determined by the CFD solver.  This is characteristic of
+non-overlapping domain decomposition with Dirichlet-only coupling (as opposed to
+Robin coupling, which also matches fluxes).
+\end{remark}
+
+\subsection{Error Analysis of the Hybrid Solution}
+
+Let $\mathbf{u}^*$ denote the exact PDE solution on~$\Omega$.
+
+\begin{assumption}[Classical-solver stability]\label{ass:stability}
+The classical solver on $\Omega_C$ satisfies a Dirichlet-data stability estimate:
+for any two sets of boundary data $\mathbf{g}_1, \mathbf{g}_2$ on~$\Gamma$, the
+corresponding solutions $\mathbf{u}_C^{(1)}, \mathbf{u}_C^{(2)}$ of the discretised
+PDE on $\Omega_C$ satisfy
+\begin{equation}\label{eq:stability}
+  \bigl\|\mathbf{u}_C^{(1)} - \mathbf{u}_C^{(2)}\bigr\|_{\Omega_C \setminus \Gamma}
+  \;\le\; C_s\,\bigl\|\mathbf{g}_1 - \mathbf{g}_2\bigr\|_\Gamma,
+\end{equation}
+where $C_s > 0$ is the stability constant and $\|\cdot\|_S$ denotes a suitable
+norm (e.g.\ discrete $\ell^2$) over subset~$S$.
+\end{assumption}
+
+\begin{remark}
+Assumption~\ref{ass:stability} is standard for well-posed PDEs.  For pure
+elliptic problems (Poisson, scalar Helmholtz away from resonance, linear
+elasticity), discrete maximum-principle and Lax--Milgram arguments give $C_s$
+bounded by a constant depending only on coercivity and the inf--sup constant.
+For the Stokes equations (the low-Reynolds linearisation of Navier--Stokes),
+elliptic maximum-principle arguments give $C_s \le 1$.  For the full
+Navier--Stokes at moderate Reynolds number (e.g.\ $\mathrm{Re} \approx 100$ in
+our cylinder-flow experiments), $C_s$ is bounded and depends on the flow regime,
+domain geometry, and mesh quality.
+\end{remark}
+
+\begin{theorem}[Hybrid solution error bound]\label{thm:error-bound}
+Under Assumption~\ref{ass:stability}, the hybrid solution error decomposes as:
+\begin{equation}\label{eq:error-bound}
+  \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_f}
+  \;\le\;
+  \underbrace{\bigl\|\mathbf{u}_h - \mathbf{u}^*\bigr\|_{\Omega_P \cup \Gamma}
+    \vphantom{\bigl\|}}_{\text{(I): PINN error}}
+  \;+\; C_s\,\underbrace{\bigl\|\mathbf{u}_h - \mathbf{u}^*\bigr\|_{\Gamma}
+    \vphantom{\bigl\|}}_{\text{(II): interface error}}
+  \;+\; \underbrace{\epsilon_{\mathrm{disc}}
+    \vphantom{\bigl\|}}_{\text{(III): classical discr.\ error}}.
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+Decompose $\Omega_f$ into three disjoint subsets:
+$\Omega_P$, $\Gamma$, and $\Omega_C \setminus \Gamma$.  By the triangle inequality:
+\begin{equation}\label{eq:triangle}
+  \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_f}
+  \;\le\; \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_P \cup \Gamma}
+  \;+\; \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_C \setminus \Gamma}.
+\end{equation}
+
+\textbf{Term~(I): PINN region and interface.}
+On $\Omega_P \cup \Gamma$, $\mathbf{u}_{\mathrm{hyb}} = \mathbf{u}_h$ by
+Definition~\ref{def:hybrid}, so
+\begin{equation}\label{eq:term-I}
+  \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_P \cup \Gamma}
+  = \bigl\|\mathbf{u}_h - \mathbf{u}^*\bigr\|_{\Omega_P \cup \Gamma}.
+\end{equation}
+
+\textbf{Terms~(II) + (III): classical-solver interior.}
+On $\Omega_C \setminus \Gamma$, $\mathbf{u}_{\mathrm{hyb}} = \mathbf{u}_C$, the
+classical solution with boundary data $\mathbf{u}_h\big|_\Gamma$.  The exact
+solution~$\mathbf{u}^*$, restricted to $\Omega_C$, solves the same PDE with
+boundary data $\mathbf{u}^*\big|_\Gamma$ (and shared physical BCs on
+$\partial\Omega_C \cap \partial\Omega$).  By uniqueness of PDE solutions on
+$\Omega_C$, $\mathbf{u}^*\big|_{\Omega_C}$ is the classical solution with exact
+boundary data.
+
+Applying the stability estimate~\eqref{eq:stability} with
+$\mathbf{g}_1 = \mathbf{u}_h\big|_\Gamma$ and
+$\mathbf{g}_2 = \mathbf{u}^*\big|_\Gamma$, and adding the discretisation error:
+\begin{equation}\label{eq:term-II-III}
+  \bigl\|\mathbf{u}_C - \mathbf{u}^*\bigr\|_{\Omega_C \setminus \Gamma}
+  \;\le\; C_s\,\bigl\|\mathbf{u}_h - \mathbf{u}^*\bigr\|_\Gamma
+  \;+\; \epsilon_{\mathrm{disc}}.
+\end{equation}
+
+Substituting~\eqref{eq:term-I} and~\eqref{eq:term-II-III}
+into~\eqref{eq:triangle} yields~\eqref{eq:error-bound}.
+\end{proof}
+
+\begin{remark}[Connection to the loss function]\label{rem:loss-justification}
+Theorem~\ref{thm:error-bound} reveals the three error sources that the router loss
+function~\eqref{eq:surrogate} controls:
+
+\begin{enumerate}
+\item[\textbf{(I)}] \textbf{PINN error in $\Omega_P$.}  The term
+  $R(x)\,\varphi(s(x), 1)$ penalises high rejection cost in the PINN region
+  (where $s(x) < 0$, so $\varphi(s,1) \approx |s|$ is large).  The cost
+  $R(x) \propto \|\Ncal[\mathbf{u}_h](x)\| + |e(x)|$ combines the local PDE
+  residual with the ETE estimate of the PINN error: both are proxies for
+  $\|\mathbf{u}_h(x) - \mathbf{u}^*(x)\|$ via standard a~posteriori error
+  estimates~\cite{verfurth2013posteriori}, and their sum tightens the proxy by
+  flagging both \emph{equation imbalance} (residual) and \emph{transported error}
+  (ETE).  By penalising $R(x)\,\varphi(s,1)$, the optimiser pushes high-cost
+  points to $\Omega_C$, keeping only low-error points in~$\Omega_P$.
+
+\item[\textbf{(II)}] \textbf{Interface PINN error (amplified by $C_s$).}  The PINN
+  error at $\Gamma$ propagates into $\Omega_C$ via the Dirichlet coupling,
+  amplified by~$C_s$.  Since the router loss penalises the residual--error cost
+  across the entire PINN region (including points near the interface), the
+  optimiser naturally places $\Gamma$ in low-cost areas, controlling this term.
+
+\item[\textbf{(III)}] \textbf{Classical-solver discretisation error.}  The cost term
+  $\beta\,\varphi(s(x), 0)$ budgets the computational expense of the classical
+  solver.  The parameter~$\beta$ controls how much of~$\Omega_f$ is allocated to
+  it.
+\end{enumerate}
+\end{remark}
+
+\begin{corollary}[Compact form]\label{cor:compact}
+Since $\Gamma \subset \Omega_P \cup \Gamma$, we can simplify to
+\begin{equation}\label{eq:compact-bound}
+  \bigl\|\mathbf{u}_{\mathrm{hyb}} - \mathbf{u}^*\bigr\|_{\Omega_f}
+  \;\le\; (1 + C_s)\,\bigl\|\mathbf{u}_h - \mathbf{u}^*\bigr\|_{\Omega_P \cup \Gamma}
+  \;+\; \epsilon_{\mathrm{disc}}.
+\end{equation}
+If the PINN is exact ($\mathbf{u}_h = \mathbf{u}^*$), then
+$\mathbf{u}_{\mathrm{hyb}} = \mathbf{u}^*$ up to the classical-solver
+discretisation error, regardless of the router partition.
+\end{corollary}
+
+%% ========================================================================
+\section{Total Variation Regularisation}
+\label{sec:tv}
+%% ========================================================================
+
+The training loss includes a total variation term
+$\Lcal(s) = \bar{\Lcal}(s) + \lambda_{\mathrm{tv}}\,\TV(s)$
+that promotes spatially contiguous classical-solver and PINN regions.  Since TV
+acts on the raw logits~$s \in \R$ (not bounded to $[0,1]$), it penalises sharp
+spatial gradients in the router output, promoting smooth transitions.
+
+\begin{proposition}[TV-regularised consistency]\label{prop:tv}
+Let $s^*_\lambda \in \argmin_{s \colon \Omega_f \to \R}
+  \bigl[\bar{\Lcal}(s) + \lambda_{\mathrm{tv}}\,\TV(s)\bigr]$
+and $d_\lambda(x) = \ind_{s^*_\lambda(x) > 0}$.  Then:
+\begin{equation}\label{eq:tv-bound}
+  L(d_\lambda) - L(d^*)
+  \;\le\; \sqrt{2(\beta + R_{\max})\,\lambda_{\mathrm{tv}}\,\TV(s^*)},
+\end{equation}
+where $\TV(s^*)$ is the total variation of the unregularised optimal logits
+$s^*(x) = \ln(R(x)/\beta)$.  In particular, the bias vanishes as
+$\lambda_{\mathrm{tv}} \to 0$.
+\end{proposition}
+
+\begin{proof}
+\textbf{Step 1.}  Since $s^*_\lambda$ minimises $\bar{\Lcal} + \lambda_{\mathrm{tv}}\,\TV$
+and $s^*$ is feasible:
+\begin{equation}\label{eq:tv-opt}
+  \bar{\Lcal}(s^*_\lambda) + \lambda_{\mathrm{tv}}\,\TV(s^*_\lambda)
+  \;\le\; \bar{\Lcal}(s^*) + \lambda_{\mathrm{tv}}\,\TV(s^*).
+\end{equation}
+
+\textbf{Step 2.}  Since $s^*$ minimises $\bar{\Lcal}$ globally:
+$\bar{\Lcal}(s^*_\lambda) - \bar{\Lcal}(s^*) \ge 0$.
+
+\textbf{Step 3.}  Rearranging~\eqref{eq:tv-opt} and using $\TV(s^*_\lambda) \ge 0$:
+\begin{equation}\label{eq:surr-gap}
+  0 \;\le\; \bar{\Lcal}(s^*_\lambda) - \bar{\Lcal}(s^*)
+  \;\le\; \lambda_{\mathrm{tv}}\,\bigl(\TV(s^*) - \TV(s^*_\lambda)\bigr)
+  \;\le\; \lambda_{\mathrm{tv}}\,\TV(s^*).
+\end{equation}
+
+\textbf{Step 4.}  Applying Theorem~\ref{thm:r-consistency}:
+\begin{equation}\label{eq:tv-final}
+  L(d_\lambda) - L(d^*)
+  \;\le\; \sqrt{2(\beta + R_{\max})\,
+    \bigl(\bar{\Lcal}(s^*_\lambda) - \bar{\Lcal}(s^*)\bigr)}
+  \;\le\; \sqrt{2(\beta + R_{\max})\,\lambda_{\mathrm{tv}}\,\TV(s^*)}. \qedhere
+\end{equation}
+\end{proof}
+
+\begin{remark}[TV and interface quality]\label{rem:tv-interface}
+Beyond the abstract bias bound, TV regularisation provides a concrete benefit to the
+domain continuity analysis of Section~\ref{sec:continuity}:
+\begin{enumerate}
+\item[(i)] \textbf{Smooth interfaces.}
+  By penalising $|s(x) - s(x')|$ for adjacent cells, TV discourages jagged
+  classical--PINN boundaries.  Smoother interfaces yield better-conditioned
+  classical-solver problems---the stability constant~$C_s$ in
+  Assumption~\ref{ass:stability} is smaller for geometrically regular subdomains
+  than for highly fragmented ones.
+\item[(ii)] \textbf{Contiguous subdomains.}
+  TV promotes connected regions, which is numerically favourable: classical
+  solvers (CFD/FEM/FDM) all perform best on compact, simply-connected subdomains
+  where stencil or basis-function operations are well-defined everywhere.
+\end{enumerate}
+\end{remark}
+
+\begin{remark}[Tension between TV and logistic sharpness]\label{rem:tension}
+There is a fundamental tension between TV regularisation and the logistic loss.
+The logistic loss rewards \emph{large} logits (confident decisions), since
+$\softplus(s) \to 0$ as $s \to -\infty$ and $\softplus(-s) \to 0$ as $s \to +\infty$.
+TV regularisation penalises \emph{spatial gradients} in~$s$, which must be large
+near the classical--PINN boundary if the logits transition sharply.
+
+In the coverage plot (loss vs.\ coverage), this manifests as a vertical gap between
+the actual router operating point (diamond) and the theoretical optimum (star).
+The diamond sits above the star because finite logits incur residual softplus cost
+that the binary limit avoids.  The TV penalty prevents the router from sharpening its
+logits to close this gap.  The parameter~$\lambda_{\mathrm{tv}}$ controls this
+trade-off: larger values produce smoother but less confident routers.
+\end{remark}
+
+%% ========================================================================
+\section{Summary of Guarantees}
+\label{sec:summary}
+%% ========================================================================
+
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lll}
+\hline
+\textbf{Result} & \textbf{Statement} & \textbf{Ref.} \\
+\hline
+Calibration
+  & $s^*(x) = \ln(R/\beta)$;\; $\ind_{s^* > 0} = \ind_{R > \beta}$ is Bayes-optimal
+  & Prop.~\ref{prop:calibrated} \\
+Bayes-optimal policy
+  & $d^*(x) = \ind_{R(x) > \beta}$;\;
+    $L^* = \frac{1}{N}\sum \min\{\beta, R\}$
+  & Thm.~\ref{thm:bayes} \\
+$\Rcal$-consistency
+  & $\Delta L \le \sqrt{2(\beta + R_{\max})\,\Delta\bar{\Lcal}}$
+  & Thm.~\ref{thm:r-consistency} \\
+Interface continuity
+  & $\mathbf{u}_{\mathrm{hyb}}$ is continuous across $\Gamma$
+  & Prop.~\ref{prop:continuity} \\
+Hybrid error bound
+  & $\|e\|_\Omega \le (1{+}C_s)\,\|\mathbf{u}_h - \mathbf{u}^*\|_{\Omega_P \cup \Gamma}
+    + \epsilon_{\mathrm{disc}}$
+  & Cor.~\ref{cor:compact} \\
+TV regularisation
+  & bias $\le \sqrt{2(\beta + R_{\max})\,\lambda_{\mathrm{tv}}\,\TV(s^*)} \to 0$
+  & Prop.~\ref{prop:tv} \\
+\hline
+\end{tabular}
+\end{center}
+
+\medskip
+
+These results establish that the router loss function~\eqref{eq:surrogate} is
+\emph{theoretically principled}:
+\begin{enumerate}
+\item \textbf{Calibrated}: the logistic surrogate is strictly convex at each point,
+  with a unique minimiser $s^*(x) = \ln(R(x)/\beta)$ whose sign determines the
+  Bayes-optimal binary assignment.  No additional thresholding heuristic is needed
+  beyond $\mathrm{sign}(s)$.
+\item \textbf{$\Rcal$-consistent}: the target excess (binary cost gap) is bounded by
+  $\sqrt{C \cdot \Delta\bar{\Lcal}}$, where $C = 2(\beta + R_{\max})$.  This
+  square-root rate is optimal for smooth surrogates~\cite{bartlett2006convexity} and
+  vanishes as the surrogate excess tends to zero.
+\item \textbf{Domain-continuous}: the hybrid PINN--classical solution constructed
+  from the router partition is continuous at the interface by the Dirichlet
+  coupling.  The hybrid error is controlled by the PINN error in $\Omega_P$
+  (which the loss directly penalises), the interface error (amplified by the
+  classical-solver stability constant $C_s$), and the classical discretisation
+  error.
+\item \textbf{Regularisation-safe}: TV regularisation introduces bounded bias
+  $O(\sqrt{\lambda_{\mathrm{tv}}})$ that vanishes in the limit, while promoting
+  smooth interfaces that improve classical-solver stability.  The tension between
+  TV smoothness and logistic sharpness is controlled by~$\lambda_{\mathrm{tv}}$.
+\item \textbf{PDE-agnostic}: every step of the analysis depends only on the
+  nonnegative scalar field $R(x)$ and the abstract stability assumption on the
+  classical solver.  The same theorems therefore apply to steady incompressible
+  Navier--Stokes (with $\mathbf{u}_h = (u, v, p)$ and CFD as the classical
+  solver), to Poisson and Helmholtz problems (scalar $\mathbf{u}_h$ with FEM or
+  FDM), to linear elasticity, and to other steady PDEs admitting a Dirichlet
+  stability bound.
+\end{enumerate}
+
+\bibliographystyle{plain}
+\begin{thebibliography}{10}
+
+\bibitem{mao2024predictor}
+A.~Mao, M.~Mohri, and Y.~Zhong.
+\newblock Predictor-rejector multi-class abstention: Theoretical analysis and
+  algorithms.
+\newblock In \emph{Proceedings of the 35th International Conference on
+  Algorithmic Learning Theory (ALT)}, volume 237 of \emph{Proceedings of
+  Machine Learning Research}, pages 1--47, 2024.
+
+\bibitem{chow1970optimum}
+C.~Chow.
+\newblock On optimum recognition error and reject tradeoff.
+\newblock \emph{IEEE Transactions on Information Theory}, 16(1):41--46, 1970.
+
+\bibitem{bartlett2006convexity}
+P.~L.~Bartlett, M.~I.~Jordan, and J.~D.~McAuliffe.
+\newblock Convexity, classification, and risk bounds.
+\newblock \emph{Journal of the American Statistical Association},
+  101(473):138--156, 2006.
+
+\bibitem{csiszar1967information}
+I.~Csisz{\'a}r.
+\newblock Information-type measures of difference of probability distributions
+  and indirect observations.
+\newblock \emph{Studia Scientiarum Mathematicarum Hungarica}, 2:299--318, 1967.
+
+\bibitem{toselli2005domain}
+A.~Toselli and O.~Widlund.
+\newblock \emph{Domain Decomposition Methods --- Algorithms and Theory}.
+\newblock Springer Series in Computational Mathematics, vol.~34, 2005.
+
+\bibitem{verfurth2013posteriori}
+R.~Verf\"urth.
+\newblock \emph{A Posteriori Error Estimation Techniques for Finite Element
+  Methods}.
+\newblock Oxford University Press, 2013.
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,183 @@
+\section{Proofs}
+\label{app:proofs}
+
+This appendix collects the proofs deferred from
+Section~\ref{sec:method}. We use throughout the standard logistic
+identities $\sigma(t):=(1+e^{-t})^{-1}$, $\softplus(t):=\log(1+e^{t})$,
+with $\softplus'(t)=\sigma(t)$, $\softplus(t)-\softplus(-t)=t$,
+$\sigma(-t)=1-\sigma(t)$, and $\sigma(t)(1-\sigma(t))=\softplus''(t)>0$.
+The binary entropy in nats is
+$H_2(p):=-p\log p-(1-p)\log(1-p)$ for $p\in(0,1)$. All claims below are
+stated for the proxy abstention loss $L$ in~\eqref{eq:proxy-target},
+the surrogate $\Phi_{\mathrm{abs}}$ in~\eqref{eq:surrogate}, and the
+pointwise minimiser $s^\star$ of Proposition~\ref{prop:pointwise-min}.
+
+\subsection{Proof of Lemma~\ref{lem:bayes-rej}}
+\label{app:bayes}
+
+Fix $x\in\Xcal$ and condition on $X=x$. By Tonelli's theorem the
+conditional risk of the abstention loss \eqref{eq:abs-loss} at $x$
+decomposes as
+\[
+  \E\!\bigl[\ell_{\mathrm{abs}}(h,r;X,Y)\bigm|X=x\bigr]
+  \;=\;\eta_h(x)\,\ind\{r(x)=0\}\;+\;c(x)\,\ind\{r(x)=1\},
+\]
+since $h$ and $r$ are deterministic given $x$. The pointwise infimum
+over $r(x)\in\{0,1\}$ is $\min\{\eta_h(x),c(x)\}$, attained by $r(x)=0$
+when $\eta_h(x)\leq c(x)$ and by $r(x)=1$ when $\eta_h(x)>c(x)$
+(either choice is optimal on the measure-zero set
+$\{x:\eta_h(x)=c(x)\}$). Aggregating in $x$ and applying the tower
+property gives the Bayes risk
+$\E_X[\min\{\eta_h(X),c(X)\}]$, attained by every measurable $r^\star$
+that satisfies the stated pointwise rule. \qed
+
+\subsection{Proof of Proposition~\ref{prop:pointwise-min}}
+\label{app:pointwise-min}
+
+Fix $x\in\Omega$ with $\rho^\theta(x),c(x)>0$ and write
+$\rho\equiv\rho^\theta(x)$, $c\equiv c(x)$. Differentiating
+\eqref{eq:surrogate} in $s$,
+\[
+  \partial_s\Phi_{\mathrm{abs}}(s;x)
+  \;=\;-\rho\,\sigma(-s)+c\,\sigma(s)
+  \;=\;(\rho+c)\,\sigma(s)-\rho,
+\]
+where the second equality uses $\sigma(-s)=1-\sigma(s)$. Setting the
+derivative to zero gives $\sigma(s^\star)=\rho/(\rho+c)$, hence
+$s^\star=\log(\rho/c)$. The second derivative,
+$(\rho+c)\,\sigma(s)(1-\sigma(s))$, is strictly positive because
+$\rho+c>0$ and $\sigma(s)(1-\sigma(s))>0$ for all $s\in\R$, so
+$\Phi_{\mathrm{abs}}(\,\cdot\,;x)$ is strictly convex. Coercivity follows
+from $\softplus(t)\sim t$ as $t\to+\infty$ and $\softplus(-t)\sim -t$ as
+$t\to-\infty$, so $\Phi_{\mathrm{abs}}(s;x)\to+\infty$ at both ends and
+$s^\star$ is the unique global minimiser. The sign identity
+$s^\star(x)>0\Leftrightarrow\rho^\theta(x)>c(x)$ is immediate from
+$s^\star=\log(\rho/c)$. \qed
+
+\subsection{Proof of Theorem~\ref{thm:h-consistency}}
+\label{app:hconsistency}
+
+We first establish a pointwise lower bound on the surrogate excess
+$\delta(x):=\Phi_{\mathrm{abs}}(s(x);x)-\Phi_{\mathrm{abs}}(s^\star(x);x)$
+on the disagreement set $S:=\{x:r_s(x)\neq r_{s^\star}(x)\}$, then
+combine it with a Cauchy--Schwarz step to obtain
+\eqref{eq:h-consistency-main}. Throughout this subsection we abbreviate
+$\rho\equiv\rho^\theta(x)$ and $c\equiv c(x)$ at a generic point and
+recall that $\rho,c>0$ on the active grid by the standing assumption of
+Section~\ref{sec:method-surrogate}.
+
+\paragraph{Value of the surrogate at $0$ and at $s^\star$.}
+By \eqref{eq:surrogate} and $\softplus(0)=\log 2$,
+\begin{equation}
+  \Phi_{\mathrm{abs}}(0;x)\;=\;\rho\,\log 2+c\,\log 2\;=\;(\rho+c)\,\log 2.
+  \label{eq:phi-zero}
+\end{equation}
+Substituting $s^\star=\log(\rho/c)$ into \eqref{eq:surrogate} and using
+$\softplus(\log(\rho/c))=\log(1+\rho/c)=\log\!\frac{\rho+c}{c}$ and
+$\softplus(-\log(\rho/c))=\log\!\frac{\rho+c}{\rho}$,
+\begin{equation}
+  \Phi_{\mathrm{abs}}(s^\star;x)
+  \;=\;\rho\,\log\!\frac{\rho+c}{\rho}+c\,\log\!\frac{\rho+c}{c}
+  \;=\;(\rho+c)\,H_2\!\Bigl(\tfrac{\rho}{\rho+c}\Bigr),
+  \label{eq:phi-star}
+\end{equation}
+where the last equality uses
+$H_2(p)=-p\log p-(1-p)\log(1-p)$ with $p=\rho/(\rho+c)$.
+
+\begin{lemma}[Pointwise surrogate gap on the disagreement set]
+\label{lem:gap}
+For every $x\in S$,
+\begin{equation}
+  \delta(x)\;\geq\;\frac{(\rho^\theta(x)-c(x))^2}{2\,(\rho^\theta(x)+c(x))}.
+  \label{eq:gap-bound}
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Fix $x\in S$ and assume $\rho>c$; the case $\rho<c$ is symmetric and
+the boundary case $\rho=c$ has zero right-hand side and is trivial.
+Then $s^\star=\log(\rho/c)>0$ and, since $r_s(x)\neq r_{s^\star}(x)$,
+$r_s(x)=0$, i.e.\ $s(x)\leq 0$. The function
+$\Phi_{\mathrm{abs}}(\,\cdot\,;x)$ is strictly convex with unique
+minimiser $s^\star>0$ (Proposition~\ref{prop:pointwise-min}); its
+restriction to $(-\infty,0]$ is therefore strictly decreasing, and
+attains its infimum at the right endpoint $s=0$. Hence
+\begin{equation}
+  \Phi_{\mathrm{abs}}(s(x);x)\;\geq\;\Phi_{\mathrm{abs}}(0;x),
+  \qquad\text{so}\qquad
+  \delta(x)\;\geq\;\Phi_{\mathrm{abs}}(0;x)-\Phi_{\mathrm{abs}}(s^\star;x).
+  \label{eq:lb-zero}
+\end{equation}
+Combining \eqref{eq:phi-zero} and \eqref{eq:phi-star},
+\begin{equation}
+  \Phi_{\mathrm{abs}}(0;x)-\Phi_{\mathrm{abs}}(s^\star;x)
+  \;=\;(\rho+c)\,\bigl[\log 2-H_2(p)\bigr]
+  \;=\;(\rho+c)\,D_{\KL}\!\bigl(p\,\big\|\,\tfrac{1}{2}\bigr),
+  \label{eq:phi-gap-kl}
+\end{equation}
+where $p:=\rho/(\rho+c)$ and the second equality uses the elementary
+identity $D_{\KL}(p\,\|\,\tfrac{1}{2})=p\log(2p)+(1-p)\log(2(1-p))=\log
+2-H_2(p)$. By Pinsker's inequality on
+$\{0,1\}$~\citep{csiszar1967information} (in nats),
+\[
+  D_{\KL}\!\bigl(p\,\big\|\,\tfrac{1}{2}\bigr)\;\geq\;2\bigl(p-\tfrac{1}{2}\bigr)^2
+  \;=\;\frac{(\rho-c)^2}{2(\rho+c)^2},
+\]
+where the last equality uses $p-\tfrac{1}{2}=(\rho-c)/(2(\rho+c))$.
+Substituting into \eqref{eq:phi-gap-kl} and combining with
+\eqref{eq:lb-zero} yields \eqref{eq:gap-bound}. The symmetric case
+$\rho<c$ replaces ``decreasing on $(-\infty,0]$'' by ``increasing on
+$[0,\infty)$'' but produces the same lower bound
+$\Phi_{\mathrm{abs}}(0;x)-\Phi_{\mathrm{abs}}(s^\star;x)$.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:h-consistency}]
+We first rewrite the abstention excess as an expectation over the
+disagreement set $S$. By Proposition~\ref{prop:pointwise-min} and the
+proof of Lemma~\ref{lem:bayes-rej},
+$r_{s^\star}(x)=\ind\{\rho>c\}$ achieves the pointwise minimum
+$\min\{\rho(x),c(x)\}$ of the proxy abstention loss
+$\rho(x)\,\ind\{r(x)=0\}+c(x)\,\ind\{r(x)=1\}$. At $x\in S$ the rejector
+$r_s$ chooses the opposite branch and pays $\max\{\rho(x),c(x)\}$
+instead, an excess of $\max\{\rho,c\}-\min\{\rho,c\}=|\rho(x)-c(x)|$.
+At $x\notin S$ the excess vanishes. Therefore
+\begin{equation}
+  L(r_s)-L(r_{s^\star})\;=\;\E_X\!\bigl[|\rho^\theta(X)-c(X)|\,\ind_{S}(X)\bigr].
+  \label{eq:target-excess}
+\end{equation}
+Applying Cauchy--Schwarz to \eqref{eq:target-excess} with respect to the
+measure $\Pr_X$, with factors
+$f(x)=|\rho-c|\,\ind_{S}(x)$ and $g\equiv 1$,
+\begin{equation}
+  \bigl(L(r_s)-L(r_{s^\star})\bigr)^2
+  \;\leq\;\E_X\!\bigl[(\rho^\theta(X)-c(X))^2\,\ind_{S}(X)\bigr].
+  \label{eq:cs}
+\end{equation}
+By Lemma~\ref{lem:gap}, on $S$ we have
+$(\rho-c)^2\leq 2(\rho+c)\,\delta(x)$, so
+\begin{equation}
+  \E_X\!\bigl[(\rho-c)^2\,\ind_{S}\bigr]
+  \;\leq\;2\,\E_X\!\bigl[(\rho+c)\,\delta\,\ind_{S}\bigr]
+  \;\leq\;2\,(\rho_{\max}+c_{\max})\,\E_X\!\bigl[\delta\,\ind_{S}\bigr]
+  \;\leq\;2\,(\rho_{\max}+c_{\max})\,\E_X[\delta(X)],
+  \label{eq:gap-agg}
+\end{equation}
+where the second inequality uses the essential-supremum bound
+$\rho^\theta+c\leq\rho_{\max}+c_{\max}$ a.s.\ and the third uses
+$\delta\geq 0$ everywhere on $\Omega$ (Proposition~\ref{prop:pointwise-min}).
+By definition $\E_X[\delta(X)]=\Ecal_\Phi(s)-\Ecal_\Phi(s^\star)$;
+substituting into~\eqref{eq:cs} via~\eqref{eq:gap-agg} and taking square
+roots yields \eqref{eq:h-consistency-main}.
+\end{proof}
+
+\paragraph{On the constants and the rate.}
+The square-root rate in \eqref{eq:h-consistency-main} is sharp for
+strictly convex smooth surrogates and matches the calibration-function
+rate of \citet{bartlett2006convexity}. The constant
+$2(\rho_{\max}+c_{\max})$ is the natural one for our loss: it grows with
+the heaviness of the right tail of $\rho^\theta$ but is partially
+self-compensating, since the same outlier points produce large pointwise
+$\delta(x)$ and therefore large $\Ecal_\Phi(s)-\Ecal_\Phi(s^\star)$ for
+any $s$ that misclassifies them. Replacing the essential supremum by a
+$\Pr_X$-quantile only weakens the bound by an additive
+$\Pr_X(\rho^\theta+c>\tau)$ tail-mass term, which we do not pursue.

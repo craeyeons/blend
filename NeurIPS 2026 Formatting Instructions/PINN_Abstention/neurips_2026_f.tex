@@ -1,0 +1,94 @@
+\documentclass{article}
+
+\PassOptionsToPackage{round, sort&compress}{natbib}
+
+\usepackage{neurips_2026}
+% \usepackage[preprint]{neurips_2026}
+% \usepackage[final]{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath, amssymb, amsthm, amsfonts}
+\usepackage{mathtools}
+\usepackage{bbm}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+\definecolor{DarkBlue}{RGB}{0,45,130}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=DarkBlue,
+  citecolor=DarkBlue,
+  urlcolor=DarkBlue
+}
+\setcitestyle{round,sort&compress}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{assumption}[theorem]{Assumption}
+
+% Math macros
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\softplus}{softplus}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\renewcommand{\Pr}{\mathbb{P}}
+\newcommand{\Xcal}{\mathcal{X}}
+\newcommand{\Ycal}{\mathcal{Y}}
+\newcommand{\Acal}{\mathcal{A}}
+\newcommand{\Dcal}{\mathcal{D}}
+\newcommand{\Ecal}{\mathcal{E}}
+\newcommand{\Hcal}{\mathcal{H}}
+\newcommand{\Lcal}{\mathcal{L}}
+\newcommand{\Rcal}{\mathcal{R}}
+\newcommand{\Ncal}{\mathcal{N}}
+\newcommand{\TV}{\mathrm{TV}}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\ind}{\mathbbm{1}}
+\newcommand{\defer}{\bot}
+
+\title{Learning to Abstain for Reliable Physics-Informed Neural Networks}
+
+\author{%
+  Anonymous Author(s) \\
+  Affiliation \\
+  Address \\
+  \texttt{email}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\input{Sections/Abstract}
+\end{abstract}
+
+\input{Sections/Introduction}
+\input{Sections/RelatedWorks}
+\input{Sections/Preliminaries}
+\input{Sections/Method}
+\input{Sections/Experiments}
+\input{Sections/Conclusion}
+\input{Sections/Limitations}
+\input{Sections/Impact}
+
+\bibliographystyle{plainnat}
+\bibliography{biblio}
+
+\appendix
+\input{Sections/Appendix}
+
+\end{document}

@@ -1,0 +1,18 @@
+Physics-informed neural networks (PINNs) provide cheap, mesh-free,
+differentiable surrogates for partial differential equations, but their
+pointwise accuracy is known to be \emph{spatially non-uniform}: a small
+subdomain typically carries a disproportionate share of the error. Existing
+remedies---adaptive sampling, loss reweighting, causal training, domain
+decomposition---rebalance the optimisation but still return a single global
+predictor that the user must trust everywhere. We argue instead for
+\emph{learning with abstention}: a frozen PINN is paired with a classical
+solver, and a learned rejector decides at each spatial location whether to
+commit to the PINN prediction or to abstain to the solver. We cast this as
+a regression abstention problem with an input-dependent cost derived from
+the PDE residual and a linearised error-transport estimate, derive its
+Bayes-optimal rejector, and design a consistent surrogate for the
+predictor--rejector formulation extended from a categorical predictor with
+$0$--$1$ loss to a continuous predictor with a non-negative discrepancy.
+We prove an $\Hcal$-consistency bound for the proposed surrogate and show
+that the induced hybrid solution inherits a controllable PDE error from
+the rejection decisions.

@@ -1,0 +1,161 @@
+\section{Background}
+\label{sec:prelim}
+
+We define for the rest of the paper: learning to
+reject for a fixed regression rule (Section~\ref{sec:bg-reject}) and the
+standard PINN formulation for PDEs (Section~\ref{sec:bg-pinn}).
+
+\subsection{Learning to reject in regression}
+\label{sec:bg-reject}
+
+Let $(X,Y)$ be a random pair with joint distribution $\Dcal$ on
+$\Xcal \times \Ycal$, where $\Xcal \subseteq \R^{d_x}$ is a measurable
+input space and $\Ycal \subseteq \R^{d_u}$ is a measurable response space.
+Throughout,
+$\psi:\Ycal\times\Ycal\to\R_{\geq 0}$ denotes a measurable non-negative
+discrepancy, such as the squared loss
+$\psi(a,b)=\tfrac{1}{2}\|a-b\|_2^2$; boundedness of $\psi$ is assumed only
+when it is required by a stated consistency bound.
+
+A regression rule with rejection is a pair $(h,r)$ in which
+$h:\Xcal\to\Ycal$ is a measurable predictor and
+$r:\Xcal\to\{0,1\}$ is a measurable rejector. We use the convention
+$r(x)=0$ to accept the prediction $h(x)$ and $r(x)=1$ to abstain. Following
+the classical rejection literature, abstention trades prediction error
+against a rejection cost \citep{chow1970,bartlett2008classification,
+cortes,cortes2024theory}. Most standard formulations take this cost to be
+constant, i.e.\ $c(x)\equiv c$ \citep{chow1970,
+bartlett2008classification,Geifman_El-Yaniv_2017,ni2019calibration,
+cao2022generalizing,Mao_Mohri_Zhong_2023}; we write
+$c:\Xcal\to[0,C]$ to allow the more general input-dependent case, expressed
+in the same units as $\psi$. We work in a second-stage
+predictor--rejector setting \citep{cortes,Mao_Mohri_Zhong_2023,
+cheng2023regression}, where $h$ is fixed and only $r$ is learned. The
+pointwise loss is
+\begin{equation}
+  \ell_{\mathrm{abs}}\bigl(h,r;\,x,y\bigr)
+  :=
+  \psi\bigl(h(x),y\bigr)\ind\{r(x)=0\}
+  +
+  c(x)\ind\{r(x)=1\},
+  \label{eq:abs-loss}
+\end{equation}
+with population risk
+$\Ecal_{\ell_{\mathrm{abs}}}(h,r)
+:=\E_{(X,Y)\sim\Dcal}[\ell_{\mathrm{abs}}(h,r;\,X,Y)]$. When the rule
+accepts, it pays the discrepancy of the fixed predictor; when it abstains,
+it pays $c(X)$.
+
+\begin{lemma}[Bayes-optimal rejector]
+\label{lem:bayes-rej}
+For a fixed predictor $h$, define
+$\eta_h(x):=\E[\psi(h(x),Y)\mid X=x]$. Then, for $\Pr_X$-a.e.\ $x$, the
+Bayes-optimal rejector is
+\[
+  r^\star(x) \in
+  \begin{cases}
+    \{0\}, & \eta_h(x) \leq c(x),\\
+    \{1\}, & \eta_h(x) > c(x),
+  \end{cases}
+\]
+where $r^\star(x)=0$ accepts $h(x)$ and $r^\star(x)=1$ abstains.
+\end{lemma}
+
+The proof is the pointwise comparison of the two available costs,
+$\eta_h(x)$ and $c(x)$. Thus the rejector only needs to learn the sign of
+$\eta_h(x)-c(x)$. We use a measurable score $s:\Xcal\to\R$ from a rejector
+class $\Hcal_r$ and define $r_s(x):=\ind\{s(x)>0\}$. A smooth surrogate
+$\Phi_{\mathrm{abs}}$ for the discontinuous loss
+\eqref{eq:abs-loss} is useful only if small surrogate excess risk controls
+the true abstention excess risk in $\Hcal_r$, in the sense of
+$\Hcal$-consistency bounds
+\citep{Awasthi_Mao_Mohri_Zhong_2022_multi,
+mao2023crossentropylossfunctionstheoretical,Mao_Mohri_Zhong_2023}. This
+abstract setup is the only learning-to-reject machinery needed in the sequel.
+
+\subsection{Physics-informed neural networks}
+\label{sec:bg-pinn}
+
+Let $\Omega\subset\R^d$ be a bounded open domain with Lipschitz boundary
+$\partial\Omega$, and consider the boundary-value problem
+\begin{equation}
+  \Ncal[u](x)=f(x), \quad x\in\Omega,
+  \qquad
+  \mathcal{B}[u](x)=g(x), \quad x\in\partial\Omega,
+  \label{eq:pde}
+\end{equation}
+where $\Ncal$ is a possibly nonlinear differential operator,
+$\mathcal{B}$ is a boundary operator, and $f,g$ are given data in function
+spaces appropriate for the problem. For the strong-form notation used here,
+we assume \eqref{eq:pde} admits a unique sufficiently smooth solution
+$u^\star:\overline{\Omega}\to\R^{d_u}$, with enough regularity for the
+operators below to be evaluated pointwise.
+
+A PINN is a parameterised map
+$\widehat{u}_\theta:\Omega\to\R^{d_u}$, typically a feed-forward neural
+network with differentiable activations, trained so that the PDE and
+boundary residuals are small. The residuals are
+\begin{equation}
+  \mathfrak{r}_{\mathrm{int}}^\theta(x)
+  :=
+  \Ncal[\widehat{u}_\theta](x)-f(x),
+  \qquad
+  \mathfrak{r}_{\mathrm{bd}}^\theta(x)
+  :=
+  \mathcal{B}[\widehat{u}_\theta](x)-g(x),
+  \label{eq:residuals}
+\end{equation}
+and are computed by automatic differentiation through
+$\widehat{u}_\theta$ when the operators are represented in strong form
+\citep{raissi2019physics,karniadakis2021physics,lu2021deepxde}. Given
+interior collocation points
+$\{x_i^{\mathrm{int}}\}_{i=1}^{N_{\mathrm{int}}}\subset\Omega$ and boundary
+collocation points
+$\{x_j^{\mathrm{bd}}\}_{j=1}^{N_{\mathrm{bd}}}\subset\partial\Omega$, a
+standard PINN objective is
+\begin{equation}
+  \Lcal_{\mathrm{PINN}}(\theta)
+  :=
+  \frac{\lambda_{\mathrm{int}}}{N_{\mathrm{int}}}
+  \sum_{i=1}^{N_{\mathrm{int}}}
+    \bigl\|\mathfrak{r}_{\mathrm{int}}^\theta(x_i^{\mathrm{int}})\bigr\|^2
+  +
+  \frac{\lambda_{\mathrm{bd}}}{N_{\mathrm{bd}}}
+  \sum_{j=1}^{N_{\mathrm{bd}}}
+    \bigl\|\mathfrak{r}_{\mathrm{bd}}^\theta(x_j^{\mathrm{bd}})\bigr\|^2,
+  \label{eq:pinn-loss}
+\end{equation}
+with non-negative weights $\lambda_{\mathrm{int}}$ and
+$\lambda_{\mathrm{bd}}$. Data-fit terms on observed solution values can be
+added analogously.
+
+A central difficulty is that \eqref{eq:pinn-loss} directly constrains
+residuals only through sampled empirical averages, whereas the deployment
+quantity of interest is often the local solution error
+$\widehat{u}_\theta(x)-u^\star(x)$. A-posteriori results connect these
+quantities at the level of global norms. Schematically, under suitable
+stability, regularity, approximation, and sampling assumptions,
+\citet{mishra2022estimates} obtain bounds of the form
+\begin{equation}
+  \bigl\|\widehat{u}_\theta-u^\star\bigr\|_{L^2(\Omega)}
+  \leq
+  C_\Ncal
+  \bigl\|\mathfrak{r}_{\mathrm{int}}^\theta\bigr\|_{L^2(\Omega)}
+  +
+  C_\mathcal{B}
+  \bigl\|\mathfrak{r}_{\mathrm{bd}}^\theta\bigr\|_{L^2(\partial\Omega)}
+  +
+  \mathrm{approximation/sampling\ terms},
+  \label{eq:apost}
+\end{equation}
+where the constants and extra terms depend on the PDE class, the domain,
+and the sampling scheme. Equation~\eqref{eq:apost} should therefore be read
+as a global stability statement, not as a pointwise certificate of trust.
+The abstention layer introduced in Section~\ref{sec:method} addresses this
+local question by taking the fixed predictor $h$ in
+Section~\ref{sec:bg-reject} to be the frozen PINN
+$\widehat{u}_\theta$, whether it was trained by \eqref{eq:pinn-loss} or by
+modern variants such as adaptive weighting, causal training, adaptive
+sampling, or domain decomposition \citep{wang2021understanding,
+mcclenny2023self,wang2022respecting,wu2023comprehensive,daw2023mitigating,
+jagtap2020extended,jagtap2020conservative,moseley2023finite}.
