@@ -80,7 +80,7 @@ def plot_panels(u_pinn, v_pinn, p_pinn,
             if i == len(rows) - 1:
                 ax.set_xlabel('x')
     plt.tight_layout()
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    fig.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -99,7 +99,7 @@ def plot_mask(cfd_mask, X, Y, layout, cylinder_center, cylinder_radius, save_pat
     ax.set_aspect('equal')
     ax.set_xlabel('x'); ax.set_ylabel('y')
     ax.set_title('Naive-threshold partition  (R(x) >= beta)')
-    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    fig.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -236,13 +236,13 @@ def main():
         X, Y, layout,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'solution_comparison.png'),
+        save_path=os.path.join(args.output_dir, 'solution_comparison.pdf'),
     )
     plot_mask(
         cfd_mask, X, Y, layout,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'partition_mask.png'),
+        save_path=os.path.join(args.output_dir, 'partition_mask.pdf'),
     )
 
     stats_path = os.path.join(args.output_dir, 'stats.txt')

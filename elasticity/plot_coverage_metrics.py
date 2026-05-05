@@ -218,7 +218,7 @@ def plot_fdm_solution(ux, uy, vm, sxx, syy, sxy, X, Y, layout,
     plt.suptitle('FDM Ground Truth', fontsize=14)
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved FDM plot to {save_path}")
     plt.close(fig)
 
@@ -243,7 +243,7 @@ def plot_coverage_curve(coverage, rmse_scores, results, beta, save_path=None):
     ax.legend(loc='upper right', fontsize=10); ax.grid(True, alpha=0.3)
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
     plt.close(fig)
 
@@ -266,7 +266,7 @@ def plot_expected_loss(results, beta, save_path=None):
     ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved expected loss plot to {save_path}")
     plt.close(fig)
 
@@ -365,7 +365,7 @@ def plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
                  fontsize=16, fontweight='bold', y=1.01)
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved comparison to {save_path}")
     plt.close(fig)
 
@@ -520,7 +520,7 @@ def main():
 
     plot_fdm_solution(ux_fdm, uy_fdm, vm_fdm, sxx_fdm, syy_fdm, sxy_fdm,
                       X, Y, layout, show_hole,
-                      save_path=os.path.join(args.output_dir, 'fdm_solution.png'))
+                      save_path=os.path.join(args.output_dir, 'fdm_solution.pdf'))
 
     # --- Router ---
     print("[3] Loading router...")
@@ -572,9 +572,9 @@ def main():
     results = compute_expected_losses(res_norm, r, layout, args.beta)
 
     plot_coverage_curve(coverage, rmse_scores, results, args.beta,
-                        save_path=os.path.join(args.output_dir, 'coverage_rmse.png'))
+                        save_path=os.path.join(args.output_dir, 'coverage_rmse.pdf'))
     plot_expected_loss(results, args.beta,
-                       save_path=os.path.join(args.output_dir, 'expected_loss.png'))
+                       save_path=os.path.join(args.output_dir, 'expected_loss.pdf'))
 
     # --- Hybrid solution ---
     print("[5] Building hybrid solution...")
@@ -600,7 +600,7 @@ def main():
     plot_solution_comparison(ux_pinn, uy_pinn, ux_fdm, uy_fdm,
                               ux_hybrid, uy_hybrid, X, Y, layout, cfd_mask,
                               show_hole,
-                              save_path=os.path.join(args.output_dir, 'solution_comparison.png'))
+                              save_path=os.path.join(args.output_dir, 'solution_comparison.pdf'))
 
     # --- Baseline: naive residual-threshold rule (tau = beta) ---
     print("[5b] Building naive residual-threshold hybrid (tau = beta)...")
@@ -625,7 +625,7 @@ def main():
         ux_hybrid_r, uy_hybrid_r, X, Y, layout, cfd_mask_r,
         show_hole,
         save_path=os.path.join(args.output_dir,
-                                'hybrid_solution_residual_threshold.png'),
+                                'hybrid_solution_residual_threshold.pdf'),
         title=f'Naive Threshold Based Rule (Threshold = {residual_threshold:.2f})',
     )
 

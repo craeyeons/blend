@@ -712,7 +712,7 @@ def main():
     print("\n[Step 8] Generating visualizations...")
     
     # Plot router output
-    router_plot_path = os.path.join(args.output_dir, 'router_output.png')
+    router_plot_path = os.path.join(args.output_dir, 'router_output.pdf')
     plot_router_output(
         r, X, Y, layout,
         title=f'Trained Router - Cavity (β={args.beta}, λ={args.lambda_tv})',
@@ -721,11 +721,11 @@ def main():
     )
     
     # Plot training history
-    history_plot_path = os.path.join(args.output_dir, 'training_history.png')
+    history_plot_path = os.path.join(args.output_dir, 'training_history.pdf')
     plot_training_history(history, save_path=history_plot_path)
 
     # Plot coverage evolution at fixed deciles (0%, 10%, ..., 100%)
-    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.png')
+    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.pdf')
     coverage_metrics, _ = plot_coverage_evolution(
         r, layout,
         save_path=coverage_plot_path,
@@ -785,8 +785,8 @@ def main():
     fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
     plt.suptitle(f'Coverage Evolution - Cavity (\u03b2={args.beta})', fontsize=12)
     plt.tight_layout()
-    grid_path = os.path.join(args.output_dir, 'coverage_grid.png')
-    plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+    grid_path = os.path.join(args.output_dir, 'coverage_grid.pdf')
+    plt.savefig(grid_path, dpi=1200, bbox_inches='tight')
     plt.close()
     print(f"  Saved coverage grid to {grid_path}")
     
@@ -797,9 +797,9 @@ def main():
     print(f"  - router.weights.h5: Trained router model")
     print(f"  - predictions.npz: Router output and mask")
     print(f"  - training_history.npz: Loss history")
-    print(f"  - router_output.png: Visualization")
-    print(f"  - training_history.png: Loss curves")
-    print(f"  - coverage_evolution.png/.npz: 0%-100% coverage deciles")
+    print(f"  - router_output.pdf: Visualization")
+    print(f"  - training_history.pdf: Loss curves")
+    print(f"  - coverage_evolution.pdf/.npz: 0%-100% coverage deciles")
     
     return router, trainer, history
 

@@ -622,8 +622,8 @@ def main():
             ax.set_title(title)
         plt.suptitle('Mixed-Variable PINN — Displacement', fontsize=14)
         plt.tight_layout()
-        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_displacement.png'),
-                    dpi=150, bbox_inches='tight')
+        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_displacement.pdf'),
+                    dpi=1200, bbox_inches='tight')
 
         # Stress plot
         fig, axes = plt.subplots(1, 4, figsize=(22, 5))
@@ -638,8 +638,8 @@ def main():
             ax.set_title(title)
         plt.suptitle('Mixed-Variable PINN — Stress', fontsize=14)
         plt.tight_layout()
-        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_stress.png'),
-                    dpi=150, bbox_inches='tight')
+        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_stress.pdf'),
+                    dpi=1200, bbox_inches='tight')
 
         # Loss plot
         fig, ax = plt.subplots(figsize=(8, 5))
@@ -649,7 +649,7 @@ def main():
         ax.set_title('Mixed-Variable PINN Training Loss')
         ax.legend(); ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_loss.png'), dpi=150)
+        plt.savefig(os.path.join(args.output_dir, 'pinn_mixed_loss.pdf'), dpi=1200)
         plt.show()
 
         print("Saved plots.")

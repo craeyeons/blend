@@ -217,7 +217,7 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, save_path=None):
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved CFD solution plot to {save_path}")
     
     plt.close(fig)
@@ -356,7 +356,7 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved hybrid solution plot to {save_path}")
     
     plt.close(fig)
@@ -436,7 +436,7 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved solution comparison to {save_path}")
     plt.close(fig)
 
@@ -782,7 +782,7 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta,
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved combined metrics to {save_path}")
     
     plt.close(fig)
@@ -821,7 +821,7 @@ def plot_coverage_curve(coverage, rmse_scores, results, beta, save_path=None):
     plt.tight_layout()
 
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
 
     plt.close(fig)
@@ -950,7 +950,7 @@ def main():
         
         # Plot CFD solution
         plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout,
-                         save_path=os.path.join(args.output_dir, 'cfd_solution.png'))
+                         save_path=os.path.join(args.output_dir, 'cfd_solution.pdf'))
     else:
         print("\n[Step 3] No CFD solution provided. Use --compute-cfd or --cfd-path")
         return
@@ -1094,7 +1094,7 @@ def main():
         u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
         threshold=optimal_threshold,
         coverage=actual_coverage,
-        save_path=os.path.join(args.output_dir, 'hybrid_solution.png')
+        save_path=os.path.join(args.output_dir, 'hybrid_solution.pdf')
     )
 
     # Side-by-side comparison: PINN vs Hybrid vs CFD
@@ -1103,13 +1103,13 @@ def main():
         u_cfd, v_cfd, p_cfd,
         u_hybrid, v_hybrid, p_hybrid,
         X, Y, layout, cfd_mask,
-        save_path=os.path.join(args.output_dir, 'solution_comparison.png')
+        save_path=os.path.join(args.output_dir, 'solution_comparison.pdf')
     )
 
     # =========================================================================
     # Step 7d: Baseline hybrid using simple residual-threshold separator
     #   cfd_mask = (residual_field >= tau), tau chosen so CFD area matches
-    #   the optimal hybrid coverage (star in coverage_metrics.png).
+    #   the optimal hybrid coverage (star in coverage_metrics.pdf).
     # =========================================================================
     print("\n[Step 7d] Computing baseline hybrid with residual-threshold separator (tau = beta)...")
     fluid_mask_full = layout > 0
@@ -1130,7 +1130,7 @@ def main():
         u_hybrid_r, v_hybrid_r, p_hybrid_r, X, Y, layout, cfd_mask_r,
         threshold=residual_threshold,
         coverage=actual_coverage_r,
-        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.png'),
+        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.pdf'),
         title=f'Naive Threshold Based Rule (Threshold = {residual_threshold:.2f})',
         show_info=False,
     )
@@ -1145,13 +1145,13 @@ def main():
         coverage, rmse_scores, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
         lambda_tv=args.lambda_tv,
-        save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
+        save_path=os.path.join(args.output_dir, 'coverage_metrics.pdf')
     )
 
     # Coverage curve
     plot_coverage_curve(
         coverage, rmse_scores, results, args.beta,
-        save_path=os.path.join(args.output_dir, 'coverage_curve.png')
+        save_path=os.path.join(args.output_dir, 'coverage_curve.pdf')
     )
     
     # Save numerical results

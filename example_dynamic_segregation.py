@@ -134,21 +134,21 @@ def example_cavity_flow_dynamic_segregation():
         # Plot solution
         plot_solution(u, v, p, 
                      title_prefix=f'Dynamic Segregation (τ={threshold}): ',
-                     save_path=f'{filename_base}_solution.png')
+                     save_path=f'{filename_base}_solution.pdf')
         
         # Plot with segregation mask
         plot_hybrid_solution(u, v, p, sim.mask,
                             title_prefix=f'Segregation (τ={threshold}): ',
-                            save_path=f'{filename_base}_mask.png')
+                            save_path=f'{filename_base}_mask.pdf')
         
         # Plot streamlines
         plot_streamlines(u, v,
-                        save_path=f'{filename_base}_streamlines.png',
+                        save_path=f'{filename_base}_streamlines.pdf',
                         title=f'Streamlines: Dynamic Segregation (τ={threshold})')
     
     print("\n" + "="*70)
     print("Examples completed! Results saved with filenames:")
-    print("  cavity_dynamic_threshold_*.png")
+    print("  cavity_dynamic_threshold_*.pdf")
     print("="*70)
     
     return sim

@@ -531,8 +531,8 @@ def main():
     ax.set_title(f'Time vs RMSE at Coverage Increments — {args.problem}')
     fig.tight_layout()
 
-    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.png')
-    fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plot_path = os.path.join(args.output_dir, 'coverage_time_rmse.pdf')
+    fig.savefig(plot_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f"\n  Saved plot to {plot_path}")
 

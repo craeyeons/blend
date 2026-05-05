@@ -619,8 +619,8 @@ def main():
             ax.set_xlabel('x'); ax.set_ylabel('y')
         plt.suptitle('Decomposed PINN — Blended Solution', fontsize=14)
         plt.tight_layout()
-        fig_path = os.path.join(args.output_dir, 'pinn_l_bracket_decomposed.png')
-        plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+        fig_path = os.path.join(args.output_dir, 'pinn_l_bracket_decomposed.pdf')
+        plt.savefig(fig_path, dpi=1200, bbox_inches='tight')
         print(f"Saved solution plot to {fig_path}")
 
         # Loss plot
@@ -636,8 +636,8 @@ def main():
         ax.set_title('Decomposed PINN Training Loss')
         ax.legend(); ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        fig_path = os.path.join(args.output_dir, 'pinn_l_bracket_decomposed_loss.png')
-        plt.savefig(fig_path, dpi=150)
+        fig_path = os.path.join(args.output_dir, 'pinn_l_bracket_decomposed_loss.pdf')
+        plt.savefig(fig_path, dpi=1200)
         print(f"Saved loss plot to {fig_path}")
         plt.show()
     except Exception as e:

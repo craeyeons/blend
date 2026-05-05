@@ -35,7 +35,7 @@ def generate_filename(simulation_type, mode, Re, suffix='', output_dir='./'):
     os.makedirs(output_dir, exist_ok=True)
     Re_str = f"Re{int(Re)}" if Re == int(Re) else f"Re{Re:.1f}"
     suffix_str = f"_{suffix}" if suffix else ""
-    filename = f"{simulation_type}_{mode}_{Re_str}{suffix_str}.png"
+    filename = f"{simulation_type}_{mode}_{Re_str}{suffix_str}.pdf"
     return os.path.join(output_dir, filename)
 
 
@@ -152,7 +152,7 @@ def plot_solution(u, v, p, x=None, y=None, title_prefix='', save_path=None,
         save_path = generate_filename(simulation_type, mode, Re, 'solution')
     
     if save_path:
-        fig.savefig(save_path, dpi=300)
+        fig.savefig(save_path, dpi=1200)
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
@@ -190,7 +190,7 @@ def plot_single_field(x, y, z, title, save_path=None, show_circle=None,
         save_path = generate_filename(simulation_type, mode, Re, suffix)
     
     if save_path:
-        fig.savefig(save_path, dpi=300)
+        fig.savefig(save_path, dpi=1200)
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
@@ -264,7 +264,7 @@ def plot_hybrid_solution(u, v, p, mask, x=None, y=None, save_path=None,
         save_path = generate_filename(simulation_type, mode, Re, 'hybrid_mask')
     
     if save_path:
-        fig.savefig(save_path, dpi=300)
+        fig.savefig(save_path, dpi=1200)
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
@@ -325,7 +325,7 @@ def plot_comparison(solutions, labels, x=None, y=None, save_path=None,
         save_path = generate_filename(simulation_type, 'comparison', Re, 'comparison')
     
     if save_path:
-        fig.savefig(save_path, dpi=300)
+        fig.savefig(save_path, dpi=1200)
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
@@ -394,7 +394,7 @@ def plot_streamlines(u, v, x=None, y=None, density=1.5, save_path=None,
         save_path = generate_filename(simulation_type, mode, Re, 'streamlines')
     
     if save_path:
-        fig.savefig(save_path, dpi=300)
+        fig.savefig(save_path, dpi=1200)
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)
@@ -470,7 +470,7 @@ def plot_region_mask(mask, x=None, y=None, save_path=None, show_circle=None,
         save_path = generate_filename(simulation_type, mode, Re, 'regions')
     
     if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"Saved figure to {save_path}")
     
     plt.close(fig)

@@ -189,8 +189,8 @@ def main():
     title_src = 'manufactured' if has_exact else 'gaussian source'
     fig.suptitle(f'Helmholtz {title_src} (tag={tag})', y=1.00)
     fig.tight_layout()
-    out_png = os.path.join(args.output_dir, f'plot_sanity_{tag}.png')
-    fig.savefig(out_png, dpi=150, bbox_inches='tight')
+    out_png = os.path.join(args.output_dir, f'plot_sanity_{tag}.pdf')
+    fig.savefig(out_png, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved plot: {out_png}")
 

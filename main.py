@@ -124,8 +124,8 @@ def run_cavity_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, title_prefix='CFD: ', 
-                     save_path='cavity_flow_cfd.png')
-        plot_streamlines(u, v, save_path='cavity_flow_streamlines.png',
+                     save_path='cavity_flow_cfd.pdf')
+        plot_streamlines(u, v, save_path='cavity_flow_streamlines.pdf',
                         title='Cavity Flow Streamlines')
         
     elif args.mode == 'hybrid':
@@ -160,10 +160,10 @@ def run_cavity_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, title_prefix='Hybrid: ',
-                     save_path='cavity_flow_hybrid.png')
+                     save_path='cavity_flow_hybrid.pdf')
         plot_hybrid_solution(u, v, p, mask, 
-                            save_path='cavity_flow_hybrid_mask.png')
-        plot_streamlines(u, v, save_path='cavity_flow_hybrid_streamlines.png',
+                            save_path='cavity_flow_hybrid_mask.pdf')
+        plot_streamlines(u, v, save_path='cavity_flow_hybrid_streamlines.pdf',
                         title='Hybrid PINN-CFD Streamlines')
         
     elif args.mode == 'pinn':
@@ -197,7 +197,7 @@ def run_cavity_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, x=X, y=Y, title_prefix='PINN: ',
-                     save_path='cavity_flow_pinn.png')
+                     save_path='cavity_flow_pinn.pdf')
     
     elif args.mode == 'dynamic':
         # Dynamic hybrid PINN-CFD simulation with complexity-based segregation
@@ -255,10 +255,10 @@ def run_cavity_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, title_prefix='Dynamic Hybrid: ',
-                     save_path='cavity_flow_dynamic.png')
+                     save_path='cavity_flow_dynamic.pdf')
         plot_hybrid_solution(u, v, p, sim.mask, 
-                            save_path='cavity_flow_dynamic_mask.png')
-        plot_streamlines(u, v, save_path='cavity_flow_dynamic_streamlines.png',
+                            save_path='cavity_flow_dynamic_mask.pdf')
+        plot_streamlines(u, v, save_path='cavity_flow_dynamic_streamlines.pdf',
                         title='Dynamic Hybrid PINN-CFD Streamlines')
     
     return u, v, p
@@ -320,10 +320,10 @@ def run_cylinder_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, x=X, y=Y, title_prefix='CFD: ',
-                     save_path='cylinder_flow_cfd.png',
+                     save_path='cylinder_flow_cfd.pdf',
                      show_circle=circle_info)
         plot_streamlines(u, v, x=X, y=Y, 
-                        save_path='cylinder_flow_streamlines.png',
+                        save_path='cylinder_flow_streamlines.pdf',
                         show_circle=circle_info,
                         title='Flow Around Cylinder - Streamlines')
     
@@ -407,13 +407,13 @@ def run_cylinder_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, x=X, y=Y, title_prefix='Hybrid: ',
-                     save_path='cylinder_flow_hybrid.png',
+                     save_path='cylinder_flow_hybrid.pdf',
                      show_circle=circle_info)
         plot_hybrid_solution(u, v, p, mask, x=X, y=Y,
-                            save_path='cylinder_flow_hybrid_mask.png',
+                            save_path='cylinder_flow_hybrid_mask.pdf',
                             show_circle=circle_info)
         plot_streamlines(u, v, x=X, y=Y,
-                        save_path='cylinder_flow_hybrid_streamlines.png',
+                        save_path='cylinder_flow_hybrid_streamlines.pdf',
                         show_circle=circle_info,
                         title='Hybrid PINN-CFD - Streamlines')
     
@@ -474,10 +474,10 @@ def run_cylinder_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, x=X, y=Y, title_prefix='PINN: ',
-                     save_path='cylinder_flow_pinn.png',
+                     save_path='cylinder_flow_pinn.pdf',
                      show_circle=circle_info)
         plot_streamlines(u, v, x=X, y=Y,
-                        save_path='cylinder_flow_pinn_streamlines.png',
+                        save_path='cylinder_flow_pinn_streamlines.pdf',
                         show_circle=circle_info,
                         title='PINN - Flow Around Cylinder - Streamlines')
     
@@ -571,13 +571,13 @@ def run_cylinder_simulation(args):
         
         # Plot results
         plot_solution(u, v, p, x=X, y=Y, title_prefix='Dynamic Hybrid: ',
-                     save_path='cylinder_flow_dynamic.png',
+                     save_path='cylinder_flow_dynamic.pdf',
                      show_circle=circle_info)
         plot_hybrid_solution(u, v, p, sim.mask, x=X, y=Y,
-                            save_path='cylinder_flow_dynamic_mask.png',
+                            save_path='cylinder_flow_dynamic_mask.pdf',
                             show_circle=circle_info)
         plot_streamlines(u, v, x=X, y=Y,
-                        save_path='cylinder_flow_dynamic_streamlines.png',
+                        save_path='cylinder_flow_dynamic_streamlines.pdf',
                         show_circle=circle_info,
                         title='Dynamic Hybrid PINN-CFD - Streamlines')
     

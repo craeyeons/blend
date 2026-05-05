@@ -39,7 +39,7 @@ def main():
     parser.add_argument('--load-angle', type=float, default=None,
                         help='Load direction (deg, CCW from +x)')
     parser.add_argument('--tag', type=str, default=None,
-                        help='Suffix for output .npz / .png')
+                        help='Suffix for output .npz / .pdf')
 
     # Plate with hole
     parser.add_argument('--x-min', type=float, default=-2.0)
@@ -166,8 +166,8 @@ def main():
 
         plt.suptitle(f'FDM Solution: {args.problem}', fontsize=14)
         plt.tight_layout()
-        fig_path = os.path.join(args.output_dir, f'fdm_{args.problem}{suffix}.png')
-        plt.savefig(fig_path, dpi=150)
+        fig_path = os.path.join(args.output_dir, f'fdm_{args.problem}{suffix}.pdf')
+        plt.savefig(fig_path, dpi=1200)
         print(f"Saved plot to {fig_path}")
         plt.show()
     except Exception as e:

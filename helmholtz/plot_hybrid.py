@@ -7,10 +7,10 @@ Reads:
     {router_history_dir}/router_meta_{tag}.json  (beta, lambda_tv)
 
 Produces (under {plots_dir}):
-    hybrid_{tag}.png                (6-panel summary: u, curves)
-    solution_comparison_{tag}.png   (PINN | Hybrid | FEM, rejection outlined)
-    loss_vs_coverage_{tag}.png      (training-loss curve with optimal star + bar breakdown)
-    coverage_evolution_{tag}.png    (grid of hybrid u for 10%..100% rejection)
+    hybrid_{tag}.pdf                (6-panel summary: u, curves)
+    solution_comparison_{tag}.pdf   (PINN | Hybrid | FEM, rejection outlined)
+    loss_vs_coverage_{tag}.pdf      (training-loss curve with optimal star + bar breakdown)
+    coverage_evolution_{tag}.pdf    (grid of hybrid u for 10%..100% rejection)
     metrics_exp2_{tag}.json
 
 Usage:
@@ -181,8 +181,8 @@ def _plot_summary(args, summary, ref, u_hybrid):
         f'hybrid@0={summary["hybrid_mean_s"]*1000:.1f} ms  '
         f'speedup={summary["speedup"]:.2f}x')
     fig.tight_layout()
-    out = os.path.join(args.plots_dir, f'hybrid_{args.tag}.png')
-    fig.savefig(out, dpi=150, bbox_inches='tight')
+    out = os.path.join(args.plots_dir, f'hybrid_{args.tag}.pdf')
+    fig.savefig(out, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved: {out}')
     return rl
@@ -257,8 +257,8 @@ def _plot_solution_comparison(args, summary, ref, u_hybrid, accept_mask):
         f'FEM coverage={cov_pct:.1f}%  '
         f'PINN RMSE={rl_pinn:.2e}  Hybrid RMSE={rl_hyb:.2e}')
     fig.tight_layout()
-    out = os.path.join(args.plots_dir, f'solution_comparison_{args.tag}.png')
-    fig.savefig(out, dpi=150, bbox_inches='tight')
+    out = os.path.join(args.plots_dir, f'solution_comparison_{args.tag}.pdf')
+    fig.savefig(out, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved: {out}')
 
@@ -387,8 +387,8 @@ def _plot_loss_vs_coverage(args, summary, ref, beta):
     fig.suptitle(f'Router coverage metrics  tag={args.tag}  '
                  f'k={summary["k"]:.3f}')
     fig.tight_layout()
-    out = os.path.join(args.plots_dir, f'loss_vs_coverage_{args.tag}.png')
-    fig.savefig(out, dpi=150, bbox_inches='tight')
+    out = os.path.join(args.plots_dir, f'loss_vs_coverage_{args.tag}.pdf')
+    fig.savefig(out, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved: {out}')
     return opt_cov, opt_loss
@@ -466,8 +466,8 @@ def _plot_coverage_evolution(args, summary, ref, solver, pinn, router,
     fig.suptitle(f'Hybrid solution vs FEM coverage  tag={args.tag}  '
                  f'k={summary["k"]:.3f}')
     fig.tight_layout()
-    out = os.path.join(args.plots_dir, f'coverage_evolution_{args.tag}.png')
-    fig.savefig(out, dpi=150, bbox_inches='tight')
+    out = os.path.join(args.plots_dir, f'coverage_evolution_{args.tag}.pdf')
+    fig.savefig(out, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved: {out}')
 

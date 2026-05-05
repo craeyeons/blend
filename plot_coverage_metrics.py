@@ -251,7 +251,7 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved CFD solution plot to {save_path}")
     
     plt.close(fig)
@@ -497,7 +497,7 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved hybrid solution plot to {save_path}")
     
     plt.close(fig)
@@ -602,7 +602,7 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
         fig.suptitle(title, fontsize=14, y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.985] if title else None)
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved solution comparison to {save_path}")
     plt.close(fig)
 
@@ -760,7 +760,7 @@ def plot_coverage_progression(u_pinn, v_pinn, u_cfd, v_cfd,
     cbar.set_label('|U|')
 
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved coverage progression to {save_path}")
     plt.close(fig)
 
@@ -910,7 +910,7 @@ def plot_coverage_curve(coverage, rmse_scores, results, beta, save_path=None):
     plt.tight_layout()
 
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved coverage plot to {save_path}")
 
     plt.close(fig)
@@ -967,7 +967,7 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved loss comparison to {save_path}")
     
     plt.close(fig)  # Close to free memory
@@ -1138,7 +1138,7 @@ def plot_loss_vs_coverage(residual_field, router_output, layout, beta,
 
     plt.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved loss-vs-coverage plot to {save_path}")
     plt.close(fig)
     return opt_cov, opt_loss
@@ -1263,7 +1263,7 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
     plt.tight_layout()
     
     if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved combined metrics to {save_path}")
     
     plt.close(fig)  # Close to free memory
@@ -1412,7 +1412,7 @@ def main():
         u_cfd, v_cfd, p_cfd, X, Y, layout,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'cfd_solution.png')
+        save_path=os.path.join(args.output_dir, 'cfd_solution.pdf')
     )
     
     # =========================================================================
@@ -1555,7 +1555,7 @@ def main():
     # =========================================================================
     print("\n[Step 7b] Computing optimal threshold from full training loss curve...")
     
-    # Compute full loss curve to find the threshold corresponding to the star in coverage_metrics.png
+    # Compute full loss curve to find the threshold corresponding to the star in coverage_metrics.pdf
     _, _, _, full_loss_optimal = compute_loss_vs_coverage(
         residual_field, router_output, layout, args.beta,
         lambda_tv=args.lambda_tv
@@ -1599,7 +1599,7 @@ def main():
         cylinder_radius=args.cylinder_radius,
         threshold=optimal_threshold,
         coverage=actual_coverage,
-        save_path=os.path.join(args.output_dir, 'hybrid_solution.png')
+        save_path=os.path.join(args.output_dir, 'hybrid_solution.pdf')
     )
 
     # Side-by-side comparison: PINN vs Hybrid vs CFD
@@ -1614,7 +1614,7 @@ def main():
         X, Y, layout, cfd_mask,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'solution_comparison.png'),
+        save_path=os.path.join(args.output_dir, 'solution_comparison.pdf'),
         title=sol_title,
     )
 
@@ -1624,7 +1624,7 @@ def main():
         router_output, layout, X, Y,
         cylinder_center=(args.cylinder_x, args.cylinder_y),
         cylinder_radius=args.cylinder_radius,
-        save_path=os.path.join(args.output_dir, 'coverage_progression.png')
+        save_path=os.path.join(args.output_dir, 'coverage_progression.pdf')
     )
 
     # =========================================================================
@@ -1653,7 +1653,7 @@ def main():
         cylinder_radius=args.cylinder_radius,
         threshold=residual_threshold,
         coverage=actual_coverage_r,
-        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.png'),
+        save_path=os.path.join(args.output_dir, 'hybrid_solution_residual_threshold.pdf'),
         title=f'Naive Threshold Based Rule (Threshold = {residual_threshold:.2f})',
         show_info=False,
     )
@@ -1668,20 +1668,20 @@ def main():
         coverage, rmse_scores, results, args.beta,
         residual_field=residual_field, router_output=router_output, layout=layout,
         lambda_tv=args.lambda_tv,
-        save_path=os.path.join(args.output_dir, 'coverage_metrics.png')
+        save_path=os.path.join(args.output_dir, 'coverage_metrics.pdf')
     )
 
     # Individual plots
     plot_coverage_curve(
         coverage, rmse_scores, results, args.beta,
-        save_path=os.path.join(args.output_dir, 'coverage_curve.png')
+        save_path=os.path.join(args.output_dir, 'coverage_curve.pdf')
     )
 
-    # Standalone training-loss vs coverage (left panel of coverage_metrics.png).
+    # Standalone training-loss vs coverage (left panel of coverage_metrics.pdf).
     plot_loss_vs_coverage(
         residual_field, router_output, layout, args.beta,
         lambda_tv=args.lambda_tv,
-        save_path=os.path.join(args.output_dir, 'loss_vs_coverage.png'),
+        save_path=os.path.join(args.output_dir, 'loss_vs_coverage.pdf'),
     )
     
     # Save numerical results
@@ -1764,10 +1764,10 @@ def main():
     print("METRICS COMPUTATION COMPLETE")
     print("=" * 60)
     print(f"\nResults saved to: {args.output_dir}/")
-    print(f"  - cfd_solution.png: CFD ground truth visualization")
-    print(f"  - hybrid_solution.png: Hybrid solution with optimal threshold")
-    print(f"  - coverage_metrics.png: Combined metrics plot")
-    print(f"  - coverage_curve.png: R² vs coverage curve")
+    print(f"  - cfd_solution.pdf: CFD ground truth visualization")
+    print(f"  - hybrid_solution.pdf: Hybrid solution with optimal threshold")
+    print(f"  - coverage_metrics.pdf: Combined metrics plot")
+    print(f"  - coverage_curve.pdf: R² vs coverage curve")
     print(f"  - metrics_results.npz: All numerical results")
 
 

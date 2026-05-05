@@ -334,12 +334,12 @@ def main():
     print("\n[Step 8] Visualizing...")
     plot_router_output(r, X, Y, layout,
                        title=f'Router ({args.problem}, beta={args.beta})',
-                       save_path=os.path.join(args.output_dir, 'router_output.png'),
+                       save_path=os.path.join(args.output_dir, 'router_output.pdf'),
                        show_hole=show_hole)
     plot_training_history(history,
-                          save_path=os.path.join(args.output_dir, 'training_history.png'))
+                          save_path=os.path.join(args.output_dir, 'training_history.pdf'))
 
-    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.png')
+    coverage_plot_path = os.path.join(args.output_dir, 'coverage_evolution.pdf')
     coverage_metrics, _ = plot_coverage_evolution(
         r, layout,
         save_path=coverage_plot_path,
@@ -401,8 +401,8 @@ def main():
     fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
     plt.suptitle(f'Coverage Evolution - {args.problem} (\u03b2={args.beta})', fontsize=12)
     plt.tight_layout()
-    grid_path = os.path.join(args.output_dir, 'coverage_grid.png')
-    plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+    grid_path = os.path.join(args.output_dir, 'coverage_grid.pdf')
+    plt.savefig(grid_path, dpi=1200, bbox_inches='tight')
     plt.close()
     print(f"  Saved coverage grid to {grid_path}")
 

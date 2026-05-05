@@ -317,8 +317,8 @@ def main():
     ax.axhline(1.0, color='k', linestyle='--', linewidth=0.8)
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
     fig.tight_layout()
-    fig.savefig(os.path.join(args.output_dir, 'speedup_by_config.png'),
-                dpi=150, bbox_inches='tight')
+    fig.savefig(os.path.join(args.output_dir, 'speedup_by_config.pdf'),
+                dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
     print("\n=== Summary ===")

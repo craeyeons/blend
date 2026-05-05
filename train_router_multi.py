@@ -469,7 +469,7 @@ def main():
     print("\n[Step 7] Generating visualizations...")
 
     # Plot training history
-    history_plot_path = os.path.join(args.output_dir, 'training_history.png')
+    history_plot_path = os.path.join(args.output_dir, 'training_history.pdf')
     plot_training_history(history, save_path=history_plot_path)
 
     # Plot router output + coverage evolution for each training config
@@ -477,7 +477,7 @@ def main():
         result = evaluate_on_config(router, d, args.threshold)
         cx, cy = d['cylinder_center']
         cr = d['cylinder_radius']
-        save_path = os.path.join(args.output_dir, f'router_train_{i}.png')
+        save_path = os.path.join(args.output_dir, f'router_train_{i}.pdf')
         plot_router_output(
             result['router_output'], d['X'], d['Y'], d['layout_np'],
             title=f'Train {i+1}: {d["label"]}',
@@ -485,7 +485,7 @@ def main():
             show_circle=(cx, cy, cr)
         )
 
-        cov_plot_path = os.path.join(args.output_dir, f'coverage_train_{i}.png')
+        cov_plot_path = os.path.join(args.output_dir, f'coverage_train_{i}.pdf')
         cov_metrics, _ = plot_coverage_evolution(
             result['router_output'], d['layout_np'],
             save_path=cov_plot_path,
@@ -544,8 +544,8 @@ def main():
         fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
         plt.suptitle(f'Coverage Grid - Train {i+1}: {d["label"]}', fontsize=12)
         plt.tight_layout()
-        grid_path = os.path.join(args.output_dir, f'coverage_train_{i}_grid.png')
-        plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+        grid_path = os.path.join(args.output_dir, f'coverage_train_{i}_grid.pdf')
+        plt.savefig(grid_path, dpi=1200, bbox_inches='tight')
         plt.close()
 
     # Plot router output + coverage evolution for each test config
@@ -553,7 +553,7 @@ def main():
         result = evaluate_on_config(router, d, args.threshold)
         cx, cy = d['cylinder_center']
         cr = d['cylinder_radius']
-        save_path = os.path.join(args.output_dir, f'router_test_{i}.png')
+        save_path = os.path.join(args.output_dir, f'router_test_{i}.pdf')
         plot_router_output(
             result['router_output'], d['X'], d['Y'], d['layout_np'],
             title=f'TEST {i+1}: {d["label"]}',
@@ -561,7 +561,7 @@ def main():
             show_circle=(cx, cy, cr)
         )
 
-        cov_plot_path = os.path.join(args.output_dir, f'coverage_test_{i}.png')
+        cov_plot_path = os.path.join(args.output_dir, f'coverage_test_{i}.pdf')
         cov_metrics, _ = plot_coverage_evolution(
             result['router_output'], d['layout_np'],
             save_path=cov_plot_path,
@@ -620,8 +620,8 @@ def main():
         fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
         plt.suptitle(f'Coverage Grid - TEST {i+1}: {d["label"]}', fontsize=12)
         plt.tight_layout()
-        grid_path = os.path.join(args.output_dir, f'coverage_test_{i}_grid.png')
-        plt.savefig(grid_path, dpi=150, bbox_inches='tight')
+        grid_path = os.path.join(args.output_dir, f'coverage_test_{i}_grid.pdf')
+        plt.savefig(grid_path, dpi=1200, bbox_inches='tight')
         plt.close()
 
         # Save test predictions
@@ -638,11 +638,11 @@ def main():
     print(f"\nResults saved to: {args.output_dir}/")
     print(f"  - router.weights.h5: Trained router model")
     print(f"  - training_history.npz/png: Loss history")
-    print(f"  - router_train_*.png: Router output on training configs")
-    print(f"  - coverage_train_*.png/.npz: 0%-100% coverage deciles (train)")
+    print(f"  - router_train_*.pdf: Router output on training configs")
+    print(f"  - coverage_train_*.pdf/.npz: 0%-100% coverage deciles (train)")
     if test_data:
-        print(f"  - router_test_*.png: Router output on TEST configs")
-        print(f"  - coverage_test_*.png/.npz: 0%-100% coverage deciles (test)")
+        print(f"  - router_test_*.pdf: Router output on TEST configs")
+        print(f"  - coverage_test_*.pdf/.npz: 0%-100% coverage deciles (test)")
         print(f"  - predictions_test_*.npz: Test predictions")
 
     return router, history

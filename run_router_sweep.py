@@ -99,7 +99,7 @@ def generate_comparison_plot(betas, args):
     import scienceplots
     plt.style.use(['science', 'no-latex'])
     
-    output_path = os.path.join(args.output_base_dir, 'beta_comparison.png')
+    output_path = os.path.join(args.output_base_dir, 'beta_comparison.pdf')
     
     fig, axes = plt.subplots(2, len(betas), figsize=(4 * len(betas), 8))
     if len(betas) == 1:
@@ -147,7 +147,7 @@ def generate_comparison_plot(betas, args):
     
     plt.suptitle('Router Output vs Beta (CFD Cost)', fontsize=14)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=1200, bbox_inches='tight')
     plt.close()
     
     print(f"\nSaved comparison plot to: {output_path}")

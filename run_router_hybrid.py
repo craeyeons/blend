@@ -225,7 +225,7 @@ def main():
     print(f"  PINN region: {100 - cfd_fraction:.1f}%")
     
     # Visualize router output
-    router_plot_path = os.path.join(args.output_dir, 'router_mask.png')
+    router_plot_path = os.path.join(args.output_dir, 'router_mask.pdf')
     plot_router_output(
         r, X, Y, layout,
         title='Router-Generated Domain Segmentation',
@@ -285,7 +285,7 @@ def main():
     print("\n[Step 5] Generating visualizations...")
     
     # Full solution
-    solution_path = os.path.join(args.output_dir, 'solution.png')
+    solution_path = os.path.join(args.output_dir, 'solution.pdf')
     plot_solution(
         u, v, p, x=X, y=Y,
         title_prefix='Router Hybrid',
@@ -297,7 +297,7 @@ def main():
     )
     
     # Hybrid solution with mask overlay
-    hybrid_path = os.path.join(args.output_dir, 'hybrid_solution.png')
+    hybrid_path = os.path.join(args.output_dir, 'hybrid_solution.pdf')
     plot_hybrid_solution(
         u, v, p, mask, x=X, y=Y,
         save_path=hybrid_path,
@@ -308,7 +308,7 @@ def main():
     )
     
     # Streamlines
-    streamlines_path = os.path.join(args.output_dir, 'streamlines.png')
+    streamlines_path = os.path.join(args.output_dir, 'streamlines.pdf')
     plot_streamlines(
         u, v, x=X, y=Y,
         density=2.0,

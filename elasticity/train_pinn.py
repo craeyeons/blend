@@ -533,8 +533,8 @@ def main():
         ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        fig_path = os.path.join(args.output_dir, f'pinn_{args.problem}_loss.png')
-        plt.savefig(fig_path, dpi=150)
+        fig_path = os.path.join(args.output_dir, f'pinn_{args.problem}_loss.pdf')
+        plt.savefig(fig_path, dpi=1200)
         print(f"Saved loss plot to {fig_path}")
         plt.show()
     except Exception as e:

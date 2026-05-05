@@ -226,7 +226,7 @@ def _plot_router_output(logits, X, Y, layout, hole, title, out_path):
     ax.set_aspect('equal'); ax.set_title(title)
     plt.colorbar(im, ax=ax, fraction=0.046)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -265,7 +265,7 @@ def _plot_coverage_grid(logits, X, Y, layout, hole, title, out_path):
     fig.legend(handles=legend, loc='lower right', fontsize=10)
     plt.suptitle(title, fontsize=11)
     plt.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -373,12 +373,12 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
                        bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
 def _plot_loss_vs_coverage(logits, target_R, layout, beta, title, out_path):
-    """Mirror of exp2's `loss_vs_coverage_<tag>.png`.
+    """Mirror of exp2's `loss_vs_coverage_<tag>.pdf`.
 
     Sweeps the router's decision-loss
         L(thr) = beta * P(reject) + mean(target_R | accept-on-solid)
@@ -454,7 +454,7 @@ def _plot_loss_vs_coverage(logits, target_R, layout, beta, title, out_path):
 
     fig.suptitle(title)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -478,7 +478,7 @@ def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
     ax.set_title(f'RMSE vs coverage — {title}')
     ax.grid(True, alpha=0.3); ax.legend()
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -657,10 +657,10 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
     # Plots
     _plot_router_output(logits, X, Y, test_layout, test_hole,
                         f'Router logits — {title}',
-                        os.path.join(plots_dir, f'router_{tag}.png'))
+                        os.path.join(plots_dir, f'router_{tag}.pdf'))
     _plot_coverage_grid(logits, X, Y, test_layout, test_hole,
                         f'Coverage deciles — {title}',
-                        os.path.join(plots_dir, f'coverage_grid_{tag}.png'))
+                        os.path.join(plots_dir, f'coverage_grid_{tag}.pdf'))
     pmeta = cfg_data.get('pinn_meta')
     pinn_src = (float(pmeta['x_s']), float(pmeta['y_s'])) if pmeta else None
     pinn_hole = cfg_data.get('pinn_hole')
@@ -668,17 +668,17 @@ def run_analysis_for_config(cfg_data, split, hole, sigma, amplitude,
                    res_best['accept_mask'],
                    f'{title}  |  cov={best["actual_coverage_pct"]:.1f}%  '
                    f'PINN={pinn_rmse:.2e}  Hybrid={best["rmse_vs_fem"]:.2e}',
-                   os.path.join(plots_dir, f'solution_{tag}.png'),
+                   os.path.join(plots_dir, f'solution_{tag}.pdf'),
                    test_src=(xs, ys), pinn_src=pinn_src,
                    test_hole=test_hole, pinn_hole=pinn_hole,
                    pinn_layout=cfg_data.get('pinn_layout'),
                    pinn_u_raw=cfg_data.get('pinn_u_raw'))
     _plot_rmse_vs_coverage(sweep, pinn_rmse, title,
-                           os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.png'),
+                           os.path.join(plots_dir, f'rmse_vs_coverage_{tag}.pdf'),
                            best=best)
     _plot_loss_vs_coverage(logits, target_R, test_layout, float(beta),
                            f'Router decision loss vs coverage — {title}',
-                           os.path.join(plots_dir, f'loss_vs_coverage_{tag}.png'))
+                           os.path.join(plots_dir, f'loss_vs_coverage_{tag}.pdf'))
 
     # Save sweep + reference arrays
     with open(os.path.join(timing_dir, f'sweep_{tag}.json'), 'w') as fp:
@@ -872,8 +872,8 @@ def main():
         ax.set_xlabel('epoch'); ax.set_ylabel('loss'); ax.legend()
         ax.set_title(f'Router training — {args.tag}')
         fig.tight_layout()
-        fig.savefig(os.path.join(plots_dir, f'training_history_{args.tag}.png'),
-                    dpi=150)
+        fig.savefig(os.path.join(plots_dir, f'training_history_{args.tag}.pdf'),
+                    dpi=1200)
         plt.close(fig)
 
     if args.skip_analysis:

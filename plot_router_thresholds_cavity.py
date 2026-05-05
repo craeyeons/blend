@@ -125,7 +125,7 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold, save_path, morph_ke
     ax.set_title(f'Binary Mask (threshold={threshold:.2f}, CFD={cfd_fraction:.1f}%)')
     
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close()
     print(f"Saved: {save_path}")
 
@@ -263,7 +263,7 @@ def main():
     
     # Plot at each threshold
     for i, threshold in enumerate(thresholds):
-        save_path = os.path.join(args.output_dir, f'threshold_{threshold:.4f}.png')
+        save_path = os.path.join(args.output_dir, f'threshold_{threshold:.4f}.pdf')
         plot_separation_at_threshold(
             r, X, Y, layout, threshold,
             save_path, morph_kernel=args.morph_kernel
@@ -311,8 +311,8 @@ def main():
     plt.suptitle('Router Separation at Different Thresholds (Cavity Flow)', fontsize=14)
     plt.tight_layout()
     
-    summary_path = os.path.join(args.output_dir, 'summary_all_thresholds.png')
-    plt.savefig(summary_path, dpi=150, bbox_inches='tight')
+    summary_path = os.path.join(args.output_dir, 'summary_all_thresholds.pdf')
+    plt.savefig(summary_path, dpi=1200, bbox_inches='tight')
     plt.close()
     print(f"Saved summary: {summary_path}")
     

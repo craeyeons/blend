@@ -88,7 +88,7 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     ax.set_title(f'Binary (threshold={threshold:.2f}, FDM={fdm_frac:.1f}%)')
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close()
     print(f"Saved: {save_path}")
 
@@ -238,7 +238,7 @@ def main():
     print(f"Plotting {len(thresholds)} thresholds...")
 
     for t in thresholds:
-        path = os.path.join(args.output_dir, f'threshold_{t:.4f}.png')
+        path = os.path.join(args.output_dir, f'threshold_{t:.4f}.pdf')
         plot_separation_at_threshold(r, X, Y, layout, t, show_hole, path,
                                      morph_kernel=args.morph_kernel)
 
@@ -274,8 +274,8 @@ def main():
     fig.legend(handles=legend_elements, loc='lower right', fontsize=12)
     plt.suptitle(f'Router Thresholds ({args.problem})', fontsize=14)
     plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, 'summary_all_thresholds.png'),
-                dpi=150, bbox_inches='tight')
+    plt.savefig(os.path.join(args.output_dir, 'summary_all_thresholds.pdf'),
+                dpi=1200, bbox_inches='tight')
     plt.close()
 
     print(f"\nDone! Saved to {args.output_dir}/")

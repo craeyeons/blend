@@ -1080,7 +1080,7 @@ def plot_router_output(r, X, Y, layout, title='Router Output',
     
     if save_path:
         os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"Saved router visualization to {save_path}")
     
     plt.show()
@@ -1165,7 +1165,7 @@ def plot_coverage_evolution(r, layout, save_path=None, title='Coverage Evolution
 
     if save_path:
         os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"Saved coverage evolution to {save_path}")
 
     plt.show()
@@ -1220,7 +1220,7 @@ def plot_training_history(history, save_path=None):
     
     if save_path:
         os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"Saved training history to {save_path}")
     
     plt.show()
