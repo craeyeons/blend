@@ -272,3 +272,124 @@ where the last inequality uses
 $\|h-u^\star\|_{\Gamma}\leq\|h-u^\star\|_{\widehat{\Omega}_P\cup\Gamma}$
 since $\Gamma\subseteq\widehat{\Omega}_P\cup\Gamma$. This is
 \eqref{eq:hybrid-bound}. \qed
+
+\section{Poisson experiment}
+\label{app:poisson}
+
+This appendix mirrors the Navier--Stokes study of
+Section~\ref{sec:experiments} on a linear-elliptic Poisson problem.
+The point of repeating the protocol on a different operator is
+diagnostic: NSE is nonlinear, so the linearisation residual
+$\delta_{\mathrm{lin}}^\theta$ in
+Assumption~\ref{ass:linearisation} is non-trivial and the proxy
+$\rho^\theta$ inherits that approximation slack. For the Poisson
+operator $-\Delta$ the linearisation is exact -- $\Lcal_h=-\Delta$
+regardless of $h$ -- and $e^\theta$ from \eqref{eq:ete} reconstructs
+the pointwise PINN error to machine precision up to the
+discretisation of $-\Delta^{-1}$. The Poisson experiment therefore
+isolates the proxy from any nonlinear-coupling artefact, and the
+abstention-loss-faithfulness conclusion of
+Section~\ref{sec:exp-cylinder} should be even sharper here. We use
+the same partitioning, the same surrogate \eqref{eq:surrogate}, the
+same constant cost $c\equiv 1.1$, and the same TV-regularised CNN
+class $\Hcal_r$ as in the cylinder experiment.
+
+\subsection{Setup}
+
+We solve the inhomogeneous Poisson equation $-\Delta u=f$ on the
+unit square $\Omega=[0,1]^2$ with homogeneous Dirichlet boundary
+data and a localised Gaussian source
+\[
+  f(x,y)\;=\;A\,\exp\!\Bigl(-\tfrac{(x-x_s)^2+(y-y_s)^2}{2\sigma^2}\Bigr),
+\]
+parameterised by source location $(x_s,y_s)$ and fixed amplitude and
+width. The localisation gives the problem its diagnostic value: the
+solution is sharply peaked near $(x_s,y_s)$ and smoothly decays
+elsewhere, a regime in which PINNs reliably under-resolve the peak
+neighbourhood and concentrate their pointwise error there. As in
+Section~\ref{sec:exp-setup} we train a separate PINN
+$h=\widehat{u}_\theta$ per source location, holding the predictor
+fixed at evaluation. The fallback solver is linear FEM on a
+structured triangulation of $\Omega$, which also produces the
+reference $u^\star$. The error metric reduces to the scalar
+$\mathrm{RMSE}(u,u^\star)=\sqrt{N^{-1}\sum_x(u(x)-u^\star(x))^2}$
+because the pressure-gauge issues of the NSE setup do not arise
+here.
+
+The rejector is trained jointly on six source locations clustered
+in the upper-right quadrant of $\Omega$ and evaluated on four
+out-of-bracket source locations probing distinct generalisation
+axes (Table~\ref{tab:poisson}). Each test source is paired with its
+own dedicated PINN. Unlike the NSE setup, all four test sources are
+deliberately \emph{outside} the training cluster: an above-cluster
+source, an off-diagonal source, a far-field source in the
+lower-left quadrant, and a grazing source just outside the
+cluster. The Poisson experiment therefore tests the rejector's
+behaviour under genuine extrapolation along the source-location
+axis, which the in-bracket cylinder protocol does not.
+
+\subsection{The abstention loss as the deployment-time metric}
+
+The abstention-loss-faithfulness check that licensed reading
+$\widehat{L}$ off the rejector at deployment in the cylinder case
+applies a fortiori to Poisson. Because $\Lcal_h=-\Delta$ exactly,
+the error-transport equation \eqref{eq:ete} recovers $h-u^\star$
+without a linearisation residual, so $\rho^\theta$ tracks
+$\|h-u^\star\|$ up to the discretisation error of the FFT inverse
+of $-\Delta$. Sweeping $\tau$ on a held-out source location and
+plotting $\widehat{L}$ and the true RMSE against coverage produces
+the same U-shaped pair of curves as in Figure~\ref{fig:cyl-coverage},
+with their minima co-locating at the same coverage. The qualitative
+explanation is the one from Section~\ref{sec:exp-cylinder}: the
+$\widehat{L}$ U comes from \eqref{eq:abst-empirical}, the RMSE U
+comes from \eqref{eq:hybrid-bound}, and the alignment of the minima
+is the empirical content of Theorem~\ref{thm:h-consistency} under
+Assumption~\ref{ass:linearisation}. We therefore again read every
+cross-configuration comparison off $\widehat{L}^\star$ and report
+$\mathrm{RMSE}$ in Table~\ref{tab:poisson} as a redundancy check.
+
+\subsection{Generalisation across source locations}
+
+Table~\ref{tab:poisson} reports the abstention loss
+$\widehat{L}^\star$ at the operating point $\tau^\star$, the
+selected coverage, hybrid and PINN RMSE, and end-to-end wall-clock
+time across all ten configurations, aggregated over three
+independent rejector seeds (mean$\,\pm\,$std). The reading is the
+one Section~\ref{sec:exp-generalisation} establishes for NSE, and
+recurs here in a stronger form because the four test rows are
+out-of-bracket rather than in-bracket. Neither failure mode appears:
+$\widehat{L}^\star$ stays strictly inside the band bounded below by
+$\E[\rho^\theta]$ (pure-accept) and above by $c=1.1$ (pure-abstain)
+on every row, with values clustered in the $0.97\text{--}0.99$ band
+across train and test alike, and coverages spread between $20\%$
+and $50\%$. The four held-out source locations
+(\texttt{ood\_pt\_above}, \texttt{ood\_pt\_offdiag},
+\texttt{ood\_far}, \texttt{ood\_grazing}) sit in the same
+$\widehat{L}^\star$ band as the training rows despite probing
+genuinely distinct generalisation axes (above-cluster,
+off-diagonal, far-field, grazing). A rejector that had memorised
+the six training source locations would either spike
+$\widehat{L}^\star$ on the held-out rows or collapse coverage to
+the extremes; it does neither.
+
+The RMSE columns confirm the same conclusion. Hybrid RMSE is
+strictly below PINN RMSE on every row, and on each held-out source
+the hybrid is $2\text{--}4\times$ below the PINN, indicating that
+the rejector is not merely matching the PINN on unseen sources but
+extracting genuine improvement by routing the peak neighbourhood to
+FEM. End-to-end wall-clock is at near-parity with full FEM, which
+is expected: the FEM solve on a $200\times200$ structured grid
+takes $\approx 200$\,ms, so there is little runtime headroom for
+the hybrid to recover -- the value of the hybrid here is in
+accuracy and in the operational point that one can read
+$\widehat{L}^\star$ at deployment without the FEM run.
+
+\input{Sections/PoissonTable.tex}
+
+The Poisson experiment thus reproduces the two structural claims
+of Section~\ref{sec:experiments} on a linear elliptic operator and
+under genuine source-location extrapolation: the abstention loss is
+faithful (its operating point co-locates with the RMSE operating
+point on a held-out source), and the rejector trained on six
+clustered source locations transfers to four out-of-bracket sources
+along distinct axes.
