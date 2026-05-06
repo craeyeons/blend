@@ -223,7 +223,7 @@ def _plot_router_output(logits, X, Y, layout, hole, title, out_path):
     cx, cy, rh = hole
     circle = plt.Circle((cx, cy), rh, color='gray', fill=True, alpha=0.8)
     ax.add_patch(circle)
-    ax.set_aspect('equal'); ax.set_title(title)
+    ax.set_aspect('equal'); 
     plt.colorbar(im, ax=ax, fraction=0.046)
     fig.tight_layout()
     fig.savefig(out_path, dpi=1200, bbox_inches='tight')
@@ -256,14 +256,12 @@ def _plot_coverage_grid(logits, X, Y, layout, hole, title, out_path):
         ax.add_patch(plt.Circle((cx, cy), rh, color='gray', fill=True))
         ax.set_aspect('equal')
         actual = 100.0 * np.sum(solid & (logits >= thr)) / max(np.sum(solid), 1)
-        ax.set_title(f'{cov*100:.0f}% (act {actual:.0f}%)', fontsize=9)
         ax.set_xticks([]); ax.set_yticks([])
     axes[-1].axis('off')
     legend = [Patch(facecolor='lightgray', label='hole'),
               Patch(facecolor='tab:blue', alpha=0.75, label='PINN'),
               Patch(facecolor='tab:red',  alpha=0.75, label='FEM')]
     fig.legend(handles=legend, loc='lower right', fontsize=10)
-    plt.suptitle(title, fontsize=11)
     plt.tight_layout()
     fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
@@ -351,7 +349,7 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
         im = ax.pcolormesh(X, Y, row0[j], cmap='RdBu_r',
                            vmin=-u_vmax, vmax=u_vmax, shading='auto')
         if j == 1: _shade(ax)
-        ax.set_aspect('equal'); ax.set_title(ttl0[j])
+        ax.set_aspect('equal'); 
         _annotate(ax, is_pinn_panel=(j in (0, 1)))
         plt.colorbar(im, ax=ax, fraction=0.046)
     _annotate.legend_added = True   # only draw legend handles once
@@ -362,7 +360,7 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
         im = ax.pcolormesh(X, Y, row1[j], cmap='RdBu_r',
                            vmin=-e_vmax, vmax=e_vmax, shading='auto')
         if j == 1: _shade(ax)
-        ax.set_aspect('equal'); ax.set_title(ttl1[j])
+        ax.set_aspect('equal'); 
         _annotate(ax, is_pinn_panel=(j in (0, 1)))
         plt.colorbar(im, ax=ax, fraction=0.046)
     if src_diff or hole_diff or test_src is not None:
@@ -371,7 +369,6 @@ def _plot_solution(X, Y, layout, pinn_u, u_hybrid, u_fem, accept_mask,
         if h:
             fig.legend(h, l, loc='lower center', ncol=len(l),
                        bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
@@ -438,7 +435,6 @@ def _plot_loss_vs_coverage(logits, target_R, layout, beta, title, out_path):
                  xytext=(-80, 8), textcoords='offset points', color='teal')
     axL.set_xlabel('Coverage (% solved by FEM)')
     axL.set_ylabel('Training loss  (decision version)')
-    axL.set_title(f'Training loss vs coverage  (β = {beta})')
     axL.grid(True, alpha=0.3); axL.legend()
 
     bars = axR.bar(['FEM cost\n(β · cov)', 'Residual cost', 'TOTAL'],
@@ -449,10 +445,8 @@ def _plot_loss_vs_coverage(logits, target_R, layout, beta, title, out_path):
         axR.text(b.get_x() + b.get_width() / 2, v + 0.01,
                  f'{v:.4f}', ha='center', va='bottom', fontweight='bold')
     axR.set_ylabel('Loss value')
-    axR.set_title(f'Loss breakdown at optimum ({opt_cov:.1f}% FEM)')
     axR.grid(True, axis='y', alpha=0.3)
 
-    fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
@@ -475,7 +469,6 @@ def _plot_rmse_vs_coverage(sweep, pinn_rmse, title, out_path, best=None):
     ax.set_xlabel('FEM coverage (%)')
     ax.set_ylabel('RMSE vs full FEM')
     ax.set_yscale('log')
-    ax.set_title(f'RMSE vs coverage — {title}')
     ax.grid(True, alpha=0.3); ax.legend()
     fig.tight_layout()
     fig.savefig(out_path, dpi=1200, bbox_inches='tight')
@@ -870,7 +863,6 @@ def main():
         ax.plot(history['logistic'], label='logistic', alpha=0.7)
         ax.plot(history['tv'], label='tv', alpha=0.7)
         ax.set_xlabel('epoch'); ax.set_ylabel('loss'); ax.legend()
-        ax.set_title(f'Router training — {args.tag}')
         fig.tight_layout()
         fig.savefig(os.path.join(plots_dir, f'training_history_{args.tag}.pdf'),
                     dpi=1200)

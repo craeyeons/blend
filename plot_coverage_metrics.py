@@ -211,7 +211,6 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('CFD: Velocity Magnitude |u|')
     ax.set_aspect('equal')
     
     # Plot u-velocity
@@ -222,7 +221,6 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('CFD: u-velocity')
     ax.set_aspect('equal')
     
     # Plot v-velocity
@@ -233,7 +231,6 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('CFD: v-velocity')
     ax.set_aspect('equal')
     
     # Plot pressure
@@ -244,10 +241,8 @@ def plot_cfd_solution(u_cfd, v_cfd, p_cfd, X, Y, layout, cylinder_center, cylind
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('CFD: Pressure')
     ax.set_aspect('equal')
     
-    plt.suptitle('CFD Ground Truth Solution', fontsize=16, fontweight='bold')
     plt.tight_layout()
     
     if save_path:
@@ -414,7 +409,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Hybrid: Velocity Magnitude |u|')
     ax.set_aspect('equal')
     
     # Plot u-velocity
@@ -425,7 +419,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Hybrid: u-velocity')
     ax.set_aspect('equal')
     
     # Plot v-velocity
@@ -436,7 +429,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Hybrid: v-velocity')
     ax.set_aspect('equal')
     
     # Plot pressure
@@ -447,7 +439,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title('Hybrid: Pressure')
     ax.set_aspect('equal')
     
     # Plot CFD/PINN region map
@@ -462,7 +453,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
     ax.add_patch(circle)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title(f'Solver Region Map (threshold={threshold:.4f})')
     ax.set_aspect('equal')
     
     # Add text info panel
@@ -488,8 +478,6 @@ def plot_hybrid_solution(u_hybrid, v_hybrid, p_hybrid, X, Y, layout, cfd_mask,
                 verticalalignment='top', fontfamily='monospace',
                 bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
 
-    suptitle = title if title is not None else 'Hybrid PINN-CFD Solution (Optimal Threshold)'
-    plt.suptitle(suptitle, fontsize=16, fontweight='bold')
     plt.tight_layout()
     
     if save_path:
@@ -542,7 +530,7 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
         ('u',     [u_pinn,   u_hybrid, u_cfd],   'coolwarm', False),
         ('v',     [v_pinn,   v_hybrid, v_cfd],   'coolwarm', False),
         ('|u|',   [vel_pinn, vel_hyb, vel_cfd],  'viridis',  True),
-        ('error', [err_pinn, err_hyb, err_cfd],  'magma',    True),
+        ('error', [err_pinn, err_hyb, err_cfd],  'YlOrRd',   True),
     ]
     col_titles = ['PINN', 'Hybrid', 'CFD']
 
@@ -587,19 +575,70 @@ def plot_solution_comparison(u_pinn, v_pinn, p_pinn,
                 ax.contour(Xp, Yp, pad_mask, levels=[0.5],
                            colors='black', linewidths=1.2)
             ax.set_aspect('equal')
-            if i == 0:
-                ax.set_title(col_titles[j])
             if j == 0:
                 ax.set_ylabel(label)
             if i == len(rows) - 1:
                 ax.set_xlabel('x')
 
-    if title is not None:
-        fig.suptitle(title, fontsize=14, y=0.995)
-    plt.tight_layout(rect=[0, 0, 1, 0.985] if title else None)
+    plt.tight_layout()
     if save_path:
         fig.savefig(save_path, dpi=1200, bbox_inches='tight')
         print(f"  Saved solution comparison to {save_path}")
+    plt.close(fig)
+
+
+def plot_regions_and_errors(u_pinn, v_pinn, p_pinn,
+                             u_hybrid, v_hybrid, p_hybrid,
+                             u_cfd, v_cfd, p_cfd,
+                             X, Y, layout, cfd_mask,
+                             cylinder_center, cylinder_radius,
+                             save_path=None):
+    """3-subplot figure: (1) PINN/CFD region map, (2) PINN error vs CFD,
+    (3) Hybrid error vs CFD. Errors use a no-black colormap (YlOrRd)."""
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+    cx, cy = cylinder_center
+    fluid = layout > 0
+
+    err_pinn = compute_l2_error_field(u_pinn, v_pinn, p_pinn,
+                                      u_cfd, v_cfd, p_cfd,
+                                      layout, X=X, Y=Y)
+    err_hyb = compute_l2_error_field(u_hybrid, v_hybrid, p_hybrid,
+                                     u_cfd, v_cfd, p_cfd,
+                                     layout, X=X, Y=Y,
+                                     interface_mask=cfd_mask)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # Region map: red=CFD, blue=PINN
+    ax = axes[0]
+    region = np.full(layout.shape, np.nan)
+    region[fluid & (cfd_mask.astype(bool))] = 1.0       # CFD
+    region[fluid & ~cfd_mask.astype(bool)] = 0.0        # PINN
+    cmap_rb = ListedColormap(['#3b82f6', '#ef4444'])    # blue, red
+    norm = BoundaryNorm([-0.5, 0.5, 1.5], cmap_rb.N)
+    im = ax.pcolormesh(X, Y, region, cmap=cmap_rb, norm=norm, shading='auto')
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, ticks=[0, 1])
+    cbar.ax.set_yticklabels(['PINN', 'CFD'])
+    ax.add_patch(plt.Circle((cx, cy), cylinder_radius, color='gray',
+                            fill=True, zorder=5))
+    ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
+
+    # Shared error scale
+    err_max = float(max(np.max(err_pinn[fluid]), np.max(err_hyb[fluid]))) + 1e-30
+
+    for ax, err, lab in zip(axes[1:], [err_pinn, err_hyb], ['PINN error', 'Hybrid error']):
+        data = np.where(fluid, err, np.nan)
+        im = ax.pcolormesh(X, Y, data, cmap='YlOrRd',
+                           vmin=0.0, vmax=err_max, shading='auto')
+        plt.colorbar(im, ax=ax, fraction=0.046, label=lab)
+        ax.add_patch(plt.Circle((cx, cy), cylinder_radius, color='gray',
+                                fill=True, zorder=5))
+        ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=1200, bbox_inches='tight')
+        print(f"  Saved regions+errors plot to {save_path}")
     plt.close(fig)
 
 
@@ -741,8 +780,6 @@ def plot_coverage_progression(u_pinn, v_pinn, u_cfd, v_cfd,
         ax.add_patch(circ)
 
         actual_cov = float(np.mean(cfd_mask[fluid_mask]))
-        ax.set_title(f'coverage={actual_cov*100:.0f}%  τ={thresh:.3g}',
-                     fontsize=10)
         ax.set_aspect('equal')
         ax.set_xticks([]); ax.set_yticks([])
 
@@ -750,8 +787,6 @@ def plot_coverage_progression(u_pinn, v_pinn, u_cfd, v_cfd,
     for j in range(n, nrows * ncols):
         axes[j // ncols][j % ncols].axis('off')
 
-    fig.suptitle('Router Coverage Progression (idealized blend: top-c% to CFD)',
-                 fontsize=12)
     cbar = fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02, shrink=0.9)
     cbar.set_label('|U|')
 
@@ -899,7 +934,6 @@ def plot_coverage_curve(coverage, rmse_scores, results, beta, save_path=None):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
 
-    ax.set_title('Coverage vs RMSE (PINN Prediction Quality)', fontsize=14)
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3)
 
@@ -951,7 +985,6 @@ def plot_expected_loss_comparison(results, beta, save_path=None):
                linewidth=2, label=f"Optimal: {results['optimal_loss']:.4f}")
     
     ax.set_ylabel('Expected True Loss', fontsize=12)
-    ax.set_title(f'Expected Loss Comparison (β = {beta})', fontsize=14)
     ax.legend(loc='upper right')
     
     # Add coverage info
@@ -1121,8 +1154,6 @@ def plot_loss_vs_coverage(residual_field, router_output, layout, beta,
 
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=13)
     ax1.set_ylabel(r'Abstention True Loss  $\beta\,c + (1-c)\,\mathbb{E}[R\mid \mathrm{PINN}]$', fontsize=13)
-    ax1.set_title(f'Abstention True Loss vs Coverage  (β = {beta})',
-                  fontsize=14, fontweight='bold')
     ax1.set_xlim(-5, 105)
     y_min = np.min(loss_curve) - 0.3
     y_max = max(loss_curve[0], loss_curve[-1]) + 0.15
@@ -1196,7 +1227,6 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
     # Labels
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=14)
     ax1.set_ylabel('Training Loss', fontsize=14)
-    ax1.set_title(f'Training Loss vs Coverage (β = {beta})', fontsize=16, fontweight='bold')
 
     # Annotations
     ax1.annotate(f'All PINN\n{loss_curve[0]:.4f}', xy=(0, loss_curve[0]),
@@ -1247,7 +1277,6 @@ def plot_combined_metrics(coverage, rmse_scores, results, beta, residual_field, 
 
     ax2.axhline(y=0, color='black', linewidth=0.5)
     ax2.set_ylabel('Loss Value', fontsize=14)
-    ax2.set_title(f'Loss Breakdown at Optimal ({opt_coverage*100:.0f}% CFD)', fontsize=16, fontweight='bold')
 
     # Info box
     info = f"Optimal Coverage: {opt_coverage*100:.1f}%\n"

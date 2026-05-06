@@ -87,7 +87,6 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     ax.set_aspect('equal')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
-    ax.set_title(f'Continuous Output (threshold={threshold:.2f} shown as green line)')
     
     # 2. Binary mask at threshold (with morphological opening)
     ax = axes[1]
@@ -121,7 +120,6 @@ def plot_separation_at_threshold(r, X, Y, layout, threshold,
     # Compute CFD percentage
     fluid_mask = layout == 1
     cfd_fraction = np.sum(mask) / np.sum(fluid_mask) * 100
-    ax.set_title(f'Binary Mask (threshold={threshold:.2f}, CFD={cfd_fraction:.1f}%)')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=1200, bbox_inches='tight')
@@ -293,7 +291,6 @@ def main():
 
         fluid_mask = layout == 1
         cfd_frac = np.sum(mask) / np.sum(fluid_mask) * 100
-        ax.set_title(f't={threshold:.2f}, CFD={cfd_frac:.1f}%')
         ax.set_xticks([])
         ax.set_yticks([])
     
@@ -310,7 +307,6 @@ def main():
     ]
     fig.legend(handles=legend_elements, loc='lower right', fontsize=12)
     
-    plt.suptitle('Router Separation at Different Thresholds', fontsize=14)
     plt.tight_layout()
     
     summary_path = os.path.join(args.output_dir, 'summary_all_thresholds.pdf')

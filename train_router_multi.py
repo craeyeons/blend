@@ -298,9 +298,16 @@ def main():
 
     # Inference
     parser.add_argument('--threshold', type=float, default=0.0)
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Seed numpy + TF for reproducibility across reruns')
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        tf.random.set_seed(args.seed)
+        import random; random.seed(args.seed)
+        print(f"  Seed: {args.seed}")
 
     # =========================================================================
     # Load config
@@ -530,7 +537,6 @@ def main():
             ax.add_patch(circle)
             ax.set_aspect('equal')
             actual_cov = np.sum((r_out >= threshold) & (layout > 0)) / np.sum(layout > 0) * 100
-            ax.set_title(f'{cov*100:.0f}% (actual: {actual_cov:.0f}%)', fontsize=10)
             ax.set_xticks([])
             ax.set_yticks([])
         
@@ -542,7 +548,6 @@ def main():
             Patch(facecolor='red', alpha=0.7, label='CFD')
         ]
         fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
-        plt.suptitle(f'Coverage Grid - Train {i+1}: {d["label"]}', fontsize=12)
         plt.tight_layout()
         grid_path = os.path.join(args.output_dir, f'coverage_train_{i}_grid.pdf')
         plt.savefig(grid_path, dpi=1200, bbox_inches='tight')
@@ -606,7 +611,6 @@ def main():
             ax.add_patch(circle)
             ax.set_aspect('equal')
             actual_cov = np.sum((r_out >= threshold) & (layout > 0)) / np.sum(layout > 0) * 100
-            ax.set_title(f'{cov*100:.0f}% (actual: {actual_cov:.0f}%)', fontsize=10)
             ax.set_xticks([])
             ax.set_yticks([])
         
@@ -618,7 +622,6 @@ def main():
             Patch(facecolor='red', alpha=0.7, label='CFD')
         ]
         fig.legend(handles=legend_elements, loc='lower right', fontsize=10)
-        plt.suptitle(f'Coverage Grid - TEST {i+1}: {d["label"]}', fontsize=12)
         plt.tight_layout()
         grid_path = os.path.join(args.output_dir, f'coverage_test_{i}_grid.pdf')
         plt.savefig(grid_path, dpi=1200, bbox_inches='tight')

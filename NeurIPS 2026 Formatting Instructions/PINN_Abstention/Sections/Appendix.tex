@@ -181,3 +181,94 @@ $\delta(x)$ and therefore large $\Ecal_\Phi(s)-\Ecal_\Phi(s^\star)$ for
 any $s$ that misclassifies them. Replacing the essential supremum by a
 $\Pr_X$-quantile only weakens the bound by an additive
 $\Pr_X(\rho^\theta+c>\tau)$ tail-mass term, which we do not pursue.
+
+\subsection{Proof of Theorem~\ref{thm:hybrid-bound}}
+\label{app:hybrid}
+
+We use the discrete $\ell^2$ norm
+$\|u\|_S^2:=\sum_{x\in S}\|u(x)\|^2$ over any subset $S\subseteq\Omega$,
+which is additive over disjoint subsets: for disjoint $A,B\subseteq\Omega$,
+$\|u\|_{A\cup B}^2=\|u\|_A^2+\|u\|_B^2$ and hence
+$\|u\|_{A\cup B}\leq\|u\|_A+\|u\|_B$ via $\sqrt{a^2+b^2}\leq a+b$ for
+$a,b\geq 0$. Recall the partition
+$\Omega=\widehat{\Omega}_P\sqcup\widehat{\Omega}_C$ from
+\eqref{eq:partition} with interface $\Gamma\subset\widehat{\Omega}_C$,
+and the hybrid solution \eqref{eq:hybrid}.
+
+Set $A:=\widehat{\Omega}_P\cup\Gamma$ and
+$B:=\widehat{\Omega}_C\setminus\Gamma$, so $A\sqcup B=\Omega$. Applying
+the disjoint-additivity inequality to
+$\widehat{u}_{\mathrm{hyb}}-u^\star$,
+\begin{equation}
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{\Omega}
+  \;\leq\;
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{A}
+  \;+\;
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{B}.
+  \label{eq:split-norm}
+\end{equation}
+
+\paragraph{Term on $A$.}
+By \eqref{eq:hybrid}, $\widehat{u}_{\mathrm{hyb}}(x)=h(x)$ for every
+$x\in A$, so
+\begin{equation}
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{A}
+  \;=\;\bigl\|h-u^\star\bigr\|_{\widehat{\Omega}_P\cup\Gamma}.
+  \label{eq:hyb-term-A}
+\end{equation}
+
+\paragraph{Term on $B$.}
+On $B$, $\widehat{u}_{\mathrm{hyb}}=u_{\mathrm{slv}}$, where
+$u_{\mathrm{slv}}$ is the fallback solution on $\widehat{\Omega}_C$ with
+Dirichlet data $h\big|_\Gamma$. Introduce the auxiliary fallback
+solution $\widetilde{u}_{\mathrm{slv}}$ on $\widehat{\Omega}_C$ driven
+by the exact interface data $u^\star\big|_\Gamma$ and the same physical
+boundary conditions on $\partial\widehat{\Omega}_C\cap\partial\Omega$.
+By the triangle inequality,
+\begin{equation}
+  \bigl\|u_{\mathrm{slv}}-u^\star\bigr\|_{B}
+  \;\leq\;
+  \bigl\|u_{\mathrm{slv}}-\widetilde{u}_{\mathrm{slv}}\bigr\|_{B}
+  \;+\;
+  \bigl\|\widetilde{u}_{\mathrm{slv}}-u^\star\bigr\|_{B}.
+  \label{eq:tri-inner}
+\end{equation}
+Both $u_{\mathrm{slv}}$ and $\widetilde{u}_{\mathrm{slv}}$ solve the
+same discretised PDE on $\widehat{\Omega}_C$ with the same physical
+boundary conditions and differ only in their Dirichlet interface data
+($h\big|_\Gamma$ vs.\ $u^\star\big|_\Gamma$). Assumption~\ref{ass:stability}
+applied to $g_1=h\big|_\Gamma$ and $g_2=u^\star\big|_\Gamma$ gives
+\begin{equation}
+  \bigl\|u_{\mathrm{slv}}-\widetilde{u}_{\mathrm{slv}}\bigr\|_{B}
+  \;\leq\;
+  C_s\,\bigl\|h-u^\star\bigr\|_{\Gamma}.
+  \label{eq:stab-step}
+\end{equation}
+The second term in \eqref{eq:tri-inner} equals
+$\epsilon_{\mathrm{disc}}$ by definition. Combining \eqref{eq:tri-inner}
+and \eqref{eq:stab-step},
+\begin{equation}
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{B}
+  \;\leq\;
+  C_s\,\bigl\|h-u^\star\bigr\|_{\Gamma}
+  \;+\;\epsilon_{\mathrm{disc}}.
+  \label{eq:hyb-term-B}
+\end{equation}
+
+\paragraph{Combining the two terms.}
+Substituting \eqref{eq:hyb-term-A} and \eqref{eq:hyb-term-B} into
+\eqref{eq:split-norm},
+\begin{align*}
+  \bigl\|\widehat{u}_{\mathrm{hyb}}-u^\star\bigr\|_{\Omega}
+  &\;\leq\;
+  \bigl\|h-u^\star\bigr\|_{\widehat{\Omega}_P\cup\Gamma}
+  \;+\;C_s\,\bigl\|h-u^\star\bigr\|_{\Gamma}
+  \;+\;\epsilon_{\mathrm{disc}}\\
+  &\;\leq\;
+  (1+C_s)\,\bigl\|h-u^\star\bigr\|_{\widehat{\Omega}_P\cup\Gamma}
+  \;+\;\epsilon_{\mathrm{disc}},
+\end{align*}
+where the last inequality uses
+$\|h-u^\star\|_{\Gamma}\leq\|h-u^\star\|_{\widehat{\Omega}_P\cup\Gamma}$
+since $\Gamma\subseteq\widehat{\Omega}_P\cup\Gamma$. This is
+\eqref{eq:hybrid-bound}. \qed

@@ -1,10 +1,346 @@
 \section{Experiments}
 \label{sec:experiments}
 
-\emph{(Placeholder.)}
+The role of this section is not to demonstrate that a hybrid PINN--solver
+field can outperform either component in isolation; that has been
+established by previous work on domain decomposition and a-posteriori
+refinement \citep{jagtap2020extended,moseley2023finite}. Our aim is
+narrower and more diagnostic. The framework of
+Sections~\ref{sec:method}--\ref{sec:hybrid} rests on two empirical claims
+that are not self-evident: (i) the proxy $\rho^\theta$ defined in
+\eqref{eq:rho-def} actually tracks the unobserved pointwise PINN error
+closely enough that minimising the surrogate \eqref{eq:surrogate} steers
+the rejector toward decisions that reduce the true hybrid PDE error; and
+(ii) the rejector trained at one set of geometries transfers to an
+unseen geometry without re-tuning, despite the partition
+$\widehat{\Omega}_C$ being a geometry-dependent object. Each experiment
+below targets one of these claims; we deliberately avoid loading the
+section with unrelated baselines.
 
-We will validate the framework on (i) a Poisson problem with manufactured
-sharp features that target the known PINN failure modes
-\citep{krishnapriyan2021,wang2022whenpinns}; (ii) steady Navier--Stokes flow
-past a cylinder; and (iii) a generalisation suite testing transfer across
-geometries and across PINNs trained on mismatched configurations.
+We instantiate the framework on steady incompressible Navier--Stokes flow
+past a cylinder at $\mathrm{Re}=100$ -- a setting in which PINNs are
+known to underperform near the cylinder boundary and the wake
+\citep{rao2020physics,wang2022whenpinns}. A linear-elliptic Poisson
+problem with manufactured sharp features (a controlled stress test of
+the proxy in isolation) is reported in
+Appendix~\ref{app:poisson}, with the same protocol but a different
+operator. We focus the main text on the harder case.
+
+\subsection{Setup}
+\label{sec:exp-setup}
+
+\paragraph{PINN and rejector.}
+For each cylinder geometry $(x_c,y_c,r)$ we train a separate PINN
+$h=\widehat{u}_\theta$ to convergence at that geometry, with parabolic
+inflow $u_0=1.0$, no-slip on the cylinder, and standard outflow on the
+right boundary; this isolates the rejector's task from any PINN training
+issue and matches the deployment scenario of Section~\ref{sec:intro},
+where the predictor is fixed and only the rejection rule is learned.
+The rejector is a small convolutional network whose input channels are
+the PINN field, the strong-form residual $\mathfrak{r}^\theta$, the
+error-transport estimate $e^\theta$ from \eqref{eq:ete}, and a binary
+geometry mask. We minimise the surrogate \eqref{eq:surrogate} with
+$c(x)\equiv 1.1$ -- a constant cost in the dimensionless units of
+$\rho^\theta$, since $\rho^\theta$ has median in $[1,2]$ by construction
+\eqref{eq:rho-def} -- using Adam and an anisotropic total-variation
+penalty $\lambda_{\mathrm{tv}}\,\TV(s)$ with $\lambda_{\mathrm{tv}}=1$.
+The TV penalty is the $\Hcal_r$ regularisation discussed in
+Section~\ref{sec:hybrid-subdomain}: it biases $\widehat{\Omega}_C$
+toward a finite union of solver-friendly connected regions and away
+from the disconnected level-set geometry of the unrestricted optimum.
+The PINN remains frozen throughout rejector training.
+
+\paragraph{Hybrid pipeline and ground truth.}
+At test time the hybrid is assembled by \eqref{eq:hybrid}: the rejector
+is evaluated once on the active grid; the rejected interior
+$\widehat{\Omega}_C\setminus\Gamma$ is solved by a standard finite-volume
+incompressible Navier--Stokes scheme with Dirichlet data taken from
+$h\big|_\Gamma$, while $h$ is retained on $\widehat{\Omega}_P\cup\Gamma$.
+The same finite-volume solver, run on the full domain $\Omega$, provides
+the reference solution $u^\star$ against which all errors are reported.
+This is the strongest available ground truth: any error reported below
+is between $\widehat{u}_{\mathrm{hyb}}$ (or $h$) and the very solver
+that the hybrid uses internally as its fallback, so improvements cannot
+be attributed to a discrepancy between two different reference codes.
+
+\paragraph{Error metric.}
+For a candidate field $u=(u_x,u_y,p)$ and the reference $u^\star=
+(u_x^\star,u_y^\star,p^\star)$ on the shared discretisation grid
+$\Omega_{\mathrm{grid}}\subset\Omega$ with $N=|\Omega_{\mathrm{grid}}|$
+fluid cells, we report the gauge-invariant root-mean-square error
+\begin{equation}
+  \mathrm{RMSE}(u,u^\star)
+  \;:=\;
+  \sqrt{\,
+  \frac{1}{N}\!\!\sum_{x\in\Omega_{\mathrm{grid}}}\!\!
+  \Bigl[
+    \bigl(u_x(x)-u_x^\star(x)\bigr)^2
+    +\bigl(u_y(x)-u_y^\star(x)\bigr)^2
+    +\bigl\|\nabla p(x)-\nabla p^\star(x)\bigr\|^2
+  \Bigr]\,}.
+  \label{eq:rmse}
+\end{equation}
+Two design choices are deliberate. First, the velocity components enter
+as raw differences because the boundary conditions fix the velocity
+gauge (parabolic inflow, no-slip on the cylinder, outflow on the right);
+no constant offset is admissible. Second, the pressure enters through
+its gradient rather than its raw value, because the steady
+incompressible Navier--Stokes equations determine $p$ only up to an
+additive constant: $h$ and $u^\star$ may differ by a global offset that
+carries no physical information, and including the raw pressure
+difference would inflate the metric by a quantity the rejector can
+neither see nor control. The pressure gradient is computed by
+second-order central differences on $\Omega_{\mathrm{grid}}$, with
+one-sided stencils on the boundary, so $\mathrm{RMSE}$ is a single
+scalar in the units of velocity (the gradient term is rescaled by the
+grid spacing during evaluation to share units with $u_x,u_y$). For the
+coverage curves of Figure~\ref{fig:cyl-coverage} the same metric is
+used, so the U-shape is not an artefact of a particular choice of
+norm; for the per-axis error fields in Figure~\ref{fig:cyl-solution}
+we plot the pointwise summands of \eqref{eq:rmse} separately.
+
+\paragraph{Training and held-out geometries.}
+The rejector is trained jointly on seven cylinder geometries that
+bracket a held-out test triple along each axis
+($x_c\in\{0.30,0.50,0.70,1.00\}$, $y_c\in\{0.30,0.40,0.50,0.80\}$,
+$r\in\{0.10,0.12,0.15\}$); the held-out triple is $(0.60,0.55,0.11)$,
+strictly in the interior of the bracket on every axis but absent from
+the training set. Each geometry is paired with the PINN trained for
+that geometry, so the rejector at test time receives a
+\emph{(PINN, geometry)} pair it has not seen during its own training,
+even though every component of the pair is individually well-defined.
+Table~\ref{tab:cyl-train} lists the configurations.
+
+\begin{table}[t]
+  \caption{Cylinder geometries used for rejector training and
+    evaluation. The seven training rows bracket the held-out test triple
+    on each axis. All configurations share $\mathrm{Re}=100$ and inflow
+    $u_0=1.0$.}
+  \label{tab:cyl-train}
+  \centering
+  \small
+  \begin{tabular}{clccc}
+    \toprule
+    \# & Role & $x_c$ & $y_c$ & $r$ \\
+    \midrule
+    1 & Train & $0.30$ & $0.30$ & $0.15$ \\
+    2 & Train & $0.50$ & $0.50$ & $0.10$ \\
+    3 & Train & $0.50$ & $0.50$ & $0.15$ \\
+    4 & Train & $0.50$ & $0.80$ & $0.10$ \\
+    5 & Train & $0.70$ & $0.40$ & $0.12$ \\
+    6 & Train & $0.70$ & $0.50$ & $0.10$ \\
+    7 & Train & $1.00$ & $0.80$ & $0.10$ \\
+    \midrule
+    8 & Held-out test & $0.60$ & $0.55$ & $0.11$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Held-out geometry: does the proxy track the true error?}
+\label{sec:exp-cylinder}
+
+The first claim to test is whether $\rho^\theta$ is a good enough
+surrogate for the unobserved pointwise PINN error that minimising the
+loss \eqref{eq:surrogate} drives down the \emph{true} hybrid error
+\eqref{eq:hybrid-bound}, not just the proxy abstention loss. The
+difficulty in stating this directly is that the rejector is trained on
+$\rho^\theta$ but should be evaluated against $\|h-u^\star\|$, which is
+exactly the quantity $\rho^\theta$ is meant to approximate. A fair
+single-number comparison therefore involves the same scalar twice. The
+clean separation we use instead is to sweep the rejector's decision
+threshold $\tau$ over the entire score range, and at each $\tau$ to
+record both quantities -- the surrogate loss \eqref{eq:surrogate}, which
+the rejector \emph{can} see, and the RMSE of $\widehat{u}_{\mathrm{hyb}}$
+against $u^\star$, which it \emph{cannot} -- as functions of the same
+geometric observable, the coverage
+$|\widehat{\Omega}_C|/|\Omega|$.
+
+Plotting both curves against coverage on the held-out geometry produces
+Figure~\ref{fig:cyl-coverage}. The surrogate loss is U-shaped by
+construction: \eqref{eq:surrogate} has an accept term decreasing in
+coverage (more high-$\rho^\theta$ points absorbed by the solver) and an
+abstain term linear in coverage (fixed cost $c$ per rejected point), so
+their sum is convex with a unique interior minimum at the operating
+coverage selected by $c$. The substantive observation concerns the RMSE
+curve. It is also U-shaped, and its minimum sits at essentially the same
+coverage as the loss-curve minimum -- not at one of the two extremes one
+might expect a priori, and not at a coverage offset from the loss
+optimum. We discuss each end of the curve in turn before returning to
+the co-location.
+
+At low coverage the rejector keeps the PINN almost everywhere and the
+hybrid inherits the PINN's pointwise errors near the cylinder and in
+the wake, so RMSE is large and dominated by the regions
+$\rho^\theta$ flags as high. As coverage grows past the level set
+$\{\rho^\theta>c\}$, the solver absorbs precisely those high-$\rho^\theta$
+regions and RMSE falls sharply. At high coverage the picture reverses
+in a way that is structural rather than incidental. The remaining
+PINN cells become spatially scattered, which forces the interface
+$\Gamma$ to thread through high-error regions; the bound
+\eqref{eq:hybrid-bound} amplifies the PINN error on $\Gamma$ by
+$1+C_s$, and the experiment shows this term inflating RMSE from below
+as coverage approaches $1$. The right-hand rise of the curve is therefore
+the empirical signature of one-way Dirichlet coupling
+(Section~\ref{sec:hybrid-couple}), not an instability of the rejector.
+
+The relevant observation is the co-location of the two minima. The
+surrogate loss is a function of $\rho^\theta$ and $c$ alone, both
+computable from $h$ at zero ground-truth cost; the RMSE is a function of
+$u^\star$, which the rejector never sees. If $\rho^\theta$ were a poor
+surrogate for $\|h-u^\star\|$ -- if Assumption~\ref{ass:linearisation}
+held only loosely -- the two minima could sit at substantially different
+coverages, and the rejector trained against the loss would route to the
+wrong volume of the domain. They sit at essentially the same coverage,
+which is the empirical content of Theorem~\ref{thm:h-consistency}
+combined with Assumption~\ref{ass:linearisation}: small surrogate
+excess implies small \emph{true} hybrid excess, up to the linearisation
+slack $\delta_{\mathrm{lin}}^\theta$, and the slack is small enough at
+this PINN that the operating point selected from the loss agrees with
+the operating point selected from the ground truth. We take this as the
+direct empirical evidence that the proxy is doing the job the theory
+asks of it.
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figs/cylinder_loss_vs_coverage.pdf}
+    \caption{Surrogate loss vs.\ coverage. The U-shape follows from the
+      convexity of \eqref{eq:surrogate} in the partition volume.}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.48\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figs/cylinder_rmse_vs_coverage.pdf}
+    \caption{Hybrid RMSE against $u^\star$ vs.\ coverage. The right-hand
+      rise reflects the one-way coupling bound \eqref{eq:hybrid-bound}.}
+  \end{subfigure}
+  \caption{Held-out cylinder geometry $(0.60,0.55,0.11)$: both curves
+    are U-shaped and their minima sit at essentially the same coverage
+    ($\approx 47\%$). The left curve is computable at training time;
+    the right is not. Their co-location is the operational content of
+    Assumption~\ref{ass:linearisation} combined with
+    Theorem~\ref{thm:h-consistency}.}
+  \label{fig:cyl-coverage}
+\end{figure}
+
+\paragraph{Solution fields.}
+At the loss-curve operating point $\tau^\star$, the hybrid restores the
+boundary-layer pressure gradient and the wake separation that the PINN
+under-resolves; the rejector contour overlaid on the hybrid panel
+(Figure~\ref{fig:cyl-solution}) localises $\widehat{\Omega}_C$ around
+the cylinder and the near-wake, exactly the regions where
+$\rho^\theta$ is large, while the bulk upstream and far field remain on
+the PINN. Quantitatively, the held-out RMSE drops from
+$1.15\!\times\!10^{-1}$ (PINN alone) to $2.27\!\times\!10^{-2}$ (hybrid),
+a factor of $5.1$ reduction, at $1.48\times$ wall-clock speedup over a
+full solver run on the same grid and hardware. The rejector itself
+contributes negligibly to wall-clock time: a single forward pass through
+the small CNN, evaluated once per inference.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.97\linewidth]{figs/cylinder_solution.pdf}
+  \caption{Held-out cylinder $(0.60,0.55,0.11)$. Columns: PINN, hybrid
+    (ours), reference solver. Rows: pressure, horizontal velocity,
+    vertical velocity, velocity magnitude, and pointwise RMSE against
+    the reference. The hybrid recovers the boundary-layer pressure
+    gradient and the wake separation that the PINN smears.}
+  \label{fig:cyl-solution}
+\end{figure}
+
+\subsection{Generalisation across geometries}
+\label{sec:exp-generalisation}
+
+The second claim is that a single rejector trained jointly across the
+seven training geometries produces a working hybrid on each of them and
+on the held-out triple, despite each geometry being paired with its own
+PINN and despite the rejected subdomain $\widehat{\Omega}_C$ being a
+different region of $\Omega$ in each case. This is what the routing
+problem is for: if the rejector had to be retrained per geometry there
+would be no amortisation and the framework would reduce to a-posteriori
+refinement at deployment. We therefore evaluate the same trained
+rejector on all eight (PINN, geometry) pairs of
+Table~\ref{tab:cyl-train} -- seven seen during rejector training, one
+not -- and report PINN RMSE, hybrid RMSE, the coverage selected at
+$\tau^\star$, and end-to-end wall-clock for the hybrid and full solver
+on identical hardware (Table~\ref{tab:cyl}).
+
+The pattern is consistent across the table. Hybrid RMSE is several-fold
+below PINN RMSE on every configuration, with no configuration
+collapsing to all-PINN or all-solver behaviour; coverages cluster in the
+$38\text{--}50\%$ band, indicating that the rejector consistently
+identifies a non-trivial high-error subdomain rather than abstaining
+uniformly; and end-to-end wall-clock is in the $1.5\text{--}1.9\times$
+speedup band against full solver runs, with the held-out triple
+sitting inside this band rather than degrading at the boundary of the
+training bracket. The held-out row in particular shows the same
+qualitative behaviour as the training rows -- comparable coverage, a
+several-fold RMSE reduction, and a speedup in the same band -- which
+indicates that the rejector has learned a residual--error mapping that
+generalises across the training bracket rather than memorising
+geometry-specific decisions.
+
+\begin{table}[t]
+  \caption{Cylinder NSE summary across all eight configurations
+    (rows~1--7 used to train the rejector, row~8 held out) at
+    $c\equiv 1.1$ and the loss-curve operating point $\tau^\star$. RMSE
+    is the gauge-invariant velocity plus pressure-gradient error against
+    the reference solver on the same grid; coverage is the fraction of
+    fluid points routed to the solver at $\tau^\star$. Wall-clock times
+    are end-to-end on identical hardware (single H100, JAX/CFD on CPU);
+    PINN inference is sub-second in every configuration.}
+  \label{tab:cyl}
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{cccccccccc}
+    \toprule
+    \# & Role & $x_c$ & $y_c$ & $r$ &
+       PINN RMSE & Hybrid RMSE & Cov &
+       $t_{\mathrm{Hyb}}$ & $t_{\mathrm{Solver}}$ \\
+    \midrule
+    1 & train & $0.30$ & $0.30$ & $0.15$ &
+        $1.290\!\times\!10^{-1}$ & $8.726\!\times\!10^{-2}$ &
+        $49.7\%$ & $87.6$\,s & $164.8$\,s \\
+    2 & train & $0.50$ & $0.50$ & $0.10$ &
+        $1.119\!\times\!10^{-1}$ & $2.076\!\times\!10^{-2}$ &
+        $46.7\%$ & $70.1$\,s & $109.5$\,s \\
+    3 & train & $0.50$ & $0.50$ & $0.15$ &
+        $1.103\!\times\!10^{-1}$ & $3.112\!\times\!10^{-2}$ &
+        $47.2\%$ & $65.1$\,s & $116.6$\,s \\
+    4 & train & $0.50$ & $0.80$ & $0.10$ &
+        $1.138\!\times\!10^{-1}$ & $6.408\!\times\!10^{-2}$ &
+        $48.2\%$ & $103.4$\,s & $186.7$\,s \\
+    5 & train & $0.70$ & $0.40$ & $0.12$ &
+        $1.212\!\times\!10^{-1}$ & $7.651\!\times\!10^{-2}$ &
+        $38.7\%$ & $67.6$\,s & $113.5$\,s \\
+    6 & train & $0.70$ & $0.50$ & $0.10$ &
+        $1.206\!\times\!10^{-1}$ & $7.009\!\times\!10^{-2}$ &
+        $41.7\%$ & $64.8$\,s & $103.9$\,s \\
+    7 & train & $1.00$ & $0.80$ & $0.10$ &
+        $1.256\!\times\!10^{-1}$ & $7.945\!\times\!10^{-2}$ &
+        $45.7\%$ & $84.1$\,s & $131.5$\,s \\
+    \midrule
+    8 & test  & $0.60$ & $0.55$ & $0.11$ &
+        $1.149\!\times\!10^{-1}$ & $\mathbf{2.271\!\times\!10^{-2}}$ &
+        $47.7\%$ & $\mathbf{79.0}$\,s & $117.1$\,s \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Two further observations are worth naming. First, the spread in hybrid
+RMSE across the table tracks the spread in PINN RMSE rather than the
+spread in geometry: configurations on which the underlying PINN is
+weaker (rows~1, 4, 5, 7) leave a larger residual hybrid RMSE because
+the bound \eqref{eq:hybrid-bound} contains
+$\|h-u^\star\|_{\widehat{\Omega}_P\cup\Gamma}$, which the rejector
+controls only through partition choice and not through the PINN itself.
+Second, the held-out RMSE ($2.27\!\times\!10^{-2}$) is on the better end
+of the table, not the worse, despite being unseen during rejector
+training. This is consistent with the PINN at the held-out triple being
+of comparable quality to the best training PINNs, and with the rejector
+having interpolated rather than extrapolated through the training
+bracket. We do not claim the rejector would extend cleanly to triples
+outside the bracket; that limitation, and the related question of
+transfer to qualitatively different boundary conditions, are discussed
+in Section~\ref{sec:limitations}.

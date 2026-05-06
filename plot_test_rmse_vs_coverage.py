@@ -28,7 +28,6 @@ ax.plot(COV[OPT_IDX] * 100, RMSE[OPT_IDX], '*',
 
 ax.set_xlabel('Coverage (% solved by CFD)')
 ax.set_ylabel('Hybrid RMSE (vs CFD)')
-ax.set_title('RMSE vs Coverage  (held-out test, β = 1.1)')
 ax.set_xlim(-3, 103)
 ax.legend(loc='upper left', frameon=False)
 fig.tight_layout()
