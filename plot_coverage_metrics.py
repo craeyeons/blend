@@ -332,10 +332,6 @@ def compute_hybrid_solution(pinn_model, router_output, layout, threshold, args):
     # Create binary mask from router output with morphological opening
     cfd_mask = (router_output >= threshold).astype(np.int32)
     cfd_mask = cfd_mask * layout.astype(np.int32)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
-                                       (args.morph_kernel, args.morph_kernel))
-    cfd_mask = cv2.morphologyEx(cfd_mask.astype(np.uint8), cv2.MORPH_OPEN,
-                                kernel).astype(np.int32) * layout.astype(np.int32)
 
     cfd_fraction = np.sum(cfd_mask) / np.sum(layout) * 100
     print(f"  CFD region: {cfd_fraction:.1f}%")
