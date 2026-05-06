@@ -27,6 +27,9 @@ import os
 import numpy as np
 import tensorflow as tf
 from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 # Configure TensorFlow GPU memory growth
 gpus = tf.config.list_physical_devices('GPU')
