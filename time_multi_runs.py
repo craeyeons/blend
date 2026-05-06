@@ -366,7 +366,7 @@ def main():
     p.add_argument('--output-dir', default='./time_multi_runs')
     p.add_argument('--epochs', type=int, default=500)
     p.add_argument('--beta', type=float, default=1.0)
-    p.add_argument('--lambda-tv', type=float, default=0.1)
+    p.add_argument('--lambda-tv', type=float, default=1.0)
     p.add_argument('--lr', type=float, default=1e-4)
     p.add_argument('--nx', type=int, default=200)
     p.add_argument('--ny', type=int, default=100)

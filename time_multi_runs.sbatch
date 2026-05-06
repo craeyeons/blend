@@ -50,7 +50,7 @@ python time_multi_runs.py \
     --output-dir "$OUTPUT_ROOT" \
     --epochs 500 \
     --beta 1.1 \
-    --lambda-tv 0.1 \
+    --lambda-tv 1.0 \
     --Re 100 \
     $EXTRA
 
