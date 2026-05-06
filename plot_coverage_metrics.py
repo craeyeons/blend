@@ -1105,7 +1105,7 @@ def plot_loss_vs_coverage(residual_field, router_output, layout, beta,
     opt_loss = loss_curve[min_idx]
 
     ax1.plot(cov_for_loss * 100, loss_curve, 'b-', linewidth=2.5,
-             label='Training loss')
+             label='Oracle abstention loss')
     ax1.plot(0, loss_curve[0], 'o', color='purple', markersize=10, zorder=5)
     ax1.plot(100, loss_curve[-1], 'o', color='teal', markersize=10, zorder=5)
     ax1.plot(opt_cov * 100, opt_loss, '*', color='green', markersize=18,
@@ -1124,11 +1124,11 @@ def plot_loss_vs_coverage(residual_field, router_output, layout, beta,
                  arrowprops=dict(arrowstyle='->', color='green', lw=1.5))
 
     ax1.set_xlabel('Coverage (% solved by CFD)', fontsize=13)
-    ax1.set_ylabel('Training Loss', fontsize=13)
-    ax1.set_title(f'Training Loss vs Coverage  (β = {beta})',
+    ax1.set_ylabel(r'Abstention loss  $\beta\,c + (1-c)\,\mathbb{E}[R\mid \mathrm{PINN}]$', fontsize=13)
+    ax1.set_title(f'Oracle Abstention Loss vs Coverage  (β = {beta})',
                   fontsize=14, fontweight='bold')
     ax1.set_xlim(-5, 105)
-    y_min = np.min(loss_curve) - 0.1
+    y_min = np.min(loss_curve) - 0.3
     y_max = max(loss_curve[0], loss_curve[-1]) + 0.15
     ax1.set_ylim(y_min, y_max)
     ax1.spines['top'].set_visible(False)
