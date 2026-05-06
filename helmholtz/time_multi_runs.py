@@ -97,8 +97,8 @@ def _plot_regions_and_errors(X, Y, test_layout, test_hole, accept_mask,
     cx, cy, rh = test_hole
     fluid = test_layout > 0
 
-    err_pinn = np.abs(pinn_u - u_fem) * test_layout
-    err_hyb = np.abs(u_hybrid - u_fem) * test_layout
+    err_pinn = (pinn_u - u_fem) * test_layout
+    err_hyb = (u_hybrid - u_fem) * test_layout
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
@@ -116,11 +116,13 @@ def _plot_regions_and_errors(X, Y, test_layout, test_hole, accept_mask,
     ax.add_patch(plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5))
     ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
 
-    err_max = float(max(np.max(err_pinn[fluid]), np.max(err_hyb[fluid]))) + 1e-30
-    for ax, err, lab in zip(axes[1:], [err_pinn, err_hyb], ['PINN error', 'Hybrid error']):
+    absmax = float(max(np.max(np.abs(err_pinn[fluid])),
+                        np.max(np.abs(err_hyb[fluid])))) + 1e-30
+    for ax, err, lab in zip(axes[1:], [err_pinn, err_hyb],
+                             ['PINN err (u - u_FEM)', 'Hybrid err (u - u_FEM)']):
         data = np.where(fluid, err, np.nan)
-        im = ax.pcolormesh(X, Y, data, cmap='YlOrRd',
-                           vmin=0.0, vmax=err_max, shading='auto')
+        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
+                           vmin=-absmax, vmax=absmax, shading='auto')
         plt.colorbar(im, ax=ax, fraction=0.046, label=lab)
         ax.add_patch(plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5))
         ax.set_aspect('equal'); ax.set_xlabel('x'); ax.set_ylabel('y')
@@ -137,32 +139,33 @@ def _plot_solution_comparison(X, Y, test_layout, test_hole, accept_mask,
     fluid = test_layout > 0
 
     sols = [pinn_u, u_hybrid, u_fem]
-    err_pinn = np.abs(pinn_u - u_fem) * test_layout
-    err_hyb = np.abs(u_hybrid - u_fem) * test_layout
+    err_pinn = (pinn_u - u_fem) * test_layout
+    err_hyb = (u_hybrid - u_fem) * test_layout
     err_fem = np.zeros_like(u_fem)
     errs = [err_pinn, err_hyb, err_fem]
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
 
-    # Row 0: solutions, shared diverging coolwarm
+    # Row 0: solutions, shared diverging blue-red
     sol_stack = np.concatenate([s[fluid] for s in sols])
     smax = float(np.max(np.abs(sol_stack))) + 1e-30
     for j, s in enumerate(sols):
         ax = axes[0, j]
         data = np.where(fluid, s, np.nan)
-        im = ax.pcolormesh(X, Y, data, cmap='coolwarm',
+        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
                            vmin=-smax, vmax=smax, shading='auto')
         plt.colorbar(im, ax=ax, fraction=0.046)
         ax.add_patch(plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5))
         ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])
 
-    # Row 1: errors, YlOrRd (no black)
-    err_max = float(max(np.max(err_pinn[fluid]), np.max(err_hyb[fluid]))) + 1e-30
+    # Row 1: signed errors, diverging blue-red shared scale
+    absmax = float(max(np.max(np.abs(err_pinn[fluid])),
+                        np.max(np.abs(err_hyb[fluid])))) + 1e-30
     for j, e in enumerate(errs):
         ax = axes[1, j]
         data = np.where(fluid, e, np.nan)
-        im = ax.pcolormesh(X, Y, data, cmap='YlOrRd',
-                           vmin=0.0, vmax=err_max, shading='auto')
+        im = ax.pcolormesh(X, Y, data, cmap='RdBu_r',
+                           vmin=-absmax, vmax=absmax, shading='auto')
         plt.colorbar(im, ax=ax, fraction=0.046)
         ax.add_patch(plt.Circle((cx, cy), rh, color='gray', fill=True, zorder=5))
         ax.set_aspect('equal'); ax.set_xticks([]); ax.set_yticks([])
@@ -172,7 +175,7 @@ def _plot_solution_comparison(X, Y, test_layout, test_hole, accept_mask,
         axes[0, j].set_xlabel(lab)
         axes[0, j].xaxis.set_label_position('top')
     axes[0, 0].set_ylabel('solution')
-    axes[1, 0].set_ylabel('|err vs FEM|')
+    axes[1, 0].set_ylabel('u - u_FEM')
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=1200, bbox_inches='tight')
