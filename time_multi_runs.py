@@ -357,6 +357,127 @@ def evaluate_config(setup, args, runs_dir, label, out_dir):
 
 
 # ---------------------------------------------------------------------------
+# Coverage sweep (accuracy + time vs coverage, per seed)
+# ---------------------------------------------------------------------------
+
+def _plot_sweep(rows, cfd_time_mean, label, save_path):
+    """RMSE-vs-time tradeoff, one line per seed (raw points, no aggregation).
+    Both axes vary per seed, so seeds are drawn as separate curves rather
+    than a band — replot from sweep.csv if you want a different aggregation."""
+    seeds = sorted({r['seed'] for r in rows})
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    for s in seeds:
+        sr = sorted((r for r in rows if r['seed'] == s),
+                    key=lambda r: r['actual_coverage'])
+        t = [r['hybrid_time'] for r in sr]
+        rmse = [r['rmse'] for r in sr]
+        ax.plot(t, rmse, '-o', label=f"seed {s}", zorder=2)
+    ax.axvline(cfd_time_mean, ls='--', color='gray', lw=1,
+               label=f"full CFD ({cfd_time_mean:.1f}s)")
+    ax.set_xlabel("hybrid solve time (s)")
+    ax.set_ylabel("RMSE vs CFD")
+    ax.set_title(label)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
+def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
+    """For one config: sweep CFD coverage in fixed increments across all
+    seeds, recording the raw (RMSE, hybrid time) at each coverage level for
+    each seed.
+
+    Coverage c selects the top-c fraction of fluid cells by router score as
+    the CFD region (exact cell count, tie-safe). c=0 is pure PINN, c=1 is
+    full CFD. Both RMSE and time vary per seed (placement affects solver
+    conditioning), so every raw per-seed point is written to sweep.csv for
+    downstream replotting/aggregation."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---- CFD reference x N_CFD_RUNS (for RMSE target + timing baseline) ----
+    cfd_times = []
+    u_cfd = v_cfd = p_cfd = None
+    for i in range(N_CFD_RUNS):
+        sim = _make_cfd(setup, args)
+        with contextlib.redirect_stdout(io.StringIO()):
+            t0 = time.perf_counter()
+            u, v, p = sim.solve()
+            t1 = time.perf_counter()
+        cfd_times.append(t1 - t0)
+        u_cfd, v_cfd, p_cfd = np.array(u), np.array(v), np.array(p)
+        print(f"  [{label}] CFD {i+1}/{N_CFD_RUNS}: {cfd_times[-1]:.3f}s")
+    cfd_time_mean = float(np.mean(cfd_times))
+
+    layout = setup['layout']
+    fluid = layout > 0
+    fluid_idx = np.argwhere(fluid)
+    n_fluid = len(fluid_idx)
+    dx = float(setup['X'][0, 1] - setup['X'][0, 0])
+    dy = float(setup['Y'][1, 0] - setup['Y'][0, 0])
+    pxc, pyc = np.gradient(p_cfd, dy, dx)
+    gradp_scale = float(np.max(pxc[fluid]**2 + pyc[fluid]**2)) + 1e-10
+    interior = binary_erosion(fluid, iterations=1)
+
+    rows = []
+    for s in range(N_SEEDS):
+        weights = runs_dir / f'run_{s}' / 'router.weights.h5'
+        router = _load_router(str(weights), setup, args)
+        s_field = _router_output(router, setup)
+        # rank fluid cells by router score, highest first
+        order = np.argsort(s_field[fluid])[::-1]
+        ranked = fluid_idx[order]
+
+        for cov in coverages:
+            k = int(round(cov * n_fluid))
+            k = max(0, min(n_fluid, k))
+            cfd_mask = np.zeros_like(layout, dtype=np.int32)
+            if k > 0:
+                sel = ranked[:k]
+                cfd_mask[sel[:, 0], sel[:, 1]] = 1
+            actual_cov = float(k / n_fluid)
+
+            sim = _make_hybrid(setup, cfd_mask, args)
+            with contextlib.redirect_stdout(io.StringIO()):
+                t0 = time.perf_counter()
+                uh, vh, ph = sim.solve()
+                t1 = time.perf_counter()
+            hyb_time = t1 - t0
+            uh, vh, ph = np.array(uh), np.array(vh), np.array(ph)
+
+            ring = _interface_ring(cfd_mask.astype(bool) & fluid, iters=1)
+            valid = interior & ~ring
+            rmse = _gauge_free_rmse(uh, vh, ph, u_cfd, v_cfd, p_cfd,
+                                    valid, dx, dy, gradp_scale)
+
+            rows.append({
+                'seed': s,
+                'target_coverage': float(cov),
+                'actual_coverage': actual_cov,
+                'rmse': rmse,
+                'hybrid_time': hyb_time,
+                'cfd_time_mean': cfd_time_mean,
+            })
+            print(f"  [{label}] seed {s} cov={actual_cov*100:5.1f}% "
+                  f"RMSE={rmse:.4f} hyb_time={hyb_time:.3f}s")
+
+    import csv
+    csv_path = out_dir / 'sweep.csv'
+    keys = ['seed', 'target_coverage', 'actual_coverage',
+            'rmse', 'hybrid_time', 'cfd_time_mean']
+    with open(csv_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        w.writerows(rows)
+    with open(out_dir / 'sweep.json', 'w') as f:
+        json.dump({'label': label, 'rows': rows}, f, indent=2)
+    _plot_sweep(rows, cfd_time_mean, label, str(out_dir / 'sweep.pdf'))
+    print(f"\nWrote {csv_path} and sweep.pdf")
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -382,6 +503,15 @@ def main():
                    help='Force retraining even if weights exist.')
     p.add_argument('--skip-train', action='store_true',
                    help='Skip training step (reuse existing router_runs/).')
+    p.add_argument('--sweep', action='store_true',
+                   help='Coverage-sweep mode: for one config, record '
+                        '(RMSE, hybrid time) per seed at fixed coverage steps.')
+    p.add_argument('--sweep-role', default='test',
+                   help='Config role to sweep (default: test).')
+    p.add_argument('--sweep-idx', type=int, default=0,
+                   help='Config index within the role to sweep (default: 0).')
+    p.add_argument('--sweep-step', type=float, default=0.1,
+                   help='Coverage increment for the sweep (default: 0.1).')
     args = p.parse_args()
 
     out_root = Path(args.output_dir)
@@ -393,6 +523,24 @@ def main():
     runs_dir = out_root / 'router_runs'
     with open(args.config) as f:
         cfgs = json.load(f)
+
+    if args.sweep:
+        pool = cfgs.get(args.sweep_role, [])
+        if not (0 <= args.sweep_idx < len(pool)):
+            raise SystemExit(
+                f"--sweep-idx {args.sweep_idx} out of range for role "
+                f"'{args.sweep_role}' ({len(pool)} configs).")
+        cfg = pool[args.sweep_idx]
+        label = (f"{args.sweep_role}_{args.sweep_idx}_x{cfg.get('cylinder_x',0.5)}"
+                 f"_y{cfg.get('cylinder_y',0.5)}_r{cfg.get('cylinder_radius',0.1)}"
+                 f"_u{cfg.get('inlet_velocity',1.0)}_sweep")
+        out_dir = out_root / label
+        coverages = np.round(np.arange(0.0, 1.0 + 1e-9, args.sweep_step), 6)
+        print(f"\n=== SWEEP {label} | coverages={list(coverages)} ===")
+        setup = _setup(cfg, args)
+        sweep_config(setup, args, runs_dir, label, out_dir, coverages)
+        return
+
     all_cfgs = [('train', i, c) for i, c in enumerate(cfgs.get('train', []))]
     all_cfgs += [('test', i, c) for i, c in enumerate(cfgs.get('test', []))]
 
