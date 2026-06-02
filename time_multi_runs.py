@@ -372,6 +372,10 @@ def _plot_sweep(rows, cfd_time_mean, label, save_path):
         t = [r['hybrid_time'] for r in sr]
         rmse = [r['rmse'] for r in sr]
         ax.plot(t, rmse, '-o', label=f"seed {s}", zorder=2)
+        for r in sr:
+            if r['is_optimal']:
+                ax.plot(r['hybrid_time'], r['rmse'], '*',
+                        color='crimson', markersize=11, zorder=6)
     ax.axvline(cfd_time_mean, ls='--', color='gray', lw=1,
                label=f"full CFD ({cfd_time_mean:.1f}s)")
     ax.set_xlabel("hybrid solve time (s)")
@@ -420,6 +424,7 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
     gradp_scale = float(np.max(pxc[fluid]**2 + pyc[fluid]**2)) + 1e-10
     interior = binary_erosion(fluid, iterations=1)
 
+    rfield = setup['residual_field']
     rows = []
     for s in range(N_SEEDS):
         weights = runs_dir / f'run_{s}' / 'router.weights.h5'
@@ -429,7 +434,13 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
         order = np.argsort(s_field[fluid])[::-1]
         ranked = fluid_idx[order]
 
-        for cov in coverages:
+        # Per-seed coverage list: fixed grid + this seed's abstention-optimal
+        # coverage, so the optimal point is rerun under the same protocol as
+        # the rest of the sweep (no extra wall-clock comparison gymnastics).
+        _, c_opt, _ = _find_optimal(rfield, s_field, layout, args.beta)
+        seed_coverages = sorted(set(list(map(float, coverages)) + [float(c_opt)]))
+
+        for cov in seed_coverages:
             k = int(round(cov * n_fluid))
             k = max(0, min(n_fluid, k))
             cfd_mask = np.zeros_like(layout, dtype=np.int32)
@@ -437,6 +448,7 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
                 sel = ranked[:k]
                 cfd_mask[sel[:, 0], sel[:, 1]] = 1
             actual_cov = float(k / n_fluid)
+            is_optimal = (cov == c_opt)
 
             sim = _make_hybrid(setup, cfd_mask, args)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -458,14 +470,16 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
                 'rmse': rmse,
                 'hybrid_time': hyb_time,
                 'cfd_time_mean': cfd_time_mean,
+                'is_optimal': int(is_optimal),
             })
+            tag = ' [optimal]' if is_optimal else ''
             print(f"  [{label}] seed {s} cov={actual_cov*100:5.1f}% "
-                  f"RMSE={rmse:.4f} hyb_time={hyb_time:.3f}s")
+                  f"RMSE={rmse:.4f} hyb_time={hyb_time:.3f}s{tag}")
 
     import csv
     csv_path = out_dir / 'sweep.csv'
     keys = ['seed', 'target_coverage', 'actual_coverage',
-            'rmse', 'hybrid_time', 'cfd_time_mean']
+            'rmse', 'hybrid_time', 'cfd_time_mean', 'is_optimal']
     with open(csv_path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
