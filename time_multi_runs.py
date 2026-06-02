@@ -372,10 +372,6 @@ def _plot_sweep(rows, cfd_time_mean, label, save_path):
         t = [r['hybrid_time'] for r in sr]
         rmse = [r['rmse'] for r in sr]
         ax.plot(t, rmse, '-o', label=f"seed {s}", zorder=2)
-        for r in sr:
-            if r['is_optimal']:
-                ax.plot(r['hybrid_time'], r['rmse'], '*',
-                        color='crimson', markersize=11, zorder=6)
     ax.axvline(cfd_time_mean, ls='--', color='gray', lw=1,
                label=f"full CFD ({cfd_time_mean:.1f}s)")
     ax.set_xlabel("hybrid solve time (s)")
@@ -424,9 +420,8 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
     gradp_scale = float(np.max(pxc[fluid]**2 + pyc[fluid]**2)) + 1e-10
     interior = binary_erosion(fluid, iterations=1)
 
-    rfield = setup['residual_field']
     rows = []
-    for s in range(N_SEEDS):
+    for s in args.sweep_seeds:
         weights = runs_dir / f'run_{s}' / 'router.weights.h5'
         router = _load_router(str(weights), setup, args)
         s_field = _router_output(router, setup)
@@ -434,13 +429,7 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
         order = np.argsort(s_field[fluid])[::-1]
         ranked = fluid_idx[order]
 
-        # Per-seed coverage list: fixed grid + this seed's abstention-optimal
-        # coverage, so the optimal point is rerun under the same protocol as
-        # the rest of the sweep (no extra wall-clock comparison gymnastics).
-        _, c_opt, _ = _find_optimal(rfield, s_field, layout, args.beta)
-        seed_coverages = sorted(set(list(map(float, coverages)) + [float(c_opt)]))
-
-        for cov in seed_coverages:
+        for cov in coverages:
             k = int(round(cov * n_fluid))
             k = max(0, min(n_fluid, k))
             cfd_mask = np.zeros_like(layout, dtype=np.int32)
@@ -448,7 +437,6 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
                 sel = ranked[:k]
                 cfd_mask[sel[:, 0], sel[:, 1]] = 1
             actual_cov = float(k / n_fluid)
-            is_optimal = (cov == c_opt)
 
             sim = _make_hybrid(setup, cfd_mask, args)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -470,16 +458,14 @@ def sweep_config(setup, args, runs_dir, label, out_dir, coverages):
                 'rmse': rmse,
                 'hybrid_time': hyb_time,
                 'cfd_time_mean': cfd_time_mean,
-                'is_optimal': int(is_optimal),
             })
-            tag = ' [optimal]' if is_optimal else ''
             print(f"  [{label}] seed {s} cov={actual_cov*100:5.1f}% "
-                  f"RMSE={rmse:.4f} hyb_time={hyb_time:.3f}s{tag}")
+                  f"RMSE={rmse:.4f} hyb_time={hyb_time:.3f}s")
 
     import csv
     csv_path = out_dir / 'sweep.csv'
     keys = ['seed', 'target_coverage', 'actual_coverage',
-            'rmse', 'hybrid_time', 'cfd_time_mean', 'is_optimal']
+            'rmse', 'hybrid_time', 'cfd_time_mean']
     with open(csv_path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
@@ -526,6 +512,11 @@ def main():
                    help='Config index within the role to sweep (default: 0).')
     p.add_argument('--sweep-step', type=float, default=0.1,
                    help='Coverage increment for the sweep (default: 0.1).')
+    p.add_argument('--sweep-extra-coverages', type=float, nargs='*', default=[],
+                   help='Extra coverage fractions to merge into the grid '
+                        '(e.g. 0.46 for the abstention-optimal point).')
+    p.add_argument('--sweep-seeds', type=int, nargs='+', default=[0, 1, 2],
+                   help='Router seeds to evaluate in sweep mode.')
     args = p.parse_args()
 
     out_root = Path(args.output_dir)
@@ -549,7 +540,9 @@ def main():
                  f"_y{cfg.get('cylinder_y',0.5)}_r{cfg.get('cylinder_radius',0.1)}"
                  f"_u{cfg.get('inlet_velocity',1.0)}_sweep")
         out_dir = out_root / label
-        coverages = np.round(np.arange(0.0, 1.0 + 1e-9, args.sweep_step), 6)
+        grid = np.arange(0.0, 1.0 + 1e-9, args.sweep_step)
+        coverages = np.round(
+            sorted(set(list(grid) + list(args.sweep_extra_coverages))), 6)
         print(f"\n=== SWEEP {label} | coverages={list(coverages)} ===")
         setup = _setup(cfg, args)
         sweep_config(setup, args, runs_dir, label, out_dir, coverages)

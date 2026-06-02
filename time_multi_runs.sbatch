@@ -60,6 +60,8 @@ python time_multi_runs.py \
     --sweep-role test \
     --sweep-idx 0 \
     --sweep-step 0.1 \
+    --sweep-extra-coverages 0.46 \
+    --sweep-seeds 0 1 \
     $EXTRA
 
 echo "=== Job completed ==="
